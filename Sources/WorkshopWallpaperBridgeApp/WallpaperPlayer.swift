@@ -1,6 +1,4 @@
 import AppKit
-import AVFoundation
-import WebKit
 import WorkshopWallpaperCore
 
 @MainActor
@@ -8,9 +6,17 @@ final class WallpaperPlayer {
     static let shared = WallpaperPlayer()
 
     private var windows: [WallpaperWindow] = []
+    private var activeAsset: WallpaperAsset?
+    private var autoPauseWhenCovered = true
+    private var visibilityTimer: Timer?
+    private var workspaceObservers: [NSObjectProtocol] = []
+    private var isSuspended = false
+    private let visibilityMonitor = DesktopVisibilityMonitor()
 
-    func play(asset: WallpaperAsset) throws {
-        stop()
+    func play(asset: WallpaperAsset, autoPauseWhenCovered: Bool = true) throws {
+        closeWindows()
+        activeAsset = asset
+        self.autoPauseWhenCovered = autoPauseWhenCovered
         guard asset.supportStatus == .playable else {
             throw PlaybackError.notPlayable(asset.supportStatus.rawValue)
         }
@@ -22,19 +28,116 @@ final class WallpaperPlayer {
             try WallpaperWindow(asset: asset, url: url, frame: screen.frame)
         }
         windows.forEach { $0.show() }
+        startLifecycleObservers()
+        startVisibilityTimer()
+        updateVisibilityState()
+    }
+
+    func setAutoPauseWhenCovered(_ enabled: Bool) {
+        autoPauseWhenCovered = enabled
+        updateVisibilityState()
+    }
+
+    func restoreVisibleWindowsAfterAppWindowChange() {
+        updateVisibilityState()
+        guard !isSuspended else {
+            return
+        }
+        windows.forEach { $0.show() }
     }
 
     func stop() {
+        activeAsset = nil
+        stopVisibilityTimer()
+        stopLifecycleObservers()
+        closeWindows()
+    }
+
+    private func closeWindows() {
         windows.forEach { $0.close() }
         windows = []
+    }
+
+    private func startVisibilityTimer() {
+        stopVisibilityTimer()
+        visibilityTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.updateVisibilityState()
+            }
+        }
+        if let visibilityTimer {
+            RunLoop.main.add(visibilityTimer, forMode: .common)
+        }
+    }
+
+    private func stopVisibilityTimer() {
+        visibilityTimer?.invalidate()
+        visibilityTimer = nil
+    }
+
+    private func updateVisibilityState() {
+        let shouldSuspend = autoPauseWhenCovered && !visibilityMonitor.isDesktopVisible()
+        setSuspended(shouldSuspend)
+    }
+
+    private func setSuspended(_ suspended: Bool) {
+        guard isSuspended != suspended else {
+            return
+        }
+        isSuspended = suspended
+        windows.forEach { $0.setSuspended(suspended) }
+    }
+
+    private func startLifecycleObservers() {
+        guard workspaceObservers.isEmpty else {
+            return
+        }
+        let center = NSWorkspace.shared.notificationCenter
+        workspaceObservers = [
+            center.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in self?.setSuspended(true) }
+            },
+            center.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in self?.reopenAfterWake() }
+            },
+            NotificationCenter.default.addObserver(
+                forName: NSApplication.didChangeScreenParametersNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in self?.reopenAfterWake() }
+            }
+        ]
+    }
+
+    private func stopLifecycleObservers() {
+        let center = NSWorkspace.shared.notificationCenter
+        workspaceObservers.forEach { observer in
+            center.removeObserver(observer)
+            NotificationCenter.default.removeObserver(observer)
+        }
+        workspaceObservers = []
+    }
+
+    private func reopenAfterWake() {
+        guard let activeAsset else {
+            return
+        }
+        do {
+            try play(asset: activeAsset, autoPauseWhenCovered: autoPauseWhenCovered)
+        } catch {
+            closeWindows()
+        }
     }
 }
 
 @MainActor
 private final class WallpaperWindow {
     private let window: NSWindow
+    private let content: NSView
 
     init(asset: WallpaperAsset, url: URL, frame: CGRect) throws {
+        content = try Self.makeContentView(asset: asset, url: url, frame: frame)
         window = NSWindow(
             contentRect: frame,
             styleMask: [.borderless],
@@ -44,8 +147,10 @@ private final class WallpaperWindow {
         window.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.desktopWindow)))
         window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
         window.ignoresMouseEvents = true
+        window.canHide = false
+        window.isExcludedFromWindowsMenu = true
         window.backgroundColor = .black
-        window.contentView = try makeContentView(asset: asset, url: url, frame: frame)
+        window.contentView = content
     }
 
     func show() {
@@ -56,7 +161,16 @@ private final class WallpaperWindow {
         window.close()
     }
 
-    private func makeContentView(asset: WallpaperAsset, url: URL, frame: CGRect) throws -> NSView {
+    func setSuspended(_ suspended: Bool) {
+        if suspended {
+            window.orderOut(nil)
+        } else {
+            show()
+        }
+        (content as? PausableWallpaperContent)?.setPlaybackSuspended(suspended)
+    }
+
+    private static func makeContentView(asset: WallpaperAsset, url: URL, frame: CGRect) throws -> NSView {
         switch asset.kind {
         case .video:
             return VideoWallpaperView(url: url, frame: frame)
@@ -77,96 +191,6 @@ private final class WallpaperWindow {
         case .scene, .unknown:
             throw PlaybackError.notPlayable(asset.kind.rawValue)
         }
-    }
-}
-
-@MainActor
-private final class RestrictedWebWallpaperView: NSView, WKNavigationDelegate {
-    private let webView: WKWebView
-    private let url: URL
-    private let readAccessURL: URL
-
-    init(url: URL, readAccessURL: URL, frame: CGRect) {
-        self.url = url
-        self.readAccessURL = readAccessURL
-        let configuration = WKWebViewConfiguration()
-        configuration.websiteDataStore = .nonPersistent()
-        configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
-        webView = WKWebView(frame: frame, configuration: configuration)
-        super.init(frame: frame)
-        webView.navigationDelegate = self
-        addSubview(webView)
-        installRemoteBlockerAndLoad()
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) is not supported")
-    }
-
-    override func layout() {
-        super.layout()
-        webView.frame = bounds
-    }
-
-    func webView(
-        _ webView: WKWebView,
-        decidePolicyFor navigationAction: WKNavigationAction,
-        decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void
-    ) {
-        let targetURL = navigationAction.request.url
-        decisionHandler(targetURL?.isFileURL == true ? .allow : .cancel)
-    }
-
-    private func installRemoteBlockerAndLoad() {
-        let rules = #"""
-        [{"trigger":{"url-filter":"^https?://.*"},"action":{"type":"block"}}]
-        """#
-        WKContentRuleListStore.default().compileContentRuleList(
-            forIdentifier: "dev.3xhaust.WorkshopWallpaperBridge.BlockRemote",
-            encodedContentRuleList: rules
-        ) { [weak self] ruleList, _ in
-            DispatchQueue.main.async {
-                guard let self else {
-                    return
-                }
-                if let ruleList {
-                    self.webView.configuration.userContentController.add(ruleList)
-                }
-                self.webView.loadFileURL(self.url, allowingReadAccessTo: self.readAccessURL)
-            }
-        }
-    }
-}
-
-@MainActor
-private final class VideoWallpaperView: NSView {
-    private let player: AVQueuePlayer
-    private let looper: AVPlayerLooper
-
-    init(url: URL, frame: CGRect) {
-        let item = AVPlayerItem(url: url)
-        let queue = AVQueuePlayer()
-        player = queue
-        looper = AVPlayerLooper(player: queue, templateItem: item)
-        super.init(frame: frame)
-        let playerLayer = AVPlayerLayer(player: player)
-        playerLayer.videoGravity = .resizeAspectFill
-        wantsLayer = true
-        layer = playerLayer
-        player.actionAtItemEnd = .none
-        player.isMuted = true
-        player.play()
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) is not supported")
-    }
-
-    override func layout() {
-        super.layout()
-        layer?.frame = bounds
     }
 }
 

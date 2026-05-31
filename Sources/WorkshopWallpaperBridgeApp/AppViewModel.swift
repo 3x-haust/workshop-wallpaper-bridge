@@ -11,9 +11,15 @@ final class AppViewModel: ObservableObject {
     @Published var selectedLibraryAssetId: WallpaperAsset.ID?
     @Published var status = "Choose a copied Wallpaper Engine Workshop folder to begin."
     @Published var isWorking = false
+    @Published var autoPauseWhenCovered = true {
+        didSet {
+            WallpaperPlayer.shared.setAutoPauseWhenCovered(autoPauseWhenCovered)
+        }
+    }
 
     private let scanner = WallpaperScanner()
     private let converter = VideoConverter()
+    private let systemWallpaperSetter = SystemWallpaperSetter()
     private let store: LibraryStore
 
     init() {
@@ -81,8 +87,23 @@ final class AppViewModel: ObservableObject {
             return
         }
         do {
-            try WallpaperPlayer.shared.play(asset: asset)
-            status = "Playing \(asset.title) on the desktop."
+            try WallpaperPlayer.shared.play(asset: asset, autoPauseWhenCovered: autoPauseWhenCovered)
+            status = autoPauseWhenCovered
+                ? "Playing on the desktop layer. You can minimize this app; playback pauses only behind other apps."
+                : "Playing continuously on the desktop layer. You can minimize this app."
+        } catch {
+            status = error.localizedDescription
+        }
+    }
+
+    func setStillWallpaper() {
+        guard let asset = selectedLibraryAsset else {
+            status = "Select a library project first."
+            return
+        }
+        do {
+            let url = try systemWallpaperSetter.setStillWallpaper(from: asset)
+            status = "Set still wallpaper from \(url.lastPathComponent). macOS may also use it on the Lock Screen."
         } catch {
             status = error.localizedDescription
         }

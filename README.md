@@ -1,50 +1,75 @@
 # Workshop Wallpaper Bridge
 
-**Workshop Wallpaper Bridge** is a local-only macOS app for people who bought Wallpaper Engine on Windows and want to reuse their own copied Workshop projects on a Mac.
+Use your own Wallpaper Engine Workshop projects on macOS.
 
-It does not download Steam Workshop items, bypass Steam, unpack proprietary `scene.pkg` files, or redistribute creator assets. It reads folders that already exist on your machine, copies supported projects into a private local library, and plays video, web, and image wallpapers as a desktop-level macOS background.
+Workshop Wallpaper Bridge is for people who already bought Wallpaper Engine on Windows and copied their local Workshop folder to a Mac. It scans that copied folder, imports supported wallpapers into a private Mac library, and plays video, web, and image wallpapers on the desktop layer.
 
 [한국어 README](README.ko.md)
 
-## Why This Exists
+## Quick Start
 
-Wallpaper Engine is Windows and Android software. Many users still have legitimate Workshop projects on a Windows Steam install, usually under:
+1. On Windows, find your Wallpaper Engine Workshop folder:
 
-```text
-C:\Program Files (x86)\Steam\steamapps\workshop\content\431960
-```
+   ```text
+   C:\Program Files (x86)\Steam\steamapps\workshop\content\431960
+   ```
 
-If you copy that folder to your Mac, this app helps you scan it, import supported wallpapers, and play them locally.
+2. Copy the `431960` folder to your Mac.
+3. Download `WorkshopWallpaperBridge-macOS-arm64.zip` from the latest GitHub release.
+4. Unzip it and open **Workshop Wallpaper Bridge.app**.
+5. Click **Browse**, choose the copied `431960` folder, then click **Scan**.
+6. Select a supported project and click **Import Selected**.
+7. Select the imported project and click **Play on Desktop**.
 
-## What Works
+The app process must stay open while animated wallpapers are running. You can minimize or hide the control window; playback continues on the desktop layer.
 
-| Wallpaper Engine project type | macOS support |
+## Playback Behavior
+
+- **Auto-pause behind apps** is enabled by default.
+- Minimizing or hiding the Workshop Wallpaper Bridge control window does not stop playback.
+- When another app covers the desktop, video playback pauses and the wallpaper window hides.
+- When you return to the desktop, playback resumes automatically.
+- After sleep/wake or monitor changes, the app recreates the wallpaper windows and resumes the selected wallpaper.
+- You can disable auto-pause in the app header if you want continuous playback.
+
+## Lock Screen And Still Wallpaper
+
+macOS does not provide a stable public API for third-party animated Lock Screen wallpapers. This app does not use private APIs or patch system wallpaper databases.
+
+What the app can do safely:
+
+- Set a still preview image as the macOS desktop wallpaper.
+- Let macOS use that still image for the Lock Screen when your system settings mirror the desktop wallpaper.
+
+Use **Set Still Wallpaper** on an imported project. Video projects need a `preview.jpg`, `preview.png`, or similar thumbnail in the Workshop project folder.
+
+## Supported Projects
+
+| Project type | Support |
 | --- | --- |
-| Video: `.mp4`, `.mov`, `.m4v` | Plays directly on the desktop |
-| Video: `.webm`, `.mkv`, `.avi` | Can be converted with local `ffmpeg` |
-| Web: `index.html` | Plays in a desktop-level `WKWebView` |
-| Image: `.jpg`, `.png`, `.gif`, `.heic` | Plays as a static desktop background layer |
-| Scene: `scene.pkg` | Detected, but not unpacked or converted |
+| `.mp4`, `.mov`, `.m4v` video | Plays directly |
+| `.webm`, `.mkv`, `.avi` video | Convert with local `ffmpeg`, then play |
+| `index.html` web wallpaper | Plays locally in a restricted WebView |
+| `.jpg`, `.png`, `.gif`, `.heic` image | Displays as a static desktop layer |
+| `scene.pkg` scene wallpaper | Detected only; not unpacked or converted |
 
-## Safety Boundaries
+## What This App Will Not Do
 
-Workshop Wallpaper Bridge is intentionally conservative.
+Workshop Wallpaper Bridge is local-only.
 
-- No Steam Workshop downloader
-- No Steam authentication bypass
-- No DRM bypass
-- No Steam protocol emulation
-- No `scene.pkg` reverse engineering
-- No sharing, marketplace, or re-upload workflow
-- No modification of the original Workshop folder
+- It does not download Steam Workshop items.
+- It does not bypass Steam authentication.
+- It does not bypass DRM.
+- It does not emulate Steam protocols.
+- It does not unpack or reverse engineer `scene.pkg`.
+- It does not upload, share, or redistribute creator assets.
+- It does not modify your original copied Workshop folder.
 
 Imported files are copied into:
 
 ```text
 ~/Library/Application Support/WorkshopWallpaperBridge
 ```
-
-Every imported asset keeps `redistributionAllowed: false` in the local manifest.
 
 ## Install From Source
 
@@ -61,20 +86,20 @@ cd workshop-wallpaper-bridge
 swift run WorkshopWallpaperBridge
 ```
 
-To install `ffmpeg`:
+Install `ffmpeg`:
 
 ```bash
 brew install ffmpeg
 ```
 
-## Package The App
+## Build A Local App Bundle
 
 ```bash
 bash Scripts/package-app.sh
 open "dist/Workshop Wallpaper Bridge.app"
 ```
 
-The script also creates:
+The script creates:
 
 ```text
 dist/WorkshopWallpaperBridge-macOS-arm64.zip
@@ -82,7 +107,7 @@ dist/WorkshopWallpaperBridge-macOS-arm64.zip
 
 ## CLI
 
-The app ships with `wwbctl` for automation and testing.
+`wwbctl` is included for advanced users and testing.
 
 ```bash
 swift run wwbctl scan "/path/to/431960" --out index.json
@@ -91,27 +116,22 @@ swift run wwbctl convert input.webm --out output.mp4
 swift run wwbctl doctor
 ```
 
-## Workflow
+## Troubleshooting
 
-1. On Windows, use Steam and Wallpaper Engine normally.
-2. Copy your local Workshop folder, usually `steamapps/workshop/content/431960`, to your Mac.
-3. Open Workshop Wallpaper Bridge.
-4. Choose the copied folder and scan.
-5. Import supported projects into the local library.
-6. Select an imported video, web, or image project.
-7. Press **Play on Desktop**.
+If nothing appears on the desktop:
 
-The app must keep running while the animated wallpaper is playing.
+- Check that the imported project is marked `playable`.
+- Press **Stop**, then **Play on Desktop** again.
+- Temporarily turn off **Auto-pause behind apps**.
+- Make sure you are looking at the desktop, not a full-screen app Space.
 
-## Project Layout
+If WebM/MKV/AVI conversion fails:
 
-```text
-Sources/WorkshopWallpaperCore        scanner, manifest, importer, converter
-Sources/WorkshopWallpaperBridgeApp   SwiftUI app and desktop wallpaper player
-Sources/wwbctl                       CLI entrypoint
-Tests/WorkshopWallpaperCoreTests     scanner and library tests
-Scripts/package-app.sh               local .app and zip packaging
+```bash
+brew install ffmpeg
 ```
+
+If macOS warns that the app is from an unidentified developer, that means the release is not notarized yet. You can still build from source with Swift.
 
 ## Relationship To Wallpaper Engine
 

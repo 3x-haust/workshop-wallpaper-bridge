@@ -23,11 +23,13 @@ struct ContentView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Workshop Wallpaper Bridge")
                     .font(.title2.weight(.semibold))
-                Text("Local-only importer for Wallpaper Engine projects copied from your own Steam library.")
+                Text("Play copied Wallpaper Engine projects on the desktop, even when this control window is minimized.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
             Spacer()
+            Toggle("Auto-pause behind apps", isOn: $model.autoPauseWhenCovered)
+                .toggleStyle(.switch)
             Button("Stop") {
                 model.stopPlayback()
             }
@@ -38,8 +40,11 @@ struct ContentView: View {
 
     private var scanPanel: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Import Source")
+            Text("1. Choose the copied Workshop folder")
                 .font(.headline)
+            Text("Select the `431960` folder you copied from Windows Steam.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
             HStack {
                 TextField(".../steamapps/workshop/content/431960", text: $model.sourcePath)
                 Button("Browse") {
@@ -68,8 +73,11 @@ struct ContentView: View {
 
     private var libraryPanel: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Local Library")
+            Text("2. Play from your Mac library")
                 .font(.headline)
+            Text("Imported files stay local. The original Workshop folder is not modified.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
             assetList(
                 title: "Imported Projects",
                 assets: model.libraryAssets,
@@ -84,8 +92,15 @@ struct ContentView: View {
                     model.convertSelected()
                 }
                 .disabled(model.selectedLibraryAsset?.supportStatus != .needsConversion || model.isWorking)
+                Button("Set Still Wallpaper") {
+                    model.setStillWallpaper()
+                }
+                .disabled(model.selectedLibraryAsset == nil)
                 Spacer()
             }
+            Text("Animated Lock Screen is not exposed through a stable public macOS API. Still images can be set through macOS wallpaper settings.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
         .padding()
         .frame(minWidth: 460)
