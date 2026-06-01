@@ -7,22 +7,20 @@ struct WorkshopWallpaperBridgeApplication: App {
     @StateObject private var model = AppViewModel()
 
     var body: some Scene {
-        WindowGroup("Workshop Wallpaper Bridge") {
-            ContentView(model: model)
-                .frame(minWidth: 980, minHeight: 640)
+        MenuBarExtra {
+            StatusMenu(model: model)
+        } label: {
+            MenuBarIcon(model: model)
         }
-        .commands {
-            CommandMenu("Wallpaper") {
-                Button("Stop Playback") {
-                    model.stopPlayback()
-                }
-                .keyboardShortcut(".", modifiers: [.command, .shift])
-            }
-        }
+        .menuBarExtraStyle(.menu)
     }
 }
 
 final class AppLifecycleDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApp.setActivationPolicy(.accessory)
+    }
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
     }
@@ -39,5 +37,27 @@ final class AppLifecycleDelegate: NSObject, NSApplicationDelegate {
         Task { @MainActor in
             WallpaperPlayer.shared.restoreVisibleWindowsAfterAppWindowChange()
         }
+    }
+}
+
+private struct MenuBarIcon: View {
+    @ObservedObject var model: AppViewModel
+    @State private var didOpenInitialSettings = false
+
+    var body: some View {
+        Image(systemName: "photo.on.rectangle.angled")
+            .accessibilityLabel("Workshop Wallpaper Bridge")
+            .task {
+                openInitialSettings()
+            }
+    }
+
+    @MainActor
+    private func openInitialSettings() {
+        guard !didOpenInitialSettings else {
+            return
+        }
+        didOpenInitialSettings = true
+        SettingsWindowCoordinator.shared.show(model: model)
     }
 }

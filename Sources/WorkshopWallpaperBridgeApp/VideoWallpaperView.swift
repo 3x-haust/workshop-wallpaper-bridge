@@ -2,18 +2,19 @@ import AppKit
 import AVFoundation
 
 @MainActor
-final class VideoWallpaperView: NSView, PausableWallpaperContent {
+final class VideoWallpaperView: NSView, PausableWallpaperContent, DisplayModeUpdatableContent {
     private let player: AVQueuePlayer
     private let looper: AVPlayerLooper
+    private let playerLayer: AVPlayerLayer
 
-    init(url: URL, frame: CGRect) {
+    init(url: URL, frame: CGRect, displayMode: WallpaperDisplayMode) {
         let item = AVPlayerItem(url: url)
         let queue = AVQueuePlayer()
         player = queue
         looper = AVPlayerLooper(player: queue, templateItem: item)
+        playerLayer = AVPlayerLayer(player: player)
         super.init(frame: frame)
-        let playerLayer = AVPlayerLayer(player: player)
-        playerLayer.videoGravity = .resizeAspectFill
+        playerLayer.videoGravity = WallpaperContentLayout.videoGravity(for: displayMode)
         wantsLayer = true
         layer = playerLayer
         player.actionAtItemEnd = .none
@@ -37,5 +38,9 @@ final class VideoWallpaperView: NSView, PausableWallpaperContent {
         } else {
             player.play()
         }
+    }
+
+    func setDisplayMode(_ displayMode: WallpaperDisplayMode) {
+        playerLayer.videoGravity = WallpaperContentLayout.videoGravity(for: displayMode)
     }
 }

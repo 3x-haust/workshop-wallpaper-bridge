@@ -22,6 +22,10 @@ struct WWBCtl {
             try scan(arguments: Array(arguments.dropFirst()))
         case "import":
             try importAssets(arguments: Array(arguments.dropFirst()))
+        case "import-video":
+            try importVideo(arguments: Array(arguments.dropFirst()))
+        case "remove":
+            try remove(arguments: Array(arguments.dropFirst()))
         case "convert":
             try convert(arguments: Array(arguments.dropFirst()))
         case "doctor":
@@ -55,6 +59,24 @@ struct WWBCtl {
         let result = try WallpaperScanner().scan(root: URL(filePath: path))
         let imported = try result.assets.map { try store.importAsset($0) }
         print("imported \(imported.count) asset(s) into \(store.root.path)")
+    }
+
+    private static func importVideo(arguments: [String]) throws {
+        guard let path = arguments.first else {
+            throw CLIError.missingPath
+        }
+        let store = try store(from: arguments)
+        let imported = try store.importVideoFile(URL(filePath: path))
+        print("imported \(imported.title) into \(store.root.path)")
+    }
+
+    private static func remove(arguments: [String]) throws {
+        guard let id = arguments.first else {
+            throw CLIError.missingAssetId
+        }
+        let store = try store(from: arguments)
+        try store.removeAsset(id: id)
+        print("removed \(id) from \(store.root.path)")
     }
 
     private static func convert(arguments: [String]) throws {
@@ -98,6 +120,8 @@ struct WWBCtl {
         print("""
         wwbctl scan <folder> [--out <index.json>]
         wwbctl import <folder> [--library <folder>]
+        wwbctl import-video <video-file> [--library <folder>]
+        wwbctl remove <asset-id> [--library <folder>]
         wwbctl convert <input-video> --out <output.mp4>
         wwbctl doctor
         """)
@@ -107,6 +131,7 @@ struct WWBCtl {
 private enum CLIError: Error, LocalizedError {
     case unknownCommand(String)
     case missingPath
+    case missingAssetId
     case invalidConvertUsage
 
     var errorDescription: String? {
@@ -115,6 +140,8 @@ private enum CLIError: Error, LocalizedError {
             return "unknown command: \(command)"
         case .missingPath:
             return "missing folder path"
+        case .missingAssetId:
+            return "missing asset id"
         case .invalidConvertUsage:
             return "usage: wwbctl convert <input-video> --out <output.mp4>"
         }

@@ -23,6 +23,10 @@ let package = Package(
         .testTarget(
             name: "WorkshopWallpaperCoreTests",
             dependencies: ["WorkshopWallpaperCore"]
+        ),
+        .testTarget(
+            name: "WorkshopWallpaperBridgeAppTests",
+            dependencies: ["WorkshopWallpaperBridgeApp"]
         )
     ]
 )

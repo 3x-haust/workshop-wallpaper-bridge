@@ -23,7 +23,7 @@ struct ContentView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Workshop Wallpaper Bridge")
                     .font(.title2.weight(.semibold))
-                Text("Play copied Wallpaper Engine projects on the desktop, even when this control window is minimized.")
+                Text("Menu bar wallpaper utility for copied Wallpaper Engine projects.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
@@ -42,7 +42,10 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("1. Choose the copied Workshop folder")
                 .font(.headline)
-            Text("Select the `431960` folder you copied from Windows Steam.")
+            Text(
+                "Select the `431960` folder you copied from Windows Steam, "
+                    + "or add your own video from the library side."
+            )
                 .font(.caption)
                 .foregroundStyle(.secondary)
             HStack {
@@ -75,13 +78,29 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("2. Play from your Mac library")
                 .font(.headline)
-            Text("Imported files stay local. The original Workshop folder is not modified.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            assetList(
+            HStack {
+                Text("Imported files stay local. The original files are not modified.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Picker("Display", selection: $model.displayMode) {
+                    ForEach(WallpaperDisplayMode.allCases) { mode in
+                        Text(mode.title).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 220)
+                Button("Add Video File") {
+                    model.chooseVideoFile()
+                }
+            }
+            libraryAssetList(
                 title: "Imported Projects",
                 assets: model.libraryAssets,
-                selection: $model.selectedLibraryAssetId
+                selection: Binding(
+                    get: { model.selectedLibraryAssetIds },
+                    set: { model.selectLibraryAssets($0) }
+                )
             )
             HStack {
                 Button("Play on Desktop") {
@@ -96,9 +115,17 @@ struct ContentView: View {
                     model.setStillWallpaper()
                 }
                 .disabled(model.selectedLibraryAsset == nil)
+                Button(model.selectedLibraryAssetCount > 1 ? "Remove Selected" : "Remove") {
+                    model.removeSelectedLibraryAssets()
+                }
+                .disabled(model.selectedLibraryAssetIds.isEmpty)
+                .keyboardShortcut(.delete, modifiers: [])
                 Spacer()
             }
-            Text("Animated Lock Screen is not exposed through a stable public macOS API. Still images can be set through macOS wallpaper settings.")
+            Text(
+                "Animated Lock Screen is not exposed through a stable public macOS API. "
+                    + "Still images can be set through macOS wallpaper settings."
+            )
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -129,6 +156,32 @@ struct ContentView: View {
             ForEach(assets) { asset in
                 AssetRow(asset: asset)
                     .tag(asset.id)
+            }
+        }
+        .overlay {
+            if assets.isEmpty {
+                Text(title)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func libraryAssetList(
+        title: String,
+        assets: [WallpaperAsset],
+        selection: Binding<Set<WallpaperAsset.ID>>
+    ) -> some View {
+        List(selection: selection) {
+            ForEach(assets) { asset in
+                AssetRow(asset: asset)
+                    .tag(asset.id)
+                    .contextMenu {
+                        Button("Remove") {
+                            model.selectLibraryAssets([asset.id])
+                            model.removeSelectedLibraryAssets()
+                        }
+                    }
             }
         }
         .overlay {

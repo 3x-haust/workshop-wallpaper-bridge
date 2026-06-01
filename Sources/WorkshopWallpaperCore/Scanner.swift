@@ -62,17 +62,18 @@ public struct WallpaperScanner: Sendable {
             return preferred
         }
         let files = try recursiveFiles(in: project)
-        return files.sorted(by: entrypointSort).first { classify(entrypoint: $0) != .unknown }
+        return files.sorted(by: entrypointSort).first {
+            classify(entrypoint: $0) != .unknown && !isImplicitThumbnail($0)
+        }
     }
 
     private func findThumbnail(in project: URL, preferredFile: String?) throws -> URL? {
         if let preferredFile, let preferred = resolveExisting(project: project, relativePath: preferredFile) {
             return preferred
         }
-        let preferredNames = ["preview", "thumbnail", "thumb", "cover"]
         return try recursiveFiles(in: project).first {
             imageExtensions.contains($0.pathExtension.lowercased())
-                && preferredNames.contains($0.deletingPathExtension().lastPathComponent.lowercased())
+                && preferredThumbnailNames.contains($0.deletingPathExtension().lastPathComponent.lowercased())
         }
     }
 
@@ -95,6 +96,11 @@ public struct WallpaperScanner: Sendable {
     private func resolveExisting(project: URL, relativePath: String) -> URL? {
         let candidate = project.appending(path: relativePath)
         return FileManager.default.fileExists(atPath: candidate.path) ? candidate : nil
+    }
+
+    private func isImplicitThumbnail(_ url: URL) -> Bool {
+        imageExtensions.contains(url.pathExtension.lowercased())
+            && preferredThumbnailNames.contains(url.deletingPathExtension().lastPathComponent.lowercased())
     }
 
     private func classify(entrypoint: URL?) -> WallpaperKind {
@@ -135,10 +141,17 @@ public struct WallpaperScanner: Sendable {
     private func issues(metadata: ProjectMetadataResult, kind: WallpaperKind, entrypoint: URL?) -> [ScanIssue] {
         var result = metadata.issue.map { [$0] } ?? []
         if entrypoint == nil {
-            result.append(ScanIssue(code: "no_supported_entrypoint", message: "No playable media entrypoint was found."))
+            result.append(
+                ScanIssue(code: "no_supported_entrypoint", message: "No playable media entrypoint was found.")
+            )
         }
         if kind == .scene {
-            result.append(ScanIssue(code: "proprietary_scene_package", message: "scene.pkg is a proprietary Wallpaper Engine scene package and is not unpacked."))
+            result.append(
+                ScanIssue(
+                    code: "proprietary_scene_package",
+                    message: "scene.pkg is a proprietary Wallpaper Engine scene package and is not unpacked."
+                )
+            )
         }
         return result
     }
@@ -187,7 +200,9 @@ private extension ProjectMetadata {
 private let playableVideoExtensions = ["mp4", "mov", "m4v"]
 private let conversionVideoExtensions = ["webm", "mkv", "avi"]
 private let imageExtensions = ["jpg", "jpeg", "png", "gif", "heic"]
-private let entrypointExtensions = playableVideoExtensions + conversionVideoExtensions + imageExtensions + ["html", "htm", "pkg"]
+private let entrypointExtensions =
+    playableVideoExtensions + conversionVideoExtensions + imageExtensions + ["html", "htm", "pkg"]
+private let preferredThumbnailNames = ["preview", "thumbnail", "thumb", "cover"]
 
 private func entrypointSort(_ lhs: URL, _ rhs: URL) -> Bool {
     entrypointRank(lhs) < entrypointRank(rhs)

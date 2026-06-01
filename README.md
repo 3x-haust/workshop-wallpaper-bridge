@@ -17,20 +17,29 @@ Workshop Wallpaper Bridge is for people who already bought Wallpaper Engine on W
 2. Copy the `431960` folder to your Mac.
 3. Download `WorkshopWallpaperBridge-macOS-arm64.zip` from the latest GitHub release.
 4. Unzip it and open **Workshop Wallpaper Bridge.app**.
-5. Click **Browse**, choose the copied `431960` folder, then click **Scan**.
-6. Select a supported project and click **Import Selected**.
-7. Select the imported project and click **Play on Desktop**.
+5. Click the menu bar icon, then choose **Open Settings**.
+6. For Wallpaper Engine projects, click **Browse**, choose the copied `431960` folder, then click **Scan**.
+7. Select a supported project and click **Import Selected**.
+8. For your own video, click **Add Video File** instead.
+9. Select the imported project or video and click **Play on Desktop**.
+10. Choose **Display**:
+    - **Fit** keeps the full wallpaper visible and may show letterboxing.
+    - **Fill** covers the screen like Wallpaper Engine's cover-style modes and may crop the edges.
+    - **Stretch** fills the screen exactly and may distort the image.
+11. Use **Remove** to delete an imported item from the Mac library without touching the original copied folder or video.
 
-The app process must stay open while animated wallpapers are running. You can minimize or hide the control window; playback continues on the desktop layer.
+The app runs as a menu bar utility. It does not stay in the Dock or app switcher, and the settings window can be closed while animated wallpapers continue running on the desktop layer.
 
 ## Playback Behavior
 
 - **Auto-pause behind apps** is enabled by default.
 - Minimizing or hiding the Workshop Wallpaper Bridge control window does not stop playback.
-- When another app covers the desktop, video playback pauses and the wallpaper window hides.
+- Closing the settings window does not quit the app. Use **Quit** from the menu bar icon when you want to fully stop the background utility.
+- When another app covers the desktop, video playback pauses while the wallpaper layer stays in place.
 - When you return to the desktop, playback resumes automatically.
 - After sleep/wake or monitor changes, the app recreates the wallpaper windows and resumes the selected wallpaper.
-- You can disable auto-pause in the app header if you want continuous playback.
+- You can disable auto-pause from the menu bar icon or the settings window if you want continuous playback.
+- Use **Remove** in the imported library list to delete copied Mac-library files you no longer want.
 
 ## Lock Screen And Still Wallpaper
 
@@ -52,6 +61,10 @@ Use **Set Still Wallpaper** on an imported project. Video projects need a `previ
 | `index.html` web wallpaper | Plays locally in a restricted WebView |
 | `.jpg`, `.png`, `.gif`, `.heic` image | Displays as a static desktop layer |
 | `scene.pkg` scene wallpaper | Detected only; not unpacked or converted |
+
+You can also add your own local video with **Add Video File**. MP4, MOV, and M4V play directly. WebM, MKV, and AVI are imported first, then converted locally with `ffmpeg`.
+
+Workshop preview files such as `preview.jpg`, `thumbnail.jpg`, or `cover.png` are treated as thumbnails, not as the real wallpaper content. If a Workshop project only contains `scene.pkg` plus a preview image, the app marks it as unsupported instead of stretching the low-resolution preview across your screen.
 
 ## What This App Will Not Do
 
@@ -112,6 +125,8 @@ dist/WorkshopWallpaperBridge-macOS-arm64.zip
 ```bash
 swift run wwbctl scan "/path/to/431960" --out index.json
 swift run wwbctl import "/path/to/431960"
+swift run wwbctl import-video "/path/to/video.mp4"
+swift run wwbctl remove "<asset-id>"
 swift run wwbctl convert input.webm --out output.mp4
 swift run wwbctl doctor
 ```
@@ -124,6 +139,12 @@ If nothing appears on the desktop:
 - Press **Stop**, then **Play on Desktop** again.
 - Temporarily turn off **Auto-pause behind apps**.
 - Make sure you are looking at the desktop, not a full-screen app Space.
+
+If the wallpaper looks blurry or cropped:
+
+- Choose **Fit** to keep the full image/video visible.
+- Choose **Fill** if you want the screen fully covered and accept edge cropping.
+- Check whether the Workshop item is a `scene.pkg` project. Scene-only projects are detected but not rendered, so a preview thumbnail is not used as a fake wallpaper.
 
 If WebM/MKV/AVI conversion fails:
 

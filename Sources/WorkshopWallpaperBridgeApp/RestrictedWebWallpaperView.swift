@@ -31,7 +31,6 @@ final class RestrictedWebWallpaperView: NSView, WKNavigationDelegate, PausableWa
     }
 
     func setPlaybackSuspended(_ suspended: Bool) {
-        webView.isHidden = suspended
         let command = suspended
             ? "document.querySelectorAll('video,audio').forEach((item) => item.pause())"
             : "document.querySelectorAll('video,audio').forEach((item) => item.play().catch(() => {}))"

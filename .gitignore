@@ -4,3 +4,4 @@ dist/
 DerivedData/
 .DS_Store
 Package.resolved
+.omo

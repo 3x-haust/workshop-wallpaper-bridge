@@ -8,15 +8,21 @@ final class WallpaperPlayer {
     private var windows: [WallpaperWindow] = []
     private var activeAsset: WallpaperAsset?
     private var autoPauseWhenCovered = true
+    private var displayMode: WallpaperDisplayMode = .fit
     private var visibilityTimer: Timer?
     private var workspaceObservers: [NSObjectProtocol] = []
     private var isSuspended = false
     private let visibilityMonitor = DesktopVisibilityMonitor()
 
-    func play(asset: WallpaperAsset, autoPauseWhenCovered: Bool = true) throws {
+    func play(
+        asset: WallpaperAsset,
+        autoPauseWhenCovered: Bool = true,
+        displayMode: WallpaperDisplayMode = .fit
+    ) throws {
         closeWindows()
         activeAsset = asset
         self.autoPauseWhenCovered = autoPauseWhenCovered
+        self.displayMode = displayMode
         guard asset.supportStatus == .playable else {
             throw PlaybackError.notPlayable(asset.supportStatus.rawValue)
         }
@@ -25,12 +31,19 @@ final class WallpaperPlayer {
         }
         let url = URL(filePath: entrypoint)
         windows = try NSScreen.screens.map { screen in
-            try WallpaperWindow(asset: asset, url: url, frame: screen.frame)
+            try WallpaperWindow(asset: asset, url: url, frame: screen.frame, displayMode: displayMode)
         }
         windows.forEach { $0.show() }
         startLifecycleObservers()
         startVisibilityTimer()
         updateVisibilityState()
+    }
+
+    func setDisplayMode(_ displayMode: WallpaperDisplayMode) {
+        self.displayMode = displayMode
+        windows.forEach {
+            $0.setDisplayMode(displayMode)
+        }
     }
 
     func setAutoPauseWhenCovered(_ enabled: Bool) {
@@ -56,6 +69,19 @@ final class WallpaperPlayer {
     private func closeWindows() {
         windows.forEach { $0.close() }
         windows = []
+    }
+
+    private func reopen(asset: WallpaperAsset) throws {
+        guard let entrypoint = asset.entrypoint else {
+            throw PlaybackError.missingEntrypoint
+        }
+        closeWindows()
+        let url = URL(filePath: entrypoint)
+        windows = try NSScreen.screens.map { screen in
+            try WallpaperWindow(asset: asset, url: url, frame: screen.frame, displayMode: displayMode)
+        }
+        windows.forEach { $0.show() }
+        updateVisibilityState()
     }
 
     private func startVisibilityTimer() {
@@ -124,7 +150,7 @@ final class WallpaperPlayer {
             return
         }
         do {
-            try play(asset: activeAsset, autoPauseWhenCovered: autoPauseWhenCovered)
+            try play(asset: activeAsset, autoPauseWhenCovered: autoPauseWhenCovered, displayMode: displayMode)
         } catch {
             closeWindows()
         }
@@ -136,8 +162,8 @@ private final class WallpaperWindow {
     private let window: NSWindow
     private let content: NSView
 
-    init(asset: WallpaperAsset, url: URL, frame: CGRect) throws {
-        content = try Self.makeContentView(asset: asset, url: url, frame: frame)
+    init(asset: WallpaperAsset, url: URL, frame: CGRect, displayMode: WallpaperDisplayMode) throws {
+        content = try Self.makeContentView(asset: asset, url: url, frame: frame, displayMode: displayMode)
         window = NSWindow(
             contentRect: frame,
             styleMask: [.borderless],
@@ -162,35 +188,80 @@ private final class WallpaperWindow {
     }
 
     func setSuspended(_ suspended: Bool) {
-        if suspended {
-            window.orderOut(nil)
-        } else {
-            show()
-        }
         (content as? PausableWallpaperContent)?.setPlaybackSuspended(suspended)
     }
 
-    private static func makeContentView(asset: WallpaperAsset, url: URL, frame: CGRect) throws -> NSView {
+    func setDisplayMode(_ displayMode: WallpaperDisplayMode) {
+        (content as? DisplayModeUpdatableContent)?.setDisplayMode(displayMode)
+    }
+
+    private static func makeContentView(
+        asset: WallpaperAsset,
+        url: URL,
+        frame: CGRect,
+        displayMode: WallpaperDisplayMode
+    ) throws -> NSView {
+        let contentFrame = WallpaperContentLayout.contentFrame(for: frame)
         switch asset.kind {
         case .video:
-            return VideoWallpaperView(url: url, frame: frame)
+            return VideoWallpaperView(url: url, frame: contentFrame, displayMode: displayMode)
         case .web:
             return RestrictedWebWallpaperView(
                 url: url,
                 readAccessURL: URL(filePath: asset.projectDirectory),
-                frame: frame
+                frame: contentFrame
             )
         case .image:
             guard let image = NSImage(contentsOf: url) else {
                 throw PlaybackError.invalidImage
             }
-            let imageView = NSImageView(frame: frame)
-            imageView.image = image
-            imageView.imageScaling = .scaleProportionallyUpOrDown
-            return imageView
+            return ImageWallpaperView(image: image, frame: contentFrame, displayMode: displayMode)
         case .scene, .unknown:
             throw PlaybackError.notPlayable(asset.kind.rawValue)
         }
+    }
+}
+
+@MainActor
+private final class ImageWallpaperView: NSView, DisplayModeUpdatableContent {
+    private let image: NSImage
+    private var displayMode: WallpaperDisplayMode
+
+    init(image: NSImage, frame: CGRect, displayMode: WallpaperDisplayMode) {
+        self.image = image
+        self.displayMode = displayMode
+        super.init(frame: frame)
+        wantsLayer = true
+        layer = CALayer()
+        configureLayer()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is not supported")
+    }
+
+    override func layout() {
+        super.layout()
+        configureLayer()
+    }
+
+    private func configureLayer() {
+        guard let layer else {
+            return
+        }
+        layer.frame = bounds
+        layer.backgroundColor = NSColor.black.cgColor
+        layer.contentsGravity = WallpaperContentLayout.imageContentsGravity(for: displayMode)
+        layer.contentsScale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
+        layer.minificationFilter = .linear
+        layer.magnificationFilter = .linear
+        layer.contents = image
+    }
+
+    func setDisplayMode(_ displayMode: WallpaperDisplayMode) {
+        self.displayMode = displayMode
+        configureLayer()
     }
 }
 
