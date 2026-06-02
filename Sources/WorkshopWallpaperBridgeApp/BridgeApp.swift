@@ -10,7 +10,9 @@ struct WorkshopWallpaperBridgeApplication: App {
         MenuBarExtra {
             StatusMenu(model: model)
         } label: {
-            MenuBarIcon(model: model)
+            MenuBarIcon {
+                SettingsWindowCoordinator.shared.show(model: model)
+            }
         }
         .menuBarExtraStyle(.menu)
     }
@@ -41,7 +43,7 @@ final class AppLifecycleDelegate: NSObject, NSApplicationDelegate {
 }
 
 private struct MenuBarIcon: View {
-    @ObservedObject var model: AppViewModel
+    let openSettings: @MainActor () -> Void
     @State private var didOpenInitialSettings = false
 
     var body: some View {
@@ -58,6 +60,6 @@ private struct MenuBarIcon: View {
             return
         }
         didOpenInitialSettings = true
-        SettingsWindowCoordinator.shared.show(model: model)
+        openSettings()
     }
 }

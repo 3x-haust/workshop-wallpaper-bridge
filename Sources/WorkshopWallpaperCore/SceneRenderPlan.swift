@@ -305,19 +305,19 @@ public struct SceneRenderPlanBuilder: Sendable {
         let isRelative = boolValue((animation["options"] as? [String: Any])?["relative"]) ?? false
         let missingChannelValue = isRelative ? SceneVector3(x: 0, y: 0, z: 0) : fallback
         let channels = [
-            channelFrames(animation["c0"], fps: fps),
-            channelFrames(animation["c1"], fps: fps),
-            channelFrames(animation["c2"], fps: fps)
+            AnimationChannel(frames: channelFrames(animation["c0"], fps: fps)),
+            AnimationChannel(frames: channelFrames(animation["c1"], fps: fps)),
+            AnimationChannel(frames: channelFrames(animation["c2"], fps: fps))
         ]
         let duration = animationDuration(animation, fps: fps, channels: channels)
-        let times = Set(channels.flatMap { $0.keys }).sorted()
+        let times = Set(channels.flatMap(\.times)).sorted()
         let keyframes = times.map { time in
             SceneVectorKeyframe(
                 time: time,
                 value: SceneVector3(
-                    x: interpolatedValue(at: time, in: channels[0], fallback: missingChannelValue.x),
-                    y: interpolatedValue(at: time, in: channels[1], fallback: missingChannelValue.y),
-                    z: interpolatedValue(at: time, in: channels[2], fallback: missingChannelValue.z)
+                    x: channels[0].interpolatedValue(at: time, fallback: missingChannelValue.x),
+                    y: channels[1].interpolatedValue(at: time, fallback: missingChannelValue.y),
+                    z: channels[2].interpolatedValue(at: time, fallback: missingChannelValue.z)
                 )
             )
         }
@@ -334,11 +334,11 @@ public struct SceneRenderPlanBuilder: Sendable {
         }
         let fps = doubleValue((animation["options"] as? [String: Any])?["fps"]) ?? 30
         let isRelative = boolValue((animation["options"] as? [String: Any])?["relative"]) ?? false
-        let frames = channelFrames(animation["c0"], fps: fps)
+        let frames = AnimationChannel(frames: channelFrames(animation["c0"], fps: fps))
         let duration = animationDuration(animation, fps: fps, channels: [frames])
         let missingChannelValue = isRelative ? 0 : fallback
-        let keyframes = frames.keys.sorted().map { time in
-            SceneScalarKeyframe(time: time, value: frames[time] ?? missingChannelValue)
+        let keyframes = frames.times.map { time in
+            SceneScalarKeyframe(time: time, value: frames.frames[time] ?? missingChannelValue)
         }
         guard keyframes.count >= 2 else {
             return nil
@@ -349,10 +349,10 @@ public struct SceneRenderPlanBuilder: Sendable {
     private static func animationDuration(
         _ animation: [String: Any],
         fps: Double,
-        channels: [[Double: Double]]
+        channels: [AnimationChannel]
     ) -> Double {
         let rawLength = doubleValue((animation["options"] as? [String: Any])?["length"])
-        let maxKeyTime = channels.flatMap { $0.keys }.max() ?? 0
+        let maxKeyTime = channels.flatMap(\.times).max() ?? 0
         guard let rawLength else {
             return max(maxKeyTime, 0.1)
         }
@@ -361,41 +361,6 @@ public struct SceneRenderPlanBuilder: Sendable {
             ? rawLength / safeFPS
             : rawLength
         return max(interpretedLength, maxKeyTime, 0.1)
-    }
-
-    private static func interpolatedValue(
-        at time: Double,
-        in frames: [Double: Double],
-        fallback: Double
-    ) -> Double {
-        guard !frames.isEmpty else {
-            return fallback
-        }
-        if let exact = frames[time] {
-            return exact
-        }
-        let times = frames.keys.sorted()
-        guard let first = times.first, let last = times.last else {
-            return fallback
-        }
-        if time <= first {
-            return frames[first] ?? fallback
-        }
-        if time >= last {
-            return frames[last] ?? fallback
-        }
-        for index in 1..<times.count {
-            let previous = times[index - 1]
-            let next = times[index]
-            guard previous <= time, time <= next,
-                  let previousValue = frames[previous],
-                  let nextValue = frames[next] else {
-                continue
-            }
-            let progress = (time - previous) / max(next - previous, 0.000_001)
-            return previousValue + ((nextValue - previousValue) * progress)
-        }
-        return fallback
     }
 
     private static func channelFrames(_ value: Any?, fps: Double) -> [Double: Double] {
@@ -502,6 +467,46 @@ public struct SceneRenderPlanBuilder: Sendable {
             return number.stringValue
         }
         return nil
+    }
+}
+
+private struct AnimationChannel {
+    let frames: [Double: Double]
+    let times: [Double]
+
+    init(frames: [Double: Double]) {
+        self.frames = frames
+        times = frames.keys.sorted()
+    }
+
+    func interpolatedValue(at time: Double, fallback: Double) -> Double {
+        guard !frames.isEmpty else {
+            return fallback
+        }
+        if let exact = frames[time] {
+            return exact
+        }
+        guard let first = times.first, let last = times.last else {
+            return fallback
+        }
+        if time <= first {
+            return frames[first] ?? fallback
+        }
+        if time >= last {
+            return frames[last] ?? fallback
+        }
+        for index in 1..<times.count {
+            let previous = times[index - 1]
+            let next = times[index]
+            guard previous <= time, time <= next,
+                  let previousValue = frames[previous],
+                  let nextValue = frames[next] else {
+                continue
+            }
+            let progress = (time - previous) / max(next - previous, 0.000_001)
+            return previousValue + ((nextValue - previousValue) * progress)
+        }
+        return fallback
     }
 }
 

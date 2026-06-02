@@ -10,16 +10,18 @@ public struct ScenePackageEntry: Equatable, Sendable {
 public struct ScenePackage: Equatable, Sendable {
     public let magic: String
     public let entries: [ScenePackageEntry]
+    private let entriesByPath: [String: ScenePackageEntry]
     private let data: Data
 
     init(magic: String, entries: [ScenePackageEntry], data: Data) {
         self.magic = magic
         self.entries = entries
+        entriesByPath = Dictionary(entries.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
         self.data = data
     }
 
     public func entry(named path: String) -> ScenePackageEntry? {
-        entries.first { $0.path == path }
+        entriesByPath[path]
     }
 
     public func data(for entry: ScenePackageEntry) -> Data {

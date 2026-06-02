@@ -26,11 +26,28 @@ public struct WallpaperScanner: Sendable {
 
     private func scanProject(root: URL, project: URL) throws -> WallpaperAsset {
         let metadata = ProjectMetadata.load(from: project.appending(path: "project.json"))
-        let entry = try findEntrypoint(in: project, preferredFile: metadata.value?.file)
+        var recursiveFileCache: [URL]?
+        func recursiveProjectFiles() throws -> [URL] {
+            if let recursiveFileCache {
+                return recursiveFileCache
+            }
+            let files = try recursiveFiles(in: project)
+            recursiveFileCache = files
+            return files
+        }
+        let entry = try findEntrypoint(
+            in: project,
+            preferredFile: metadata.value?.file,
+            recursiveFiles: recursiveProjectFiles
+        )
         let kind = classify(entrypoint: entry)
         let status = supportStatus(kind: kind, entrypoint: entry)
         let issues = issues(metadata: metadata, kind: kind, entrypoint: entry)
-        let thumbnail = try findThumbnail(in: project, preferredFile: metadata.value?.preview)
+        let thumbnail = try findThumbnail(
+            in: project,
+            preferredFile: metadata.value?.preview,
+            recursiveFiles: recursiveProjectFiles
+        )
         let id = project.lastPathComponent
         return WallpaperAsset(
             id: id,
@@ -57,21 +74,29 @@ public struct WallpaperScanner: Sendable {
         return files.contains { entrypointExtensions.contains(URL(filePath: $0).pathExtension.lowercased()) }
     }
 
-    private func findEntrypoint(in project: URL, preferredFile: String?) throws -> URL? {
+    private func findEntrypoint(
+        in project: URL,
+        preferredFile: String?,
+        recursiveFiles: () throws -> [URL]
+    ) throws -> URL? {
         if let preferredFile, let preferred = resolveExisting(project: project, relativePath: preferredFile) {
             return preferred
         }
-        let files = try recursiveFiles(in: project)
+        let files = try recursiveFiles()
         return files.sorted(by: entrypointSort).first {
             classify(entrypoint: $0) != .unknown && !isImplicitThumbnail($0)
         }
     }
 
-    private func findThumbnail(in project: URL, preferredFile: String?) throws -> URL? {
+    private func findThumbnail(
+        in project: URL,
+        preferredFile: String?,
+        recursiveFiles: () throws -> [URL]
+    ) throws -> URL? {
         if let preferredFile, let preferred = resolveExisting(project: project, relativePath: preferredFile) {
             return preferred
         }
-        return try recursiveFiles(in: project).first {
+        return try recursiveFiles().first {
             imageExtensions.contains($0.pathExtension.lowercased())
                 && preferredThumbnailNames.contains($0.deletingPathExtension().lastPathComponent.lowercased())
         }

@@ -5,7 +5,34 @@ import WorkshopWallpaperCore
 
 @MainActor
 final class AppViewModelTests: XCTestCase {
-    func testImportSelectedImportsMultipleScannedAssets() throws {
+    func testScanSourceReturnsImmediatelyWhileBackgroundScanRuns() async throws {
+        // Given
+        let scanned = ScanResult(root: "/slow", generatedAt: Date(), assets: [])
+        let model = AppViewModel(
+            store: LibraryStore(root: try makeTempDirectory()),
+            loginItemController: MockLoginItemController(),
+            userDefaults: try makeUserDefaults(),
+            operations: AppViewModelOperations(
+                scan: { _ in
+                    Thread.sleep(forTimeInterval: 0.15)
+                    return scanned
+                }
+            )
+        )
+        model.sourcePath = "/slow"
+
+        // When
+        model.scanSource()
+
+        // Then
+        XCTAssertTrue(model.isWorking)
+        XCTAssertEqual(model.status, "Scanning /slow...")
+        await waitForWorkToFinish(model)
+        XCTAssertTrue(model.scannedAssets.isEmpty)
+        XCTAssertEqual(model.status, "Found 0 project(s).")
+    }
+
+    func testImportSelectedImportsMultipleScannedAssets() async throws {
         // Given
         let sourceRoot = try makeTempDirectory()
         let first = try makeScannedProject(root: sourceRoot, id: "first", title: "First Loop")
@@ -21,6 +48,7 @@ final class AppViewModelTests: XCTestCase {
 
         // When
         model.importSelected()
+        await waitForWorkToFinish(model)
         let manifest = try store.load()
 
         // Then
@@ -74,7 +102,7 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertEqual(model.selectedLibraryAsset, imported)
     }
 
-    func testRemoveSelectedLibraryAssetDeletesImportedCopy() throws {
+    func testRemoveSelectedLibraryAssetDeletesImportedCopy() async throws {
         // Given
         let sourceRoot = try makeTempDirectory()
         let video = sourceRoot.appending(path: "clip.mp4")
@@ -90,6 +118,7 @@ final class AppViewModelTests: XCTestCase {
 
         // When
         model.removeSelectedLibraryAsset()
+        await waitForWorkToFinish(model)
         let manifest = try store.load()
 
         // Then
@@ -100,7 +129,7 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: video.path))
     }
 
-    func testRemoveSelectedLibraryAssetsDeletesMultipleImportedCopies() throws {
+    func testRemoveSelectedLibraryAssetsDeletesMultipleImportedCopies() async throws {
         // Given
         let sourceRoot = try makeTempDirectory()
         let firstVideo = sourceRoot.appending(path: "first.mp4")
@@ -119,6 +148,7 @@ final class AppViewModelTests: XCTestCase {
 
         // When
         model.removeSelectedLibraryAssets()
+        await waitForWorkToFinish(model)
         let manifest = try store.load()
 
         // Then
@@ -259,6 +289,20 @@ final class AppViewModelTests: XCTestCase {
             defaults.removePersistentDomain(forName: suiteName)
         }
         return defaults
+    }
+
+    private func waitForWorkToFinish(
+        _ model: AppViewModel,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) async {
+        for _ in 0..<200 {
+            if !model.isWorking {
+                return
+            }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTFail("Timed out waiting for background work to finish.", file: file, line: line)
     }
 
     private func makeScannedProject(root: URL, id: String, title: String) throws -> WallpaperAsset {

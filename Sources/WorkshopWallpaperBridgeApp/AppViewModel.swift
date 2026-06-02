@@ -3,6 +3,72 @@ import Foundation
 import UniformTypeIdentifiers
 import WorkshopWallpaperCore
 
+struct AppViewModelOperations: Sendable {
+    var scan: @Sendable (String) throws -> ScanResult
+    var loadLibrary: @Sendable () throws -> [WallpaperAsset]
+    var importAssets: @Sendable ([WallpaperAsset]) throws -> [WallpaperAsset]
+    var importVideoFile: @Sendable (URL) throws -> WallpaperAsset
+    var removeAssets: @Sendable ([WallpaperAsset.ID]) throws -> Void
+    var replaceAsset: @Sendable (WallpaperAsset) throws -> Void
+
+    init(
+        scan: @escaping @Sendable (String) throws -> ScanResult = { path in
+            try WallpaperScanner().scan(root: URL(filePath: path))
+        },
+        loadLibrary: @escaping @Sendable () throws -> [WallpaperAsset] = {
+            throw AppViewModelOperationsError.unconfiguredOperation
+        },
+        importAssets: @escaping @Sendable ([WallpaperAsset]) throws -> [WallpaperAsset] = { _ in
+            throw AppViewModelOperationsError.unconfiguredOperation
+        },
+        importVideoFile: @escaping @Sendable (URL) throws -> WallpaperAsset = { _ in
+            throw AppViewModelOperationsError.unconfiguredOperation
+        },
+        removeAssets: @escaping @Sendable ([WallpaperAsset.ID]) throws -> Void = { _ in
+            throw AppViewModelOperationsError.unconfiguredOperation
+        },
+        replaceAsset: @escaping @Sendable (WallpaperAsset) throws -> Void = { _ in
+            throw AppViewModelOperationsError.unconfiguredOperation
+        }
+    ) {
+        self.scan = scan
+        self.loadLibrary = loadLibrary
+        self.importAssets = importAssets
+        self.importVideoFile = importVideoFile
+        self.removeAssets = removeAssets
+        self.replaceAsset = replaceAsset
+    }
+
+    static func live(store: LibraryStore) -> AppViewModelOperations {
+        AppViewModelOperations(
+            scan: { path in
+                try WallpaperScanner().scan(root: URL(filePath: path))
+            },
+            loadLibrary: {
+                try store.load().assets
+            },
+            importAssets: { assets in
+                try assets.map { try store.importAsset($0) }
+            },
+            importVideoFile: { url in
+                try store.importVideoFile(url)
+            },
+            removeAssets: { ids in
+                for id in ids {
+                    try store.removeAsset(id: id)
+                }
+            },
+            replaceAsset: { asset in
+                try store.replaceAsset(asset)
+            }
+        )
+    }
+}
+
+private enum AppViewModelOperationsError: Error {
+    case unconfiguredOperation
+}
+
 @MainActor
 final class AppViewModel: ObservableObject {
     @Published var sourcePath = ""
@@ -44,10 +110,10 @@ final class AppViewModel: ObservableObject {
         }
     }
 
-    private let scanner = WallpaperScanner()
     private let converter = VideoConverter()
     private let systemWallpaperSetter = SystemWallpaperSetter()
     private let store: LibraryStore
+    private let operations: AppViewModelOperations
     private let loginItemController: LoginItemManaging
     private let lockScreenAnimationController: LockScreenAnimationManaging
     private let userDefaults: UserDefaults
@@ -60,6 +126,7 @@ final class AppViewModel: ObservableObject {
         lockScreenAnimationController = LockScreenAnimationController()
         do {
             store = try LibraryStore.defaultStore()
+            operations = .live(store: store)
             restorePreferences()
             loadLibrary()
             playLastWallpaperIfAvailable()
@@ -68,6 +135,7 @@ final class AppViewModel: ObservableObject {
             store = LibraryStore(
                 root: FileManager.default.temporaryDirectory.appending(path: "WorkshopWallpaperBridge")
             )
+            operations = .live(store: store)
             status = error.localizedDescription
         }
         syncLaunchAtLoginStatus()
@@ -77,9 +145,11 @@ final class AppViewModel: ObservableObject {
         store: LibraryStore,
         loginItemController: LoginItemManaging = LoginItemController(),
         lockScreenAnimationController: LockScreenAnimationManaging = LockScreenAnimationController(),
-        userDefaults: UserDefaults = .standard
+        userDefaults: UserDefaults = .standard,
+        operations: AppViewModelOperations? = nil
     ) {
         self.store = store
+        self.operations = operations ?? .live(store: store)
         self.loginItemController = loginItemController
         self.lockScreenAnimationController = lockScreenAnimationController
         self.userDefaults = userDefaults
@@ -160,13 +230,22 @@ extension AppViewModel {
             status = "Choose a folder first."
             return
         }
-        do {
-            let result = try scanner.scan(root: URL(filePath: sourcePath))
-            scannedAssets = result.assets
-            selectedScannedAssetIds = result.assets.first.map { Set([$0.id]) } ?? []
-            status = "Found \(result.assets.count) project(s)."
-        } catch {
-            status = error.localizedDescription
+        let path = sourcePath
+        let scan = operations.scan
+        isWorking = true
+        status = "Scanning \(path)..."
+        Task {
+            do {
+                let result = try await Task.detached(priority: .userInitiated) {
+                    try scan(path)
+                }.value
+                scannedAssets = result.assets
+                selectedScannedAssetIds = result.assets.first.map { Set([$0.id]) } ?? []
+                status = "Found \(result.assets.count) project(s)."
+            } catch {
+                status = error.localizedDescription
+            }
+            isWorking = false
         }
     }
 
@@ -176,25 +255,44 @@ extension AppViewModel {
             status = "Select a scanned project first."
             return
         }
-        var importedAssets: [WallpaperAsset] = []
-        do {
-            for asset in assets {
-                importedAssets.append(try store.importAsset(asset))
+        let importAssets = operations.importAssets
+        let loadLibrary = operations.loadLibrary
+        isWorking = true
+        status = assets.count == 1
+            ? "Importing \(assets[0].title)..."
+            : "Importing \(assets.count) projects..."
+        Task {
+            var importedAssets: [WallpaperAsset] = []
+            do {
+                (importedAssets, libraryAssets) = try await Task.detached(priority: .userInitiated) {
+                    let imported = try importAssets(assets)
+                    return (imported, try loadLibrary())
+                }.value
+                normalizeLibrarySelection(allowEmpty: false)
+                selectLibraryAssets(Set(importedAssets.map(\.id)))
+                if importedAssets.count == 1, let imported = importedAssets.first {
+                    status = "Imported \(imported.title)."
+                } else {
+                    status = "Imported \(importedAssets.count) projects."
+                }
+            } catch {
+                do {
+                    libraryAssets = try await Task.detached(priority: .userInitiated) {
+                        try loadLibrary()
+                    }.value
+                    normalizeLibrarySelection(allowEmpty: false)
+                } catch {
+                    status = error.localizedDescription
+                    isWorking = false
+                    return
+                }
+                if importedAssets.isEmpty {
+                    status = error.localizedDescription
+                } else {
+                    status = "Imported \(importedAssets.count) project(s), then failed: \(error.localizedDescription)"
+                }
             }
-            loadLibrary()
-            selectLibraryAssets(Set(importedAssets.map(\.id)))
-            if importedAssets.count == 1, let imported = importedAssets.first {
-                status = "Imported \(imported.title)."
-            } else {
-                status = "Imported \(importedAssets.count) projects."
-            }
-        } catch {
-            loadLibrary()
-            if importedAssets.isEmpty {
-                status = error.localizedDescription
-            } else {
-                status = "Imported \(importedAssets.count) project(s), then failed: \(error.localizedDescription)"
-            }
+            isWorking = false
         }
     }
 
@@ -211,15 +309,27 @@ extension AppViewModel {
     }
 
     func importVideoFile(_ url: URL) {
-        do {
-            let imported = try store.importVideoFile(url)
-            loadLibrary()
-            selectedLibraryAssetId = imported.id
-            status = imported.supportStatus == .needsConversion
-                ? "Added \(imported.title). Convert it before playing."
-                : "Added \(imported.title)."
-        } catch {
-            status = error.localizedDescription
+        let importVideoFile = operations.importVideoFile
+        let loadLibrary = operations.loadLibrary
+        isWorking = true
+        status = "Adding \(url.lastPathComponent)..."
+        Task {
+            do {
+                let result = try await Task.detached(priority: .userInitiated) {
+                    let imported = try importVideoFile(url)
+                    return (imported, try loadLibrary())
+                }.value
+                let imported = result.0
+                libraryAssets = result.1
+                normalizeLibrarySelection(allowEmpty: false)
+                selectedLibraryAssetId = imported.id
+                status = imported.supportStatus == .needsConversion
+                    ? "Added \(imported.title). Convert it before playing."
+                    : "Added \(imported.title)."
+            } catch {
+                status = error.localizedDescription
+            }
+            isWorking = false
         }
     }
 
@@ -264,18 +374,29 @@ extension AppViewModel {
             status = "Select a library project first."
             return
         }
-        do {
-            for asset in assets {
-                try store.removeAsset(id: asset.id)
+        let ids = assets.map(\.id)
+        let removeAssets = operations.removeAssets
+        let loadLibrary = operations.loadLibrary
+        isWorking = true
+        status = assets.count == 1
+            ? "Removing \(assets[0].title)..."
+            : "Removing \(assets.count) items..."
+        Task {
+            do {
+                libraryAssets = try await Task.detached(priority: .userInitiated) {
+                    try removeAssets(ids)
+                    return try loadLibrary()
+                }.value
+                normalizeLibrarySelection(allowEmpty: true)
+                if assets.count == 1, let asset = assets.first {
+                    status = "Removed \(asset.title) from your Mac library."
+                } else {
+                    status = "Removed \(assets.count) items from your Mac library."
+                }
+            } catch {
+                status = error.localizedDescription
             }
-            loadLibrary()
-            if assets.count == 1, let asset = assets.first {
-                status = "Removed \(asset.title) from your Mac library."
-            } else {
-                status = "Removed \(assets.count) items from your Mac library."
-            }
-        } catch {
-            status = error.localizedDescription
+            isWorking = false
         }
     }
 
@@ -288,15 +409,20 @@ extension AppViewModel {
         isWorking = true
         status = "Converting \(asset.title)..."
         let converter = self.converter
+        let replaceAsset = operations.replaceAsset
+        let loadLibrary = operations.loadLibrary
         Task {
             do {
-                try await Task.detached {
+                let converted = try await Task.detached(priority: .userInitiated) {
                     try converter.convertToPlayableVideo(input: URL(filePath: entrypoint), output: output)
+                    let converted = Self.convertedAsset(asset, output: output)
+                    try replaceAsset(converted)
+                    return (converted, try loadLibrary())
                 }.value
-                let converted = convertedAsset(asset, output: output)
-                try store.replaceAsset(converted)
-                loadLibrary()
-                selectedLibraryAssetId = converted.id
+                libraryAssets = converted.1
+                normalizeLibrarySelection(allowEmpty: false)
+                let convertedAsset = converted.0
+                selectedLibraryAssetId = convertedAsset.id
                 status = "Converted \(asset.title)."
             } catch {
                 status = error.localizedDescription
@@ -461,7 +587,7 @@ extension AppViewModel {
         return userDefaults.bool(forKey: PreferenceKey.lockScreenAnimationEnabled)
     }
 
-    private func convertedAsset(_ asset: WallpaperAsset, output: URL) -> WallpaperAsset {
+    private nonisolated static func convertedAsset(_ asset: WallpaperAsset, output: URL) -> WallpaperAsset {
         WallpaperAsset(
             id: asset.id,
             title: asset.title,
