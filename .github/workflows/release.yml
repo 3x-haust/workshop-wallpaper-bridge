@@ -1,0 +1,86 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag, for example v1.1.0"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build DMG
+    runs-on: macos-15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      - name: Resolve release version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            tag="${{ inputs.tag }}"
+          else
+            tag="${GITHUB_REF_NAME}"
+          fi
+          version="${tag#v}"
+          if [ -z "$version" ] || [ "$version" = "$tag" ]; then
+            echo "Release tag must use v<version>, got: $tag" >&2
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Show Swift version
+        run: swift --version
+
+      - name: Run tests
+        run: swift test
+
+      - name: Build app bundle and DMG
+        env:
+          APP_VERSION: ${{ steps.version.outputs.version }}
+          BUNDLE_VERSION: ${{ github.run_number }}
+        run: bash Scripts/package-app.sh
+
+      - name: Create checksum
+        run: |
+          set -euo pipefail
+          cd dist
+          shasum -a 256 WorkshopWallpaperBridge-macOS-arm64.dmg > WorkshopWallpaperBridge-macOS-arm64.dmg.sha256
+
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG_NAME" >/dev/null 2>&1; then
+            gh release upload "$TAG_NAME" \
+              dist/WorkshopWallpaperBridge-macOS-arm64.dmg \
+              dist/WorkshopWallpaperBridge-macOS-arm64.dmg.sha256 \
+              --clobber
+          else
+            gh release create "$TAG_NAME" \
+              dist/WorkshopWallpaperBridge-macOS-arm64.dmg \
+              dist/WorkshopWallpaperBridge-macOS-arm64.dmg.sha256 \
+              --title "$TAG_NAME" \
+              --generate-notes \
+              --verify-tag
+          fi

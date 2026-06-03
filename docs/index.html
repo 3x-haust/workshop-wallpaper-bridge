@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Workshop Wallpaper Bridge downloads and runs personally copied Wallpaper Engine Workshop wallpapers on macOS.">
+    <title>Workshop Wallpaper Bridge</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0f1216;
+        --panel: #171c22;
+        --text: #f4f7fb;
+        --muted: #aab4c0;
+        --line: #2a323c;
+        --accent: #4f8cff;
+        --accent-strong: #76a7ff;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        line-height: 1.5;
+      }
+
+      main {
+        width: min(960px, calc(100% - 32px));
+        margin: 0 auto;
+        padding: 32px 0;
+      }
+
+      header {
+        display: grid;
+        gap: 18px;
+        padding: 28px 0 24px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      h1 {
+        margin: 0;
+        max-width: 760px;
+        font-size: clamp(2.25rem, 7vw, 4.5rem);
+        line-height: 0.95;
+        letter-spacing: 0;
+      }
+
+      h2 {
+        margin: 0 0 14px;
+        font-size: 1.1rem;
+      }
+
+      p {
+        max-width: 720px;
+        margin: 0;
+        color: var(--muted);
+        font-size: 1.05rem;
+      }
+
+      a {
+        color: var(--accent-strong);
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+      }
+
+      .button {
+        display: inline-flex;
+        min-height: 44px;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid transparent;
+        border-radius: 8px;
+        padding: 0 18px;
+        background: var(--accent);
+        color: white;
+        font-weight: 700;
+        text-decoration: none;
+      }
+
+      .button.secondary {
+        border-color: var(--line);
+        background: transparent;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 16px;
+        margin-top: 28px;
+      }
+
+      section {
+        padding: 28px 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .item {
+        min-height: 150px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel);
+        padding: 18px;
+      }
+
+      .item p {
+        font-size: 0.95rem;
+      }
+
+      .steps {
+        display: grid;
+        gap: 10px;
+        max-width: 760px;
+        margin: 0;
+        padding-left: 1.3rem;
+        color: var(--muted);
+      }
+
+      .steps li {
+        padding-left: 4px;
+      }
+
+      .status {
+        min-height: 24px;
+        color: var(--muted);
+        font-size: 0.95rem;
+      }
+
+      .demo {
+        width: min(100%, 820px);
+        max-height: 360px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel);
+        object-fit: contain;
+      }
+
+      code {
+        color: var(--text);
+      }
+
+      @media (max-width: 760px) {
+        main {
+          padding: 28px 0;
+        }
+
+        .grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>Workshop Wallpaper Bridge</h1>
+        <p>Use personally copied Wallpaper Engine Workshop wallpapers on macOS. Local files only; no Steam login, no Workshop downloading, no asset redistribution.</p>
+        <div class="actions">
+          <a id="latest-release-download" class="button" href="https://github.com/3x-haust/workshop-wallpaper-bridge/releases/latest">Download latest DMG</a>
+          <a class="button secondary" href="https://github.com/3x-haust/workshop-wallpaper-bridge">GitHub</a>
+        </div>
+        <p id="release-status" class="status">Checking the latest GitHub release...</p>
+        <img class="demo" src="https://raw.githubusercontent.com/3x-haust/workshop-wallpaper-bridge/main/assets/workshop-wallpaper-bridge-demo.gif" alt="Workshop Wallpaper Bridge importing and playing a wallpaper on macOS">
+      </header>
+
+      <section>
+        <h2>What it does</h2>
+        <div class="grid">
+          <div class="item">
+            <h2>Import</h2>
+            <p>Scan a copied <code>431960</code> Workshop folder and import supported projects into a private Mac library.</p>
+          </div>
+          <div class="item">
+            <h2>Play</h2>
+            <p>Run MP4, MOV, M4V, local web, image, and supported <code>scene.pkg</code> wallpapers on the desktop layer.</p>
+          </div>
+          <div class="item">
+            <h2>Screen saver</h2>
+            <p>Install the bundled macOS screen saver so supported video wallpapers can animate when the screen saver starts.</p>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Install</h2>
+        <p>Open the DMG, drag the app into Applications, then launch it from the menu bar. The download button uses the GitHub API to resolve the newest <code>WorkshopWallpaperBridge-macOS-arm64.dmg</code> asset automatically.</p>
+      </section>
+
+      <section>
+        <h2>Use it</h2>
+        <ol class="steps">
+          <li>Copy your Wallpaper Engine Workshop folder from Windows: <code>steamapps/workshop/content/431960</code>.</li>
+          <li>Open <strong>Workshop Wallpaper Bridge Settings</strong> from the macOS menu bar.</li>
+          <li>Choose the copied <code>431960</code> folder, scan it, then import the supported wallpapers.</li>
+          <li>Select an imported wallpaper and click <strong>Play on Desktop</strong>.</li>
+          <li>Turn on <strong>Animate Screen Saver</strong> if you want supported video wallpapers to run when the macOS screen saver starts.</li>
+        </ol>
+      </section>
+    </main>
+
+    <script>
+      const releaseApiUrl = "https://api.github.com/repos/3x-haust/workshop-wallpaper-bridge/releases/latest";
+      const downloadLink = document.querySelector("#latest-release-download");
+      const statusText = document.querySelector("#release-status");
+
+      async function resolveLatestRelease() {
+        try {
+          const response = await fetch(releaseApiUrl, { headers: { Accept: "application/vnd.github+json" } });
+          if (!response.ok) {
+            throw new Error(`GitHub returned ${response.status}`);
+          }
+
+          const release = await response.json();
+          const assets = Array.isArray(release.assets) ? release.assets : [];
+          const dmg = assets.find((asset) => asset.name === "WorkshopWallpaperBridge-macOS-arm64.dmg");
+          const checksum = assets.find((asset) => asset.name === "WorkshopWallpaperBridge-macOS-arm64.dmg.sha256");
+
+          if (!dmg || typeof dmg.browser_download_url !== "string") {
+            throw new Error("Latest release has no DMG asset");
+          }
+
+          downloadLink.href = dmg.browser_download_url;
+          downloadLink.download = "WorkshopWallpaperBridge-macOS-arm64.dmg";
+          downloadLink.textContent = `Download ${release.tag_name || "latest"} DMG`;
+
+          if (checksum && typeof checksum.browser_download_url === "string") {
+            const checksumLink = document.createElement("a");
+            checksumLink.href = checksum.browser_download_url;
+            checksumLink.textContent = "SHA-256 checksum";
+            statusText.textContent = `Latest release: ${release.tag_name || "latest"} · `;
+            statusText.appendChild(checksumLink);
+          } else {
+            statusText.textContent = `Latest release: ${release.tag_name || "latest"}`;
+          }
+        } catch (error) {
+          statusText.textContent = "Could not resolve the latest asset. The button opens the latest GitHub release instead.";
+        }
+      }
+
+      resolveLatestRelease();
+    </script>
+  </body>
+</html>

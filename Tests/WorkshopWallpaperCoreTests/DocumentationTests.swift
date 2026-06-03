@@ -82,6 +82,38 @@ final class DocumentationTests: XCTestCase {
         }
     }
 
+    func testDownloadSiteUsesLatestReleaseAsset() throws {
+        let site = try String(contentsOfFile: "docs/index.html")
+
+        XCTAssertTrue(site.contains("https://api.github.com/repos/3x-haust/workshop-wallpaper-bridge/releases/latest"))
+        XCTAssertTrue(site.contains("WorkshopWallpaperBridge-macOS-arm64.dmg"))
+        XCTAssertTrue(site.contains("assets/workshop-wallpaper-bridge-demo.gif"))
+        XCTAssertTrue(site.contains("latest-release-download"))
+        XCTAssertTrue(site.contains("download"))
+        XCTAssertTrue(site.contains("Use it"))
+        XCTAssertTrue(site.contains("steamapps/workshop/content/431960"))
+        XCTAssertTrue(site.contains("Play on Desktop"))
+    }
+
+    func testCiWorkflowRunsSwiftTests() throws {
+        let workflow = try String(contentsOfFile: ".github/workflows/ci.yml")
+
+        XCTAssertTrue(workflow.contains("swift test"))
+        XCTAssertTrue(workflow.contains("pull_request"))
+        XCTAssertTrue(workflow.contains("push"))
+        XCTAssertTrue(workflow.contains("macos-15"))
+    }
+
+    func testReleaseWorkflowPublishesDmgAndChecksum() throws {
+        let workflow = try String(contentsOfFile: ".github/workflows/release.yml")
+
+        XCTAssertTrue(workflow.contains("Scripts/package-app.sh"))
+        XCTAssertTrue(workflow.contains("shasum -a 256"))
+        XCTAssertTrue(workflow.contains("gh release upload"))
+        XCTAssertTrue(workflow.contains("WorkshopWallpaperBridge-macOS-arm64.dmg"))
+        XCTAssertTrue(workflow.contains("contents: write"))
+    }
+
     private func assertHeadings(_ headings: [String], appearInOrderIn readme: String) {
         var searchStart = readme.startIndex
         for heading in headings {
