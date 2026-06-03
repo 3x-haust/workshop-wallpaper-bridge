@@ -30,4 +30,21 @@ final class ScreenSaverFeatureTests: XCTestCase {
         XCTAssertTrue(source.contains("Workshop Wallpaper Bridge"))
         XCTAssertTrue(source.contains("Choose it in Wallpaper settings"))
     }
+
+    func testScreenSaverKeepsStillFallbackVisibleBehindVideoPlayback() throws {
+        let source = try String(
+            contentsOfFile: "Sources/WorkshopWallpaperLockScreenSaver/WorkshopWallpaperLockScreenSaverView.m"
+        )
+
+        XCTAssertTrue(source.contains("showVideoAtURL:[NSURL fileURLWithPath:sourcePath] fallbackImageURL:"))
+        XCTAssertTrue(source.contains("- (void)showVideoAtURL:(NSURL *)url fallbackImageURL:(NSURL *)fallbackImageURL"))
+        XCTAssertTrue(source.contains("if (hasFallbackImage) {\n        [self showImageAtURL:fallbackImageURL displayMode:displayMode];"))
+        XCTAssertTrue(source.contains("self.playerLayer.hidden = hasFallbackImage"))
+        XCTAssertTrue(source.contains("if (self.observedPlayerItem.status == AVPlayerItemStatusReadyToPlay)"))
+        XCTAssertTrue(source.contains("[self revealVideoPlayback]"))
+        XCTAssertTrue(source.contains("if (self.observedPlayerItem.status == AVPlayerItemStatusFailed)"))
+        XCTAssertTrue(source.contains("self.playerLayer.hidden = YES"))
+        XCTAssertTrue(source.contains("dispatch_async(dispatch_get_main_queue()"))
+        XCTAssertTrue(source.contains("WorkshopWallpaperPlayerItemStatusContext"))
+    }
 }

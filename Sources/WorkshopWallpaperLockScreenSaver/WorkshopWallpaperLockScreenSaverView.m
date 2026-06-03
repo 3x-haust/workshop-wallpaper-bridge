@@ -3,11 +3,14 @@
 #import <QuartzCore/QuartzCore.h>
 #import <ScreenSaver/ScreenSaver.h>
 
+static void *WorkshopWallpaperPlayerItemStatusContext = &WorkshopWallpaperPlayerItemStatusContext;
+
 @interface WorkshopWallpaperLockScreenSaverView : ScreenSaverView
 @property(nonatomic, strong) AVPlayer *player;
 @property(nonatomic, strong) AVPlayerLayer *playerLayer;
 @property(nonatomic, strong) CALayer *imageLayer;
 @property(nonatomic, strong) CATextLayer *fallbackLayer;
+@property(nonatomic, strong) AVPlayerItem *observedPlayerItem;
 @property(nonatomic, strong) id endObserver;
 @end
 
@@ -62,14 +65,15 @@
     NSString *sourcePath = [configuration[@"sourcePath"] isKindOfClass:NSString.class]
         ? configuration[@"sourcePath"]
         : nil;
-    if ([self canUseVideoAtPath:sourcePath]) {
-        [self showVideoAtURL:[NSURL fileURLWithPath:sourcePath] displayMode:displayMode];
-        return;
-    }
-
     NSString *imagePath = [configuration[@"imagePath"] isKindOfClass:NSString.class]
         ? configuration[@"imagePath"]
         : nil;
+    if ([self canUseVideoAtPath:sourcePath]) {
+        NSURL *fallbackImageURL = [self canUseImageAtPath:imagePath] ? [NSURL fileURLWithPath:imagePath] : nil;
+        [self showVideoAtURL:[NSURL fileURLWithPath:sourcePath] fallbackImageURL:fallbackImageURL displayMode:displayMode];
+        return;
+    }
+
     if ([self canUseImageAtPath:imagePath]) {
         [self showImageAtURL:[NSURL fileURLWithPath:imagePath] displayMode:displayMode];
         return;
@@ -103,18 +107,35 @@
     return path.length > 0 && [NSFileManager.defaultManager fileExistsAtPath:path];
 }
 
-- (void)showVideoAtURL:(NSURL *)url displayMode:(NSString *)displayMode {
+- (void)showVideoAtURL:(NSURL *)url fallbackImageURL:(NSURL *)fallbackImageURL displayMode:(NSString *)displayMode {
     [self removeContent];
+    BOOL hasFallbackImage = fallbackImageURL != nil;
+    if (hasFallbackImage) {
+        [self showImageAtURL:fallbackImageURL displayMode:displayMode];
+    }
+
     AVPlayerItem *item = [AVPlayerItem playerItemWithURL:url];
     self.player = [AVPlayer playerWithPlayerItem:item];
     self.player.muted = YES;
     self.player.actionAtItemEnd = AVPlayerActionAtItemEndNone;
 
     self.playerLayer = [AVPlayerLayer playerLayerWithPlayer:self.player];
-    self.playerLayer.backgroundColor = NSColor.blackColor.CGColor;
+    self.playerLayer.backgroundColor = NSColor.clearColor.CGColor;
+    self.playerLayer.opaque = NO;
+    self.playerLayer.hidden = hasFallbackImage;
     self.playerLayer.videoGravity = [self videoGravityForDisplayMode:displayMode];
     [self.layer addSublayer:self.playerLayer];
     [self layoutContent];
+    if (hasFallbackImage) {
+        self.observedPlayerItem = item;
+        [item addObserver:self
+               forKeyPath:@"status"
+                  options:NSKeyValueObservingOptionNew
+                  context:WorkshopWallpaperPlayerItemStatusContext];
+        if (item.status == AVPlayerItemStatusReadyToPlay) {
+            [self revealVideoPlayback];
+        }
+    }
 
     __weak typeof(self) weakSelf = self;
     self.endObserver = [NSNotificationCenter.defaultCenter addObserverForName:AVPlayerItemDidPlayToEndTimeNotification
@@ -125,6 +146,11 @@
             [weakSelf.player play];
         }];
     }];
+    [self.player play];
+}
+
+- (void)revealVideoPlayback {
+    self.playerLayer.hidden = NO;
     [self.player play];
 }
 
@@ -144,6 +170,12 @@
 }
 
 - (void)removeContent {
+    if (self.observedPlayerItem) {
+        [self.observedPlayerItem removeObserver:self
+                                     forKeyPath:@"status"
+                                        context:WorkshopWallpaperPlayerItemStatusContext];
+        self.observedPlayerItem = nil;
+    }
     if (self.endObserver) {
         [NSNotificationCenter.defaultCenter removeObserver:self.endObserver];
         self.endObserver = nil;
@@ -163,6 +195,27 @@
     self.playerLayer.frame = self.bounds;
     self.imageLayer.frame = self.bounds;
     self.fallbackLayer.frame = NSInsetRect(self.bounds, 32.0, 32.0);
+}
+
+- (void)observeValueForKeyPath:(NSString *)keyPath
+                      ofObject:(id)object
+                        change:(NSDictionary<NSKeyValueChangeKey, id> *)change
+                       context:(void *)context {
+    if (context == WorkshopWallpaperPlayerItemStatusContext) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (object != self.observedPlayerItem) {
+                return;
+            }
+            if (self.observedPlayerItem.status == AVPlayerItemStatusReadyToPlay) {
+                [self revealVideoPlayback];
+            }
+            if (self.observedPlayerItem.status == AVPlayerItemStatusFailed) {
+                self.playerLayer.hidden = YES;
+            }
+        });
+        return;
+    }
+    [super observeValueForKeyPath:keyPath ofObject:object change:change context:context];
 }
 
 - (void)showFallbackMessage:(NSString *)message {
