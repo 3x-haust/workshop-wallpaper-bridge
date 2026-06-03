@@ -223,7 +223,7 @@ final class AppViewModelTests: XCTestCase {
         // Then
         XCTAssertEqual(lockScreen.enabledRequests, [true])
         XCTAssertTrue(defaults.bool(forKey: "lockScreenAnimationEnabled"))
-        XCTAssertTrue(model.status.contains("Installed the Screen Saver"))
+        XCTAssertTrue(model.status.contains("Installed and selected"))
     }
 
     func testStopPlaybackClearsLastPlayedWallpaperPreference() throws {
@@ -321,7 +321,7 @@ private final class MockLockScreenAnimationController: LockScreenAnimationManagi
         updatedAssetIds.append(asset?.id)
     }
 
-    func openScreenSaverSettings() {
+    func openScreenSaverSettings() throws {
         didOpenSettings = true
     }
 }

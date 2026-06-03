@@ -2,6 +2,8 @@
 #import <AVFoundation/AVFoundation.h>
 #import <QuartzCore/QuartzCore.h>
 #import <ScreenSaver/ScreenSaver.h>
+#import <pwd.h>
+#import <unistd.h>
 
 static void *WorkshopWallpaperPlayerItemStatusContext = &WorkshopWallpaperPlayerItemStatusContext;
 
@@ -12,6 +14,9 @@ static void *WorkshopWallpaperPlayerItemStatusContext = &WorkshopWallpaperPlayer
 @property(nonatomic, strong) CATextLayer *fallbackLayer;
 @property(nonatomic, strong) AVPlayerItem *observedPlayerItem;
 @property(nonatomic, strong) id endObserver;
+@property(nonatomic, strong) NSImage *fallbackImage;
+@property(nonatomic, copy) NSString *fallbackDisplayMode;
+@property(nonatomic, copy) NSString *fallbackMessage;
 @end
 
 @implementation WorkshopWallpaperLockScreenSaverView
@@ -79,20 +84,56 @@ static void *WorkshopWallpaperPlayerItemStatusContext = &WorkshopWallpaperPlayer
         return;
     }
 
-    [self showFallbackMessage:@"Workshop Wallpaper Bridge has no playable Screen Saver media selected."];
+    [self showFallbackMessage:@"No playable Screen Saver media selected."];
 }
 
 - (NSDictionary *)readConfiguration {
+    for (NSURL *configurationURL in [self configurationURLs]) {
+        NSData *data = [NSData dataWithContentsOfURL:configurationURL];
+        if (!data) {
+            continue;
+        }
+        NSDictionary *configuration = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+        if ([configuration isKindOfClass:NSDictionary.class]) {
+            return configuration;
+        }
+    }
+    return @{};
+}
+
+- (NSArray<NSURL *> *)configurationURLs {
+    NSMutableArray<NSURL *> *urls = [NSMutableArray array];
+    NSURL *realHomeApplicationSupport = [self realHomeApplicationSupportURL];
+    if (realHomeApplicationSupport) {
+        [urls addObject:[self configurationURLFromApplicationSupport:realHomeApplicationSupport]];
+    }
+
     NSURL *applicationSupport = [NSFileManager.defaultManager URLsForDirectory:NSApplicationSupportDirectory
                                                                       inDomains:NSUserDomainMask].firstObject;
-    NSURL *configurationURL = [[[applicationSupport URLByAppendingPathComponent:@"WorkshopWallpaperBridge"]
-        URLByAppendingPathComponent:@"LockScreen"] URLByAppendingPathComponent:@"active.json"];
-    NSData *data = [NSData dataWithContentsOfURL:configurationURL];
-    if (!data) {
-        return @{};
+    if (applicationSupport) {
+        NSURL *containerURL = [self configurationURLFromApplicationSupport:applicationSupport];
+        if (![urls containsObject:containerURL]) {
+            [urls addObject:containerURL];
+        }
     }
-    NSDictionary *configuration = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
-    return [configuration isKindOfClass:NSDictionary.class] ? configuration : @{};
+    return urls;
+}
+
+- (NSURL *)configurationURLFromApplicationSupport:(NSURL *)applicationSupport {
+    return [[[applicationSupport URLByAppendingPathComponent:@"WorkshopWallpaperBridge"]
+        URLByAppendingPathComponent:@"LockScreen"] URLByAppendingPathComponent:@"active.json"];
+}
+
+- (NSURL *)realHomeApplicationSupportURL {
+    struct passwd *password = getpwuid(getuid());
+    if (!password || !password->pw_dir) {
+        return nil;
+    }
+    NSString *homePath = [NSString stringWithUTF8String:password->pw_dir];
+    if (homePath.length == 0) {
+        return nil;
+    }
+    return [[NSURL fileURLWithPath:homePath] URLByAppendingPathComponent:@"Library/Application Support"];
 }
 
 - (BOOL)canUseVideoAtPath:(NSString *)path {
@@ -157,10 +198,16 @@ static void *WorkshopWallpaperPlayerItemStatusContext = &WorkshopWallpaperPlayer
 - (void)showImageAtURL:(NSURL *)url displayMode:(NSString *)displayMode {
     [self removeContent];
     NSImage *image = [[NSImage alloc] initWithContentsOfURL:url];
+    self.fallbackImage = image;
+    self.fallbackDisplayMode = displayMode;
+    self.fallbackMessage = nil;
+    [self setNeedsDisplay:YES];
     CGImageRef cgImage = [image CGImageForProposedRect:NULL context:nil hints:nil];
     if (!cgImage) {
         return;
     }
+    self.layer.contents = (__bridge id)cgImage;
+    self.layer.contentsGravity = [self contentsGravityForDisplayMode:displayMode];
     self.imageLayer = [CALayer layer];
     self.imageLayer.contents = (__bridge id)cgImage;
     self.imageLayer.contentsGravity = [self contentsGravityForDisplayMode:displayMode];
@@ -188,6 +235,11 @@ static void *WorkshopWallpaperPlayerItemStatusContext = &WorkshopWallpaperPlayer
     self.imageLayer = nil;
     [self.fallbackLayer removeFromSuperlayer];
     self.fallbackLayer = nil;
+    self.layer.contents = nil;
+    self.fallbackImage = nil;
+    self.fallbackDisplayMode = nil;
+    self.fallbackMessage = nil;
+    [self setNeedsDisplay:YES];
 }
 
 - (void)layoutContent {
@@ -195,6 +247,53 @@ static void *WorkshopWallpaperPlayerItemStatusContext = &WorkshopWallpaperPlayer
     self.playerLayer.frame = self.bounds;
     self.imageLayer.frame = self.bounds;
     self.fallbackLayer.frame = NSInsetRect(self.bounds, 32.0, 32.0);
+    [self setNeedsDisplay:YES];
+}
+
+- (void)drawRect:(NSRect)rect {
+    [NSColor.blackColor setFill];
+    NSRectFill(rect);
+
+    if (self.fallbackImage) {
+        NSRect imageRect = [self fallbackImageRectForImageSize:self.fallbackImage.size displayMode:self.fallbackDisplayMode];
+        [self.fallbackImage drawInRect:imageRect
+                              fromRect:NSZeroRect
+                             operation:NSCompositingOperationSourceOver
+                              fraction:1.0
+                        respectFlipped:YES
+                                 hints:nil];
+        return;
+    }
+
+    if (self.fallbackMessage.length == 0) {
+        return;
+    }
+
+    NSMutableParagraphStyle *paragraphStyle = [[NSMutableParagraphStyle alloc] init];
+    paragraphStyle.alignment = NSTextAlignmentCenter;
+    NSDictionary<NSAttributedStringKey, id> *attributes = @{
+        NSFontAttributeName: [NSFont systemFontOfSize:22.0 weight:NSFontWeightRegular],
+        NSForegroundColorAttributeName: NSColor.secondaryLabelColor,
+        NSParagraphStyleAttributeName: paragraphStyle,
+    };
+    NSRect textRect = NSInsetRect(self.bounds, 32.0, 32.0);
+    [self.fallbackMessage drawInRect:textRect withAttributes:attributes];
+}
+
+- (NSRect)fallbackImageRectForImageSize:(NSSize)imageSize displayMode:(NSString *)displayMode {
+    NSRect bounds = self.bounds;
+    if ([displayMode isEqualToString:@"stretch"] || imageSize.width <= 0.0 || imageSize.height <= 0.0) {
+        return bounds;
+    }
+
+    CGFloat widthRatio = NSWidth(bounds) / imageSize.width;
+    CGFloat heightRatio = NSHeight(bounds) / imageSize.height;
+    CGFloat scale = [displayMode isEqualToString:@"fill"] ? MAX(widthRatio, heightRatio) : MIN(widthRatio, heightRatio);
+    NSSize scaledSize = NSMakeSize(imageSize.width * scale, imageSize.height * scale);
+    return NSMakeRect(NSMidX(bounds) - scaledSize.width / 2.0,
+                      NSMidY(bounds) - scaledSize.height / 2.0,
+                      scaledSize.width,
+                      scaledSize.height);
 }
 
 - (void)observeValueForKeyPath:(NSString *)keyPath
@@ -220,16 +319,27 @@ static void *WorkshopWallpaperPlayerItemStatusContext = &WorkshopWallpaperPlayer
 
 - (void)showFallbackMessage:(NSString *)message {
     [self removeContent];
+    self.fallbackImage = nil;
+    self.fallbackDisplayMode = nil;
+    self.fallbackMessage = [NSString stringWithFormat:@"Workshop Wallpaper Bridge\n%@", message];
     self.layer.backgroundColor = [NSColor colorWithCalibratedWhite:0.08 alpha:1.0].CGColor;
     self.fallbackLayer = [CATextLayer layer];
-    self.fallbackLayer.string = [NSString stringWithFormat:@"Workshop Wallpaper Bridge\n%@", message];
+    self.fallbackLayer.string = self.fallbackMessage;
     self.fallbackLayer.alignmentMode = kCAAlignmentCenter;
     self.fallbackLayer.foregroundColor = NSColor.secondaryLabelColor.CGColor;
     self.fallbackLayer.fontSize = 22.0;
     self.fallbackLayer.wrapped = YES;
-    self.fallbackLayer.contentsScale = NSScreen.mainScreen.backingScaleFactor;
+    self.fallbackLayer.contentsScale = [self backingScaleFactor];
     [self.layer addSublayer:self.fallbackLayer];
     [self layoutContent];
+}
+
+- (CGFloat)backingScaleFactor {
+    CGFloat scale = self.window.screen.backingScaleFactor;
+    if (scale > 0.0) {
+        return scale;
+    }
+    return 1.0;
 }
 
 - (AVLayerVideoGravity)videoGravityForDisplayMode:(NSString *)displayMode {

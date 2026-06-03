@@ -316,7 +316,12 @@ extension AppViewModel {
     }
 
     func openScreenSaverSettings() {
-        lockScreenAnimationController.openScreenSaverSettings()
+        do {
+            try lockScreenAnimationController.openScreenSaverSettings()
+            status = "Installed and selected Workshop Wallpaper Bridge Screen Saver."
+        } catch {
+            status = "Screen Saver settings could not be opened: \(error.localizedDescription)"
+        }
     }
 
     func loadLibrary() {
@@ -370,7 +375,7 @@ extension AppViewModel {
             )
             userDefaults.set(enabled, forKey: PreferenceKey.lockScreenAnimationEnabled)
             status = enabled
-                ? "Installed the Screen Saver. Select Workshop Wallpaper Bridge in Wallpaper settings to animate while locked."
+                ? "Installed and selected Workshop Wallpaper Bridge Screen Saver."
                 : "Screen Saver animation is off."
         } catch {
             isSyncingLockScreenAnimation = true
