@@ -25,6 +25,37 @@ cleanup() {
 }
 trap cleanup EXIT
 
+strip_quarantine_metadata() {
+  local path
+  local xattrs
+
+  for path in "$@"; do
+    if ! xattrs="$(xattr -lr "$path" 2>/dev/null)"; then
+      printf '%s\n' "failed to read extended attributes from $path" >&2
+      exit 1
+    fi
+
+    if grep -q 'com\.apple\.quarantine' <<<"$xattrs"; then
+      xattr -r -d com.apple.quarantine "$path"
+    fi
+  done
+}
+
+assert_no_quarantine_metadata() {
+  local path="$1"
+  local xattrs
+
+  if ! xattrs="$(xattr -lr "$path" 2>/dev/null)"; then
+    printf '%s\n' "failed to read extended attributes from $path" >&2
+    exit 1
+  fi
+
+  if grep -q 'com\.apple\.quarantine' <<<"$xattrs"; then
+    printf '%s\n' "quarantine metadata remains in $path; refusing to package a release artifact that asks users to run xattr manually." >&2
+    exit 1
+  fi
+}
+
 cd "$ROOT"
 swift build -c release
 rm -rf "$ROOT/dist"
@@ -99,6 +130,8 @@ clang \
   -o "$SAVER_MACOS_DIR/$SAVER_EXECUTABLE"
 chmod +x "$MACOS_DIR/Workshop Wallpaper Bridge" "$MACOS_DIR/wwbctl"
 chmod +x "$SAVER_MACOS_DIR/$SAVER_EXECUTABLE"
+strip_quarantine_metadata "$APP_DIR"
+assert_no_quarantine_metadata "$APP_DIR"
 if [ -n "$SIGN_IDENTITY" ]; then
   codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$MACOS_DIR/wwbctl"
   codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$MACOS_DIR/Workshop Wallpaper Bridge"
@@ -114,12 +147,16 @@ fi
 DMG_STAGING="$(mktemp -d)"
 cp -R "$APP_DIR" "$DMG_STAGING/"
 ln -s /Applications "$DMG_STAGING/Applications"
+strip_quarantine_metadata "$DMG_STAGING/$APP_NAME.app"
+assert_no_quarantine_metadata "$DMG_STAGING/$APP_NAME.app"
 hdiutil create \
   -volname "$APP_NAME" \
   -srcfolder "$DMG_STAGING" \
   -ov \
   -format UDZO \
   "$DMG_PATH" >/dev/null
+strip_quarantine_metadata "$DMG_PATH"
+assert_no_quarantine_metadata "$DMG_PATH"
 if [ -n "$SIGN_IDENTITY" ]; then
   codesign --force --timestamp --sign "$SIGN_IDENTITY" "$DMG_PATH"
   codesign --verify --verbose=2 "$DMG_PATH"
