@@ -7,6 +7,7 @@
 @property(nonatomic, strong) AVPlayer *player;
 @property(nonatomic, strong) AVPlayerLayer *playerLayer;
 @property(nonatomic, strong) CALayer *imageLayer;
+@property(nonatomic, strong) CATextLayer *fallbackLayer;
 @property(nonatomic, strong) id endObserver;
 @end
 
@@ -51,7 +52,7 @@
 - (void)reloadContent {
     NSDictionary *configuration = [self readConfiguration];
     if (![configuration[@"enabled"] boolValue]) {
-        [self removeContent];
+        [self showFallbackMessage:@"Choose it in Wallpaper settings, then enable Screen Saver animation in Workshop Wallpaper Bridge."];
         return;
     }
 
@@ -74,7 +75,7 @@
         return;
     }
 
-    [self removeContent];
+    [self showFallbackMessage:@"Workshop Wallpaper Bridge has no playable Screen Saver media selected."];
 }
 
 - (NSDictionary *)readConfiguration {
@@ -153,12 +154,29 @@
     self.playerLayer = nil;
     [self.imageLayer removeFromSuperlayer];
     self.imageLayer = nil;
+    [self.fallbackLayer removeFromSuperlayer];
+    self.fallbackLayer = nil;
 }
 
 - (void)layoutContent {
     self.layer.frame = self.bounds;
     self.playerLayer.frame = self.bounds;
     self.imageLayer.frame = self.bounds;
+    self.fallbackLayer.frame = NSInsetRect(self.bounds, 32.0, 32.0);
+}
+
+- (void)showFallbackMessage:(NSString *)message {
+    [self removeContent];
+    self.layer.backgroundColor = [NSColor colorWithCalibratedWhite:0.08 alpha:1.0].CGColor;
+    self.fallbackLayer = [CATextLayer layer];
+    self.fallbackLayer.string = [NSString stringWithFormat:@"Workshop Wallpaper Bridge\n%@", message];
+    self.fallbackLayer.alignmentMode = kCAAlignmentCenter;
+    self.fallbackLayer.foregroundColor = NSColor.secondaryLabelColor.CGColor;
+    self.fallbackLayer.fontSize = 22.0;
+    self.fallbackLayer.wrapped = YES;
+    self.fallbackLayer.contentsScale = NSScreen.mainScreen.backingScaleFactor;
+    [self.layer addSublayer:self.fallbackLayer];
+    [self layoutContent];
 }
 
 - (AVLayerVideoGravity)videoGravityForDisplayMode:(NSString *)displayMode {

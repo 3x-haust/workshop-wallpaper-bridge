@@ -42,7 +42,7 @@ struct LockScreenAnimationController: LockScreenAnimationManaging {
     }
 
     func openScreenSaverSettings() {
-        let url = URL(string: "x-apple.systempreferences:com.apple.ScreenSaver-Settings.extension")
+        let url = URL(string: "x-apple.systempreferences:com.apple.Wallpaper-Settings.extension")
         if let url, NSWorkspace.shared.open(url) {
             return
         }
@@ -132,7 +132,7 @@ enum LockScreenAnimationError: Error, LocalizedError {
     var errorDescription: String? {
         switch self {
         case .bundledScreenSaverMissing:
-            return "The Lock Screen screen saver is missing. Install the packaged app from the DMG first."
+            return "The Screen Saver is missing. Install the packaged app from the DMG first."
         }
     }
 }
