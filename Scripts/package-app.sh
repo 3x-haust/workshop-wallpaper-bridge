@@ -26,7 +26,19 @@ cleanup() {
 trap cleanup EXIT
 
 strip_quarantine_metadata() {
-  xattr -cr "$@"
+  local path
+  local xattrs
+
+  for path in "$@"; do
+    if ! xattrs="$(xattr -lr "$path" 2>/dev/null)"; then
+      printf '%s\n' "failed to read extended attributes from $path" >&2
+      exit 1
+    fi
+
+    if grep -q 'com\.apple\.quarantine' <<<"$xattrs"; then
+      xattr -r -d com.apple.quarantine "$path"
+    fi
+  done
 }
 
 assert_no_quarantine_metadata() {
