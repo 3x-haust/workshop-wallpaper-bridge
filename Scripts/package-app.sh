@@ -31,8 +31,14 @@ strip_quarantine_metadata() {
 
 assert_no_quarantine_metadata() {
   local path="$1"
+  local xattrs
 
-  if xattr -lr "$path" | grep -q 'com\.apple\.quarantine'; then
+  if ! xattrs="$(xattr -lr "$path" 2>/dev/null)"; then
+    printf '%s\n' "failed to read extended attributes from $path" >&2
+    exit 1
+  fi
+
+  if grep -q 'com\.apple\.quarantine' <<<"$xattrs"; then
     printf '%s\n' "quarantine metadata remains in $path; refusing to package a release artifact that asks users to run xattr manually." >&2
     exit 1
   fi
