@@ -32,7 +32,7 @@ struct ContentView: View {
                 .toggleStyle(.switch)
             Toggle("Auto-pause behind apps", isOn: $model.autoPauseWhenCovered)
                 .toggleStyle(.switch)
-            Toggle("Animate Lock Screen", isOn: $model.lockScreenAnimationEnabled)
+            Toggle("Animate Screen Saver", isOn: $model.lockScreenAnimationEnabled)
                 .toggleStyle(.switch)
             Button("Stop") {
                 model.stopPlayback()
@@ -135,7 +135,7 @@ struct ContentView: View {
             Text(
                 "Video wallpapers use a generated video frame for still wallpaper. "
                     + "Still images are written to the macOS Lock Screen cache when available. "
-                    + "Animated Lock Screen uses the bundled macOS screen saver and supports MP4, MOV, and M4V."
+                    + "Screen Saver animation uses the bundled macOS screen saver and supports MP4, MOV, and M4V."
             )
                 .font(.caption)
                 .foregroundStyle(.secondary)

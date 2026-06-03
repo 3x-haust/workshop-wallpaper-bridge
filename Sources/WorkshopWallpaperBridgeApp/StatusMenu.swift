@@ -11,7 +11,7 @@ struct StatusMenu: View {
         Divider()
         Toggle("Open at Login", isOn: $model.launchAtLogin)
         Toggle("Auto-pause Behind Apps", isOn: $model.autoPauseWhenCovered)
-        Toggle("Animate Lock Screen", isOn: $model.lockScreenAnimationEnabled)
+        Toggle("Animate Screen Saver", isOn: $model.lockScreenAnimationEnabled)
         Button("Open Login Items Settings") {
             model.openLoginItemsSettings()
         }

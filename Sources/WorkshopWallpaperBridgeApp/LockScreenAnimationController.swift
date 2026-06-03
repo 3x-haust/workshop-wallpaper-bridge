@@ -6,7 +6,55 @@ import WorkshopWallpaperCore
 protocol LockScreenAnimationManaging {
     func setEnabled(_ enabled: Bool, activeAsset: WallpaperAsset?, displayMode: WallpaperDisplayMode) throws
     func updateActiveAsset(_ asset: WallpaperAsset?, displayMode: WallpaperDisplayMode) throws
+    func openScreenSaverSettings() throws
+}
+
+struct ScreenSaverModuleSelection: Equatable {
+    let moduleName: String
+    let path: String
+    let type: Int
+}
+
+protocol ScreenSaverSelectionWriting {
+    func selectScreenSaver(_ selection: ScreenSaverModuleSelection) throws
+}
+
+struct CurrentHostScreenSaverSelectionWriter: ScreenSaverSelectionWriting {
+    func selectScreenSaver(_ selection: ScreenSaverModuleSelection) throws {
+        let moduleDict: [String: Any] = [
+            "moduleName": selection.moduleName,
+            "path": selection.path,
+            "type": selection.type
+        ]
+        CFPreferencesSetValue(
+            "moduleDict" as CFString,
+            moduleDict as CFPropertyList,
+            "com.apple.screensaver" as CFString,
+            kCFPreferencesCurrentUser,
+            kCFPreferencesCurrentHost
+        )
+        if !CFPreferencesSynchronize(
+            "com.apple.screensaver" as CFString,
+            kCFPreferencesCurrentUser,
+            kCFPreferencesCurrentHost
+        ) {
+            throw LockScreenAnimationError.screenSaverSelectionFailed
+        }
+    }
+}
+
+protocol ScreenSaverSettingsOpening {
     func openScreenSaverSettings()
+}
+
+struct SystemScreenSaverSettingsOpener: ScreenSaverSettingsOpening {
+    func openScreenSaverSettings() {
+        let url = URL(string: "x-apple.systempreferences:com.apple.Wallpaper-Settings.extension")
+        if let url, NSWorkspace.shared.open(url) {
+            return
+        }
+        NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/System Settings.app"))
+    }
 }
 
 struct LockScreenAnimationController: LockScreenAnimationManaging {
@@ -15,24 +63,31 @@ struct LockScreenAnimationController: LockScreenAnimationManaging {
     private let screenSaverDirectory: URL
     private let stillImageProvider: StillWallpaperImageProvider
     private let bundle: Bundle
+    private let screenSaverSelectionWriter: ScreenSaverSelectionWriting
+    private let screenSaverSettingsOpener: ScreenSaverSettingsOpening
 
     init(
         fileManager: FileManager = .default,
         applicationSupportDirectory: URL = Self.defaultApplicationSupportDirectory(),
         screenSaverDirectory: URL = Self.defaultScreenSaverDirectory(),
         stillImageProvider: StillWallpaperImageProvider = StillWallpaperImageProvider(),
-        bundle: Bundle = .main
+        bundle: Bundle = .main,
+        screenSaverSelectionWriter: ScreenSaverSelectionWriting = CurrentHostScreenSaverSelectionWriter(),
+        screenSaverSettingsOpener: ScreenSaverSettingsOpening = SystemScreenSaverSettingsOpener()
     ) {
         self.fileManager = fileManager
         self.applicationSupportDirectory = applicationSupportDirectory
         self.screenSaverDirectory = screenSaverDirectory
         self.stillImageProvider = stillImageProvider
         self.bundle = bundle
+        self.screenSaverSelectionWriter = screenSaverSelectionWriter
+        self.screenSaverSettingsOpener = screenSaverSettingsOpener
     }
 
     func setEnabled(_ enabled: Bool, activeAsset: WallpaperAsset?, displayMode: WallpaperDisplayMode) throws {
         if enabled {
-            try installBundledScreenSaver()
+            let installedURL = try installBundledScreenSaver()
+            try selectInstalledScreenSaver(at: installedURL)
         }
         try writeConfiguration(enabled: enabled, asset: activeAsset, displayMode: displayMode)
     }
@@ -41,15 +96,13 @@ struct LockScreenAnimationController: LockScreenAnimationManaging {
         try writeConfiguration(enabled: true, asset: asset, displayMode: displayMode)
     }
 
-    func openScreenSaverSettings() {
-        let url = URL(string: "x-apple.systempreferences:com.apple.ScreenSaver-Settings.extension")
-        if let url, NSWorkspace.shared.open(url) {
-            return
-        }
-        NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/System Settings.app"))
+    func openScreenSaverSettings() throws {
+        let installedURL = try installBundledScreenSaver()
+        try selectInstalledScreenSaver(at: installedURL)
+        screenSaverSettingsOpener.openScreenSaverSettings()
     }
 
-    private func installBundledScreenSaver() throws {
+    private func installBundledScreenSaver() throws -> URL {
         guard let bundledURL = bundle.url(forResource: Self.screenSaverBundleName, withExtension: "saver") else {
             throw LockScreenAnimationError.bundledScreenSaverMissing
         }
@@ -59,6 +112,17 @@ struct LockScreenAnimationController: LockScreenAnimationManaging {
             try fileManager.removeItem(at: destination)
         }
         try fileManager.copyItem(at: bundledURL, to: destination)
+        return destination
+    }
+
+    private func selectInstalledScreenSaver(at url: URL) throws {
+        try screenSaverSelectionWriter.selectScreenSaver(
+            ScreenSaverModuleSelection(
+                moduleName: Self.screenSaverBundleName,
+                path: url.path,
+                type: 0
+            )
+        )
     }
 
     private func writeConfiguration(
@@ -128,11 +192,14 @@ private struct LockScreenAnimationConfiguration: Codable {
 
 enum LockScreenAnimationError: Error, LocalizedError {
     case bundledScreenSaverMissing
+    case screenSaverSelectionFailed
 
     var errorDescription: String? {
         switch self {
         case .bundledScreenSaverMissing:
-            return "The Lock Screen screen saver is missing. Install the packaged app from the DMG first."
+            return "The Screen Saver is missing. Install the packaged app from the DMG first."
+        case .screenSaverSelectionFailed:
+            return "The Screen Saver was installed, but macOS did not accept it as the selected Screen Saver."
         }
     }
 }

@@ -316,7 +316,12 @@ extension AppViewModel {
     }
 
     func openScreenSaverSettings() {
-        lockScreenAnimationController.openScreenSaverSettings()
+        do {
+            try lockScreenAnimationController.openScreenSaverSettings()
+            status = "Installed and selected Workshop Wallpaper Bridge Screen Saver."
+        } catch {
+            status = "Screen Saver settings could not be opened: \(error.localizedDescription)"
+        }
     }
 
     func loadLibrary() {
@@ -370,13 +375,13 @@ extension AppViewModel {
             )
             userDefaults.set(enabled, forKey: PreferenceKey.lockScreenAnimationEnabled)
             status = enabled
-                ? "Installed the Lock Screen screen saver. Select it in Screen Saver settings to animate while locked."
-                : "Animated Lock Screen screen saver is off."
+                ? "Installed and selected Workshop Wallpaper Bridge Screen Saver."
+                : "Screen Saver animation is off."
         } catch {
             isSyncingLockScreenAnimation = true
             lockScreenAnimationEnabled = oldLockScreenAnimationPreference()
             isSyncingLockScreenAnimation = false
-            status = "Animated Lock Screen could not be changed: \(error.localizedDescription)"
+            status = "Screen Saver animation could not be changed: \(error.localizedDescription)"
         }
     }
 
@@ -422,7 +427,7 @@ extension AppViewModel {
                 displayMode: displayMode
             )
         } catch {
-            status = "Animated Lock Screen could not be restored: \(error.localizedDescription)"
+            status = "Screen Saver animation could not be restored: \(error.localizedDescription)"
         }
     }
 
@@ -439,7 +444,7 @@ extension AppViewModel {
         let playbackStatus = autoPauseWhenCovered
             ? "Playing on the desktop layer. You can minimize this app; playback pauses only behind other apps."
             : "Playing continuously on the desktop layer. You can minimize this app."
-        status = lockScreenError.map { "\(playbackStatus) Lock Screen update failed: \($0)" } ?? playbackStatus
+        status = lockScreenError.map { "\(playbackStatus) Screen Saver update failed: \($0)" } ?? playbackStatus
     }
 
     private func refreshLockScreenAnimationConfiguration(asset: WallpaperAsset) -> String? {
