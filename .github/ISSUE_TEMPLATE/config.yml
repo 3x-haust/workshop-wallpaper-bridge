@@ -1,0 +1,6 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security issue
+    url: https://github.com/3x-haust/workshop-wallpaper-bridge/security/advisories/new
+    about: Please report security-sensitive issues privately when available.
+

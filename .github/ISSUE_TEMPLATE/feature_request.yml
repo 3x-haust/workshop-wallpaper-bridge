@@ -1,0 +1,36 @@
+name: Feature request
+description: Suggest a feature that fits the project boundary.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      placeholder: I want to...
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      placeholder: Add...
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: checkboxes
+    id: boundary
+    attributes:
+      label: Project boundary
+      options:
+        - label: This does not require Steam Workshop downloading.
+          required: true
+        - label: This does not require Steam authentication or DRM bypass.
+          required: true
+        - label: This does not require uploading or redistributing creator assets.
+          required: true
+

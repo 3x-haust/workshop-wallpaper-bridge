@@ -1,0 +1,57 @@
+name: Wallpaper compatibility
+description: Report a wallpaper or scene that does not import, convert, or render correctly.
+title: "[Compatibility]: "
+labels:
+  - compatibility
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this when a specific local wallpaper project does not behave correctly.
+        Please do not upload paid or copyrighted creator assets unless you have permission.
+  - type: dropdown
+    id: project-type
+    attributes:
+      label: Project type
+      options:
+        - MP4/MOV/M4V video
+        - WebM/MKV/AVI video
+        - Web wallpaper
+        - Image wallpaper
+        - scene.pkg scene wallpaper
+        - Unknown
+    validations:
+      required: true
+  - type: textarea
+    id: issue
+    attributes:
+      label: What does not work?
+      placeholder: Import fails / conversion fails / renders as preview only / animation missing / texture missing...
+    validations:
+      required: true
+  - type: textarea
+    id: metadata
+    attributes:
+      label: Safe metadata
+      description: Share file extensions, scene-info output, error messages, and folder structure. Avoid uploading the original creator asset unless it is yours.
+      render: text
+  - type: input
+    id: app-version
+    attributes:
+      label: App version
+      placeholder: v0.0.0 or commit SHA
+  - type: input
+    id: macos-version
+    attributes:
+      label: macOS version
+      placeholder: macOS 15.5
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope confirmation
+      options:
+        - label: This is about a local project I already copied to my Mac.
+          required: true
+        - label: I am not requesting Steam Workshop downloading or DRM bypass behavior.
+          required: true
+

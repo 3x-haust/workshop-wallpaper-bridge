@@ -1,16 +1,33 @@
 # Workshop Wallpaper Bridge
 
+[![Swift](https://img.shields.io/badge/Swift-6-orange.svg)](Package.swift)
+[![Platform](https://img.shields.io/badge/platform-macOS%2014%2B-lightgrey.svg)](README.md)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Use your own Wallpaper Engine Workshop projects on macOS.
 
 Workshop Wallpaper Bridge is for people who already bought Wallpaper Engine on Windows and copied their local Workshop folder to a Mac. It scans that copied folder, imports supported wallpapers into a private Mac library, and plays video, web, image, and supported scene wallpapers on the desktop layer.
 
-[한국어 README](README.ko.md)
+[한국어 README](README.ko.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)
 
 ## Demo
 
-<video src="assets/workshop-wallpaper-bridge-demo.mov" controls width="100%"></video>
+![Workshop Wallpaper Bridge demo](assets/workshop-wallpaper-bridge-demo.gif)
 
-[Watch the demo video](assets/workshop-wallpaper-bridge-demo.mov)
+## Highlights
+
+- Imports local copies of Wallpaper Engine Workshop projects into a private Mac library.
+- Plays MP4, MOV, M4V, restricted local web wallpapers, images, and supported `scene.pkg` projects on the desktop layer.
+- Converts WebM, MKV, and AVI files locally with `ffmpeg`.
+- Can install a bundled macOS screen saver that animates while the Mac is locked.
+- Keeps original copied Workshop folders untouched.
+- Ships a CLI, `wwbctl`, for scanning, importing, conversion, and scene diagnostics.
+
+## Project Status
+
+This is an early compatibility project. Video and image wallpapers are the most reliable paths. Scene support is intentionally conservative and currently focuses on packed 2D image layers, common texture formats, and basic keyframed motion.
+
+Workshop Wallpaper Bridge is not affiliated with Valve, Steam, or Wallpaper Engine. It does not download Workshop items, bypass Steam authentication, bypass DRM, or redistribute creator assets.
 
 ## Quick Start
 
@@ -36,7 +53,7 @@ Workshop Wallpaper Bridge is for people who already bought Wallpaper Engine on W
 
 The app runs as a menu bar utility. It does not stay in the Dock or app switcher, and the settings window can be closed while animated wallpapers continue running on the desktop layer.
 
-To animate the Lock Screen, turn on **Animate Lock Screen**, click **Screen Saver Settings**, and select **Workshop Wallpaper Bridge** as the macOS screen saver. macOS runs Lock Screen animation through the screen saver system, so MP4, MOV, and M4V wallpapers animate there. Other wallpaper types use a still fallback image.
+To animate while the Mac is locked, turn on **Animate Lock Screen**, click **Screen Saver Settings**, and select **Workshop Wallpaper Bridge** as the macOS screen saver. The button installs the bundled screen saver before opening System Settings. macOS does not expose a public way to replace the login/Lock Screen wallpaper itself with live video; this app uses the screen saver system. MP4, MOV, and M4V wallpapers animate after the selected screen saver starts. Other wallpaper types use a still fallback image.
 
 ## Playback Behavior
 
@@ -61,7 +78,11 @@ Measured on an Apple M2 Mac running macOS 26.2 with a local MP4 wallpaper:
 
 ## Lock Screen And Still Wallpaper
 
-Workshop Wallpaper Bridge supports Lock Screen animation through a bundled macOS screen saver. Apple exposes a public `ScreenSaverView` framework for custom screen savers, and macOS Lock Screen settings can start the selected screen saver when the Mac is inactive or locked.
+Workshop Wallpaper Bridge supports animation while locked through a bundled macOS screen saver. Apple exposes a public `ScreenSaverView` framework for custom screen savers, and macOS Lock Screen settings can start the selected screen saver when the Mac is inactive or locked.
+
+Important: macOS still requires you to choose **Workshop Wallpaper Bridge** in Screen Saver settings. The app can install and configure its bundled screen saver, but it does not force-change the system-selected screen saver.
+
+If the Lock Screen still shows your existing static wallpaper, check the Lock Screen timing in System Settings. macOS shows the normal login/Lock Screen wallpaper until the selected screen saver starts. Closing and reopening a Mac usually shows that static system Lock Screen first; live motion begins only when macOS starts the selected screen saver.
 
 What the app can animate:
 
@@ -78,7 +99,7 @@ How to enable it:
 
 1. Open **Workshop Wallpaper Bridge Settings**.
 2. Turn on **Animate Lock Screen**.
-3. Click **Screen Saver Settings**.
+3. Click **Screen Saver Settings**. This installs or refreshes the bundled `.saver` in `~/Library/Screen Savers`.
 4. Choose **Workshop Wallpaper Bridge** as the macOS screen saver.
 5. In macOS Lock Screen settings, set when the screen saver starts and when a password is required.
 
@@ -227,6 +248,15 @@ brew install ffmpeg
 ```
 
 If macOS warns that the app is from an unidentified developer, that means the release is not notarized yet. You can still build from source with Swift.
+
+If **Workshop Wallpaper Bridge** does not appear in Screen Saver settings:
+
+- Open the app from the packaged `.app`, not only `swift run`.
+- Turn on **Animate Lock Screen** once, then click **Screen Saver Settings**.
+- Check that `~/Library/Screen Savers/Workshop Wallpaper Bridge.saver` exists.
+- Quit and reopen System Settings if macOS does not refresh the list immediately.
+
+If the preview is black, restart System Settings after installing the latest app. The app now writes a still fallback image for the screen saver and removes macOS quarantine metadata from imported media before the screen saver reads it.
 
 ## Relationship To Wallpaper Engine
 
