@@ -39,6 +39,12 @@ struct SystemWallpaperSetter {
         }
     }
 
+    func setDesktopStillWallpaper(from asset: WallpaperAsset) throws -> URL {
+        let url = try resolveStillImage(asset)
+        try setDesktopImage(url)
+        return url
+    }
+
     private static func setDesktopImageOnAllScreens(_ url: URL) throws {
         for screen in NSScreen.screens {
             try NSWorkspace.shared.setDesktopImageURL(url, for: screen, options: [:])

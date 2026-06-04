@@ -64,6 +64,40 @@ Before proposing or committing changes, check:
 - Are unsupported Wallpaper Engine runtime features still described honestly?
 - Did README changes update both English and Korean docs when user-facing behavior changed?
 
+## Open Source Workflow For AI Agents
+
+Treat this repository like a public open-source project, even for local agent work.
+
+- Do not commit directly to `main` unless the user explicitly asks for a direct hotfix.
+- Create a focused branch before publishing changes, for example `fix/dock-flicker` or `docs/contribution-workflow`.
+- Keep each branch and pull request scoped to one problem.
+- Use Conventional Commit messages from this file.
+- Before opening a PR, run the required local checks for the touched surface:
+  - `swift test` for code changes.
+  - `bash Scripts/package-app.sh` for app bundle or release changes.
+  - `swift run wwbctl doctor` for CLI behavior changes.
+- Open a GitHub pull request with a short summary, test evidence, and any AI assistance note when an assistant materially shaped the change.
+- Do not merge a PR until the local checks are green and the diff has been reviewed.
+
+## Patch And Release Workflow
+
+When preparing a patch release:
+
+1. Start from an up-to-date `main`.
+2. Create a branch named for the fix, such as `fix/<issue-slug>`.
+3. Make the smallest behavior-preserving patch that solves the issue.
+4. Add or update regression tests before the production fix when behavior changes.
+5. Run `swift test` and, for app releases, `bash Scripts/package-app.sh`.
+6. Commit with a `fix:` subject for bug fixes.
+7. Push the branch and open a PR.
+8. Merge the PR into `main`.
+9. Tag the merged commit with the next semantic version:
+   - Patch bug fix: `vMAJOR.MINOR.PATCH`
+   - Feature release: `vMAJOR.MINOR.0`
+10. Push the tag. The release workflow builds the DMG, checksum, and GitHub Release.
+
+Release tags must use the `v<version>` format because `.github/workflows/release.yml` derives the app version from the tag.
+
 ## Commit Messages
 
 Use this convention:
@@ -83,4 +117,3 @@ revert: 내용
 ```
 
 Why this exists: consistent commits make open-source review and release history easier to scan.
-
