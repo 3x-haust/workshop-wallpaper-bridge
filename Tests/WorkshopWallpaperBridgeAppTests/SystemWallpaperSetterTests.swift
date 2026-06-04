@@ -64,6 +64,42 @@ final class SystemWallpaperSetterTests: XCTestCase {
         XCTAssertEqual(result.lockScreenErrorDescription, "The macOS Lock Screen wallpaper cache is not available.")
     }
 
+    func testDesktopStillWallpaperDoesNotWriteLockScreenCache() throws {
+        // Given
+        let imageURL = URL(filePath: "/tmp/preview.jpg")
+        let asset = makeAsset(kind: .image, entrypoint: imageURL.path, thumbnail: nil)
+        var desktopImageURL: URL?
+        var didWriteLockScreen = false
+        let setter = SystemWallpaperSetter(
+            resolveStillImage: { _ in imageURL },
+            setDesktopImage: { desktopImageURL = $0 },
+            setLockScreenImage: { _ in
+                didWriteLockScreen = true
+                return nil
+            }
+        )
+
+        // When
+        let result = try setter.setDesktopStillWallpaper(from: asset)
+
+        // Then
+        XCTAssertEqual(result, imageURL)
+        XCTAssertEqual(desktopImageURL, imageURL)
+        XCTAssertFalse(didWriteLockScreen)
+    }
+
+    func testPlaybackConfiguresDesktopTransitionFallback() throws {
+        // Given
+        let source = try String(contentsOfFile: "Sources/WorkshopWallpaperBridgeApp/AppViewModel.swift")
+        let start = try XCTUnwrap(source.range(of: "private func play(asset: WallpaperAsset, remember: Bool)"))
+        let end = try XCTUnwrap(source.range(of: "private func refreshLockScreenAnimationConfiguration", range: start.lowerBound..<source.endIndex))
+        let body = String(source[start.lowerBound..<end.lowerBound])
+
+        // Then
+        XCTAssertTrue(body.contains("setDesktopTransitionFallback(asset: asset)"))
+        XCTAssertTrue(source.contains("setDesktopStillWallpaper(from: asset)"))
+    }
+
     func testStillImageProviderExtractsVideoFrameBeforeGifThumbnail() throws {
         // Given
         let root = try makeTempDirectory()

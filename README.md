@@ -50,9 +50,11 @@ Display modes:
 
 Playback notes:
 
-- **Auto-pause behind apps** is enabled by default.
+- Playback runs continuously by default to avoid Dock and Space transition flicker.
+- **Auto-pause behind apps** is optional.
 - Closing the settings window does not stop playback.
 - **Open at Login** restores the last played wallpaper after login.
+- **Play on Desktop** also updates a static macOS desktop fallback image so Dock and Space transitions do not reveal the previous wallpaper behind video playback.
 - **Remove** deletes the imported Mac-library copy only. It does not touch the original copied folder or video.
 
 Imported files are stored in:
@@ -92,7 +94,7 @@ What uses a still fallback:
 
 macOS still controls when the screen saver starts. Configure the start time and password timing in System Settings > Lock Screen. Until macOS starts the selected screen saver, the normal static Lock Screen wallpaper is shown.
 
-The app can also set a still desktop wallpaper with **Set Still Wallpaper**. For MP4, MOV, and M4V files, it extracts a frame from the video instead of using a small Workshop preview.
+The app can also set a still desktop wallpaper explicitly with **Set Still Wallpaper**. For MP4, MOV, and M4V files, it extracts a frame from the video instead of using a small Workshop preview. **Play on Desktop** uses the same still-image path as a transition fallback, but it does not write the Lock Screen cache unless you use **Set Still Wallpaper** or enable the screen saver integration.
 
 ## Build From Source
 

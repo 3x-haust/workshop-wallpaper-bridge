@@ -12,6 +12,8 @@ final class WallpaperPlayer {
     private var visibilityTimer: Timer?
     private var workspaceObservers: [NSObjectProtocol] = []
     private var isSuspended = false
+    private var lastScreenFrames: [CGRect] = []
+    private var pendingAutoSuspension: DispatchWorkItem?
     private let visibilityMonitor = DesktopVisibilityMonitor()
 
     func play(
@@ -30,9 +32,12 @@ final class WallpaperPlayer {
             throw PlaybackError.missingEntrypoint
         }
         let url = URL(filePath: entrypoint)
-        windows = try NSScreen.screens.map { screen in
+        let screens = NSScreen.screens
+        let screenFrames = screens.map(\.frame)
+        windows = try screens.map { screen in
             try WallpaperWindow(asset: asset, url: url, frame: screen.frame, displayMode: displayMode)
         }
+        lastScreenFrames = screenFrames
         windows.forEach { $0.show() }
         startLifecycleObservers()
         startVisibilityTimer()
@@ -48,6 +53,10 @@ final class WallpaperPlayer {
 
     func setAutoPauseWhenCovered(_ enabled: Bool) {
         autoPauseWhenCovered = enabled
+        if !enabled {
+            cancelPendingAutoSuspension()
+            setSuspended(false)
+        }
         updateVisibilityState()
     }
 
@@ -56,11 +65,13 @@ final class WallpaperPlayer {
         guard !isSuspended else {
             return
         }
-        windows.forEach { $0.show() }
+        reassertWallpaperWindowOrder()
     }
 
     func stop() {
         activeAsset = nil
+        lastScreenFrames = []
+        cancelPendingAutoSuspension()
         stopVisibilityTimer()
         stopLifecycleObservers()
         closeWindows()
@@ -77,9 +88,12 @@ final class WallpaperPlayer {
         }
         closeWindows()
         let url = URL(filePath: entrypoint)
-        windows = try NSScreen.screens.map { screen in
+        let screens = NSScreen.screens
+        let screenFrames = screens.map(\.frame)
+        windows = try screens.map { screen in
             try WallpaperWindow(asset: asset, url: url, frame: screen.frame, displayMode: displayMode)
         }
+        lastScreenFrames = screenFrames
         windows.forEach { $0.show() }
         updateVisibilityState()
     }
@@ -103,7 +117,12 @@ final class WallpaperPlayer {
 
     private func updateVisibilityState() {
         let shouldSuspend = autoPauseWhenCovered && !visibilityMonitor.isDesktopVisible()
-        setSuspended(shouldSuspend)
+        if shouldSuspend {
+            scheduleAutoSuspension()
+        } else {
+            cancelPendingAutoSuspension()
+            setSuspended(false)
+        }
     }
 
     private func setSuspended(_ suspended: Bool) {
@@ -112,6 +131,28 @@ final class WallpaperPlayer {
         }
         isSuspended = suspended
         windows.forEach { $0.setSuspended(suspended) }
+    }
+
+    private func scheduleAutoSuspension() {
+        guard pendingAutoSuspension == nil, !isSuspended else {
+            return
+        }
+        let workItem = DispatchWorkItem { [weak self] in
+            Task { @MainActor in
+                guard let self, self.autoPauseWhenCovered, !self.visibilityMonitor.isDesktopVisible() else {
+                    return
+                }
+                self.pendingAutoSuspension = nil
+                self.setSuspended(true)
+            }
+        }
+        pendingAutoSuspension = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: workItem)
+    }
+
+    private func cancelPendingAutoSuspension() {
+        pendingAutoSuspension?.cancel()
+        pendingAutoSuspension = nil
     }
 
     private func startLifecycleObservers() {
@@ -126,12 +167,26 @@ final class WallpaperPlayer {
             center.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
                 Task { @MainActor in self?.reopenAfterWake() }
             },
+            center.addObserver(
+                forName: NSWorkspace.didActivateApplicationNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in self?.scheduleWallpaperWindowOrderReassertion() }
+            },
+            center.addObserver(
+                forName: NSWorkspace.activeSpaceDidChangeNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in self?.scheduleWallpaperWindowOrderReassertion() }
+            },
             NotificationCenter.default.addObserver(
                 forName: NSApplication.didChangeScreenParametersNotification,
                 object: nil,
                 queue: .main
             ) { [weak self] _ in
-                Task { @MainActor in self?.reopenAfterWake() }
+                Task { @MainActor in self?.reopenAfterScreenFrameChange() }
             }
         ]
     }
@@ -155,6 +210,66 @@ final class WallpaperPlayer {
             closeWindows()
         }
     }
+
+    private func reopenAfterScreenFrameChange() {
+        guard activeAsset != nil else {
+            return
+        }
+        let currentScreenFrames = NSScreen.screens.map(\.frame)
+        guard WallpaperScreenFrames.shouldReopenWindows(
+            previous: lastScreenFrames,
+            current: currentScreenFrames
+        ) else {
+            reassertWallpaperWindowOrder()
+            return
+        }
+        reopenAfterWake()
+    }
+
+    private func reassertWallpaperWindowOrder() {
+        windows.forEach { $0.reassertDesktopOrder() }
+    }
+
+    private func scheduleWallpaperWindowOrderReassertion() {
+        wakeWallpaperForAppTransition()
+        reassertWallpaperWindowOrder()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+            Task { @MainActor in
+                self?.updateVisibilityState()
+                self?.reassertWallpaperWindowOrder()
+            }
+        }
+    }
+
+    private func wakeWallpaperForAppTransition() {
+        guard autoPauseWhenCovered else {
+            return
+        }
+        cancelPendingAutoSuspension()
+        setSuspended(false)
+        updateVisibilityState()
+    }
+}
+
+enum WallpaperScreenFrames {
+    static func shouldReopenWindows(previous: [CGRect], current: [CGRect]) -> Bool {
+        normalized(previous) != normalized(current)
+    }
+
+    private static func normalized(_ frames: [CGRect]) -> [CGRect] {
+        frames.sorted { lhs, rhs in
+            if lhs.minX != rhs.minX {
+                return lhs.minX < rhs.minX
+            }
+            if lhs.minY != rhs.minY {
+                return lhs.minY < rhs.minY
+            }
+            if lhs.width != rhs.width {
+                return lhs.width < rhs.width
+            }
+            return lhs.height < rhs.height
+        }
+    }
 }
 
 @MainActor
@@ -171,7 +286,7 @@ private final class WallpaperWindow {
             defer: false
         )
         window.level = WallpaperWindowLevel.desktopWallpaper
-        window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+        window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
         window.ignoresMouseEvents = true
         window.canHide = false
         window.isReleasedWhenClosed = false
@@ -182,6 +297,13 @@ private final class WallpaperWindow {
     }
 
     func show() {
+        guard !window.isVisible else {
+            return
+        }
+        window.orderFrontRegardless()
+    }
+
+    func reassertDesktopOrder() {
         window.orderFrontRegardless()
     }
 
@@ -208,7 +330,13 @@ private final class WallpaperWindow {
         let contentFrame = WallpaperContentLayout.contentFrame(for: frame)
         switch asset.kind {
         case .video:
-            return VideoWallpaperView(url: url, frame: contentFrame, displayMode: displayMode)
+            let fallbackImageURL = try? StillWallpaperImageProvider().stillImageURL(for: asset)
+            return VideoWallpaperView(
+                url: url,
+                fallbackImageURL: fallbackImageURL,
+                frame: contentFrame,
+                displayMode: displayMode
+            )
         case .web:
             return RestrictedWebWallpaperView(
                 url: url,

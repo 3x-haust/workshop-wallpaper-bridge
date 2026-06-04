@@ -187,6 +187,21 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertFalse(model.autoPauseWhenCovered)
     }
 
+    func testInitDefaultsToContinuousPlayback() throws {
+        // Given
+        let defaults = try makeUserDefaults()
+
+        // When
+        let model = AppViewModel(
+            store: LibraryStore(root: try makeTempDirectory()),
+            loginItemController: MockLoginItemController(),
+            userDefaults: defaults
+        )
+
+        // Then
+        XCTAssertFalse(model.autoPauseWhenCovered)
+    }
+
     func testInitRestoresLockScreenAnimationPreferenceWithoutInstalling() throws {
         // Given
         let defaults = try makeUserDefaults()

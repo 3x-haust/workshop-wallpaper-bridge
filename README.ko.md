@@ -50,9 +50,11 @@ Wallpaper Engine 프로젝트를 쓰는 경우:
 
 재생 동작:
 
-- **Auto-pause behind apps**가 기본으로 켜져 있습니다.
+- Dock과 Space 전환 깜빡임을 줄이기 위해 기본값은 연속 재생입니다.
+- **Auto-pause behind apps**는 선택 옵션입니다.
 - 설정창을 닫아도 재생은 멈추지 않습니다.
 - **Open at Login**을 켜면 로그인 후 마지막 월페이퍼를 복구합니다.
+- **Play on Desktop**은 동영상 재생 뒤에 보이는 정적 macOS 데스크톱 fallback 이미지도 갱신합니다. 그래서 Dock/Space 전환 중 이전 배경화면이 드러나지 않습니다.
 - **Remove**는 Mac 라이브러리에 복사된 항목만 삭제합니다. 원본 복사 폴더나 원본 영상은 건드리지 않습니다.
 
 가져온 파일은 아래 위치에 저장됩니다.
@@ -92,7 +94,7 @@ scene 지원은 보수적입니다. 기본 image-layer scene은 동작하며, pa
 
 화면 보호기가 언제 시작되는지는 macOS가 제어합니다. 시작 시간과 암호 요구 시간은 System Settings > Lock Screen에서 정합니다. macOS가 선택된 화면 보호기를 시작하기 전까지는 일반 정적 잠금화면 배경이 보입니다.
 
-**Set Still Wallpaper**로 정적 데스크톱 배경화면도 설정할 수 있습니다. MP4, MOV, M4V 파일은 작은 Workshop preview 대신 동영상에서 한 프레임을 추출해 사용합니다.
+**Set Still Wallpaper**로 정적 데스크톱 배경화면도 명시적으로 설정할 수 있습니다. MP4, MOV, M4V 파일은 작은 Workshop preview 대신 동영상에서 한 프레임을 추출해 사용합니다. **Play on Desktop**도 전환 fallback을 위해 같은 정적 이미지 경로를 사용하지만, **Set Still Wallpaper**를 누르거나 화면 보호기 연동을 켜지 않는 한 Lock Screen cache는 쓰지 않습니다.
 
 ## 소스에서 빌드
 

@@ -21,7 +21,7 @@ final class AppViewModel: ObservableObject {
             }
         }
     }
-    @Published var autoPauseWhenCovered = true {
+    @Published var autoPauseWhenCovered = false {
         didSet {
             WallpaperPlayer.shared.setAutoPauseWhenCovered(autoPauseWhenCovered)
             userDefaults.set(autoPauseWhenCovered, forKey: PreferenceKey.autoPauseWhenCovered)
@@ -437,6 +437,7 @@ extension AppViewModel {
             autoPauseWhenCovered: autoPauseWhenCovered,
             displayMode: displayMode
         )
+        let desktopFallbackError = setDesktopTransitionFallback(asset: asset)
         if remember {
             userDefaults.set(asset.id, forKey: PreferenceKey.lastPlayedAssetId)
         }
@@ -444,7 +445,21 @@ extension AppViewModel {
         let playbackStatus = autoPauseWhenCovered
             ? "Playing on the desktop layer. You can minimize this app; playback pauses only behind other apps."
             : "Playing continuously on the desktop layer. You can minimize this app."
-        status = lockScreenError.map { "\(playbackStatus) Screen Saver update failed: \($0)" } ?? playbackStatus
+        let fallbackStatus = desktopFallbackError.map {
+            " Desktop transition fallback failed: \($0)"
+        } ?? ""
+        status = lockScreenError.map {
+            "\(playbackStatus)\(fallbackStatus) Screen Saver update failed: \($0)"
+        } ?? "\(playbackStatus)\(fallbackStatus)"
+    }
+
+    private func setDesktopTransitionFallback(asset: WallpaperAsset) -> String? {
+        do {
+            _ = try systemWallpaperSetter.setDesktopStillWallpaper(from: asset)
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
     }
 
     private func refreshLockScreenAnimationConfiguration(asset: WallpaperAsset) -> String? {

@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import SwiftUI
 
 @main
@@ -17,6 +18,15 @@ struct WorkshopWallpaperBridgeApplication: App {
 }
 
 final class AppLifecycleDelegate: NSObject, NSApplicationDelegate {
+    private let instanceLock = AppInstanceLock()
+
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        guard instanceLock.acquire() else {
+            NSApp.terminate(nil)
+            return
+        }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
     }
@@ -37,6 +47,43 @@ final class AppLifecycleDelegate: NSObject, NSApplicationDelegate {
         Task { @MainActor in
             WallpaperPlayer.shared.restoreVisibleWindowsAfterAppWindowChange()
         }
+    }
+}
+
+final class AppInstanceLock {
+    private let lockPath: String
+    private var fileDescriptor: Int32 = -1
+
+    init(
+        lockPath: String = URL(filePath: NSTemporaryDirectory())
+            .appending(path: "com.workshop-wallpaper-bridge.app.lock")
+            .path
+    ) {
+        self.lockPath = lockPath
+    }
+
+    func acquire() -> Bool {
+        guard fileDescriptor < 0 else {
+            return true
+        }
+        let descriptor = open(lockPath, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR)
+        guard descriptor >= 0 else {
+            return false
+        }
+        guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
+            close(descriptor)
+            return false
+        }
+        fileDescriptor = descriptor
+        return true
+    }
+
+    deinit {
+        guard fileDescriptor >= 0 else {
+            return
+        }
+        flock(fileDescriptor, LOCK_UN)
+        close(fileDescriptor)
     }
 }
 

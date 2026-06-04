@@ -5,12 +5,19 @@ struct DesktopVisibilityMonitor {
     func isDesktopVisible() -> Bool {
         Self.isDesktopVisible(
             windows: windowSnapshots(),
-            currentProcessId: Int(ProcessInfo.processInfo.processIdentifier)
+            currentProcessId: Int(ProcessInfo.processInfo.processIdentifier),
+            screenFrames: NSScreen.screens.map(\.frame)
         )
     }
 
-    static func isDesktopVisible(windows: [WindowSnapshot], currentProcessId: Int) -> Bool {
-        !windows.contains { isBlockingWindow($0, currentProcessId: currentProcessId) }
+    static func isDesktopVisible(
+        windows: [WindowSnapshot],
+        currentProcessId: Int,
+        screenFrames: [CGRect] = []
+    ) -> Bool {
+        !windows.contains {
+            isBlockingWindow($0, currentProcessId: currentProcessId, screenFrames: screenFrames)
+        }
     }
 
     private func windowSnapshots() -> [WindowSnapshot] {
@@ -23,7 +30,11 @@ struct DesktopVisibilityMonitor {
         return windows.map(WindowSnapshot.init)
     }
 
-    private static func isBlockingWindow(_ window: WindowSnapshot, currentProcessId: Int) -> Bool {
+    private static func isBlockingWindow(
+        _ window: WindowSnapshot,
+        currentProcessId: Int,
+        screenFrames: [CGRect]
+    ) -> Bool {
         guard window.layer == 0, window.alpha > 0.05, window.bounds.area > 12_000 else {
             return false
         }
@@ -31,6 +42,9 @@ struct DesktopVisibilityMonitor {
             return false
         }
         if isFinderDesktopHost(window) {
+            return false
+        }
+        if isSmallDesktopOverlay(window, screenFrames: screenFrames) {
             return false
         }
         return !ignoredOwners.contains(window.ownerName)
@@ -41,6 +55,15 @@ struct DesktopVisibilityMonitor {
             return false
         }
         return window.bounds.width >= 1_000 && window.bounds.height >= 700
+    }
+
+    private static func isSmallDesktopOverlay(_ window: WindowSnapshot, screenFrames: [CGRect]) -> Bool {
+        guard max(window.bounds.width, window.bounds.height) <= 240 else {
+            return false
+        }
+        return screenFrames.contains { screen in
+            abs(window.bounds.minX - screen.minX) <= 80 || abs(window.bounds.maxX - screen.maxX) <= 80
+        }
     }
 }
 
@@ -89,9 +112,15 @@ private extension CGRect {
 }
 
 private let ignoredOwners = [
+    "AirPlayUIAgent",
+    "Continuity",
+    "Continuity Camera",
     "Window Server",
     "Dock",
     "Control Center",
+    "ControlCenter",
+    "ContinuityCaptureAgent",
+    "Handoff",
     "WindowManager",
     "Notification Center",
     "SystemUIServer"

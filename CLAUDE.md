@@ -12,4 +12,5 @@ Quick reminders:
 - Run `swift test` before saying a code change is complete.
 - Update both `README.md` and `README.ko.md` for user-facing behavior changes.
 - Use the commit convention documented in `CONTRIBUTING.md`.
-
+- Work like an open-source contributor: create a focused branch, commit with a Conventional Commit subject, push the branch, open a PR with test evidence, merge only after review/checks, then release from a `v<version>` tag.
+- For patch releases, use the next semantic patch tag, push it after the PR is merged, and let `.github/workflows/release.yml` publish the DMG and checksum.

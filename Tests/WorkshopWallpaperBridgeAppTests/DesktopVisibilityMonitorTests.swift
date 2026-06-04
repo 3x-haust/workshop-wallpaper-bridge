@@ -41,6 +41,130 @@ final class DesktopVisibilityMonitorTests: XCTestCase {
         XCTAssertTrue(visible)
     }
 
+    func testStageManagerAppThumbnailDoesNotPausePlayback() {
+        // Given
+        let windows = [
+            DesktopVisibilityMonitor.WindowSnapshot(
+                ownerName: "Code",
+                processId: 100,
+                layer: 0,
+                alpha: 1,
+                bounds: CGRect(x: 15, y: 420, width: 127, height: 149)
+            )
+        ]
+
+        // When
+        let visible = DesktopVisibilityMonitor.isDesktopVisible(
+            windows: windows,
+            currentProcessId: 200,
+            screenFrames: [CGRect(x: 0, y: 0, width: 1470, height: 956)]
+        )
+
+        // Then
+        XCTAssertTrue(visible)
+    }
+
+    func testSmallCenteredUserWindowStillPausesPlayback() {
+        // Given
+        let windows = [
+            DesktopVisibilityMonitor.WindowSnapshot(
+                ownerName: "Code",
+                processId: 100,
+                layer: 0,
+                alpha: 1,
+                bounds: CGRect(x: 520, y: 320, width: 220, height: 220)
+            )
+        ]
+
+        // When
+        let visible = DesktopVisibilityMonitor.isDesktopVisible(
+            windows: windows,
+            currentProcessId: 200,
+            screenFrames: [CGRect(x: 0, y: 0, width: 1470, height: 956)]
+        )
+
+        // Then
+        XCTAssertFalse(visible)
+    }
+
+    func testContinuityAndHandoffSystemWindowsDoNotPausePlayback() {
+        // Given
+        let windows = [
+            DesktopVisibilityMonitor.WindowSnapshot(
+                ownerName: "ContinuityCaptureAgent",
+                processId: 100,
+                layer: 0,
+                alpha: 1,
+                bounds: CGRect(x: 0, y: 0, width: 390, height: 844)
+            ),
+            DesktopVisibilityMonitor.WindowSnapshot(
+                ownerName: "Handoff",
+                processId: 101,
+                layer: 0,
+                alpha: 1,
+                bounds: CGRect(x: 0, y: 0, width: 390, height: 844)
+            )
+        ]
+
+        // When
+        let visible = DesktopVisibilityMonitor.isDesktopVisible(windows: windows, currentProcessId: 200)
+
+        // Then
+        XCTAssertTrue(
+            visible,
+            "Continuity and Handoff system windows should not pause desktop wallpaper playback."
+        )
+    }
+
+    func testAdditionalContinuitySystemWindowsDoNotPausePlayback() {
+        let ownerNames = [
+            "AirPlayUIAgent",
+            "Continuity",
+            "Continuity Camera",
+            "ControlCenter"
+        ]
+
+        for ownerName in ownerNames {
+            let windows = [
+                DesktopVisibilityMonitor.WindowSnapshot(
+                    ownerName: ownerName,
+                    processId: 100,
+                    layer: 0,
+                    alpha: 1,
+                    bounds: CGRect(x: 0, y: 0, width: 390, height: 844)
+                )
+            ]
+
+            let visible = DesktopVisibilityMonitor.isDesktopVisible(windows: windows, currentProcessId: 200)
+
+            XCTAssertTrue(visible, "\(ownerName) should not pause desktop wallpaper playback.")
+        }
+    }
+
+    func testUserWindowsWithContinuityLikeNamesStillPausePlayback() {
+        let ownerNames = [
+            "Continuity Studio",
+            "Handoff Notes",
+            "iPhone Hotspot Preview"
+        ]
+
+        for ownerName in ownerNames {
+            let windows = [
+                DesktopVisibilityMonitor.WindowSnapshot(
+                    ownerName: ownerName,
+                    processId: 100,
+                    layer: 0,
+                    alpha: 1,
+                    bounds: CGRect(x: 0, y: 0, width: 900, height: 700)
+                )
+            ]
+
+            let visible = DesktopVisibilityMonitor.isDesktopVisible(windows: windows, currentProcessId: 200)
+
+            XCTAssertFalse(visible, "\(ownerName) should still pause desktop wallpaper playback.")
+        }
+    }
+
     func testLargeUserAppWindowPausesPlayback() {
         // Given
         let windows = [
