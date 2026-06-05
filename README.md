@@ -71,9 +71,9 @@ Imported files are stored in:
 | `.webm`, `.mkv`, `.avi` video | Converts locally with `ffmpeg`, then plays |
 | `index.html` web wallpaper | Plays in a restricted local WebView |
 | `.jpg`, `.png`, `.gif`, `.heic` image | Displays as a static desktop layer |
-| `scene.pkg` scene wallpaper | Renders packed 2D image layers, text layers, selected clock text scripts, basic keyframed motion, and selected water-effect motion |
+| `scene.pkg` scene wallpaper | Renders packed 2D image layers, text layers, selected clock text scripts, basic keyframed motion, and selected water-effect motion; preserves shader/effect/script/audio requirements for engine-renderer work |
 
-Scene support is conservative. Basic image-layer scenes work, including packed `.tex` textures, LZ4 blocks, common DXT formats, text layers, selected clock text scripts, keyframed position, scale, rotation, and opacity, plus lightweight motion for known water-style effects. Particles, audio-reactive scripts, custom shaders, media integration, and video/GIF texture animation may be skipped or look different from Wallpaper Engine.
+Scene support is conservative. Basic image-layer scenes work, including packed `.tex` textures, LZ4 blocks, common DXT formats, text layers, selected clock text scripts, keyframed position, scale, rotation, and opacity, plus lightweight motion for known water-style effects. The package analyzer now preserves scene runtime requirements such as effect files, shader files, shader uniforms, SceneScript, particles, sound layers, audio-analysis inputs, and video textures so renderer-engine parity work can be targeted. Particles, audio-reactive scripts, custom shaders, media integration, and video/GIF texture animation may still be skipped or look different from Wallpaper Engine until the Metal scene engine implements those runtime features.
 
 Workshop preview files such as `preview.jpg`, `thumbnail.jpg`, and `cover.png` are treated as thumbnails. If a project contains `scene.pkg`, the app reads the packed scene data instead of stretching a low-resolution preview across the screen.
 
@@ -142,6 +142,7 @@ swift run wwbctl remove "<asset-id>"
 swift run wwbctl convert input.webm --out output.mp4
 swift run wwbctl scene-info "/path/to/scene.pkg"
 swift run wwbctl scene-render-info "/path/to/scene.pkg"
+swift run wwbctl scene-engine-info "/path/to/scene.pkg"
 swift run wwbctl doctor
 ```
 

@@ -71,9 +71,9 @@ Wallpaper Engine 프로젝트를 쓰는 경우:
 | `.webm`, `.mkv`, `.avi` 동영상 | 로컬 `ffmpeg`로 변환 후 재생 |
 | `index.html` 웹 월페이퍼 | 제한된 로컬 WebView에서 재생 |
 | `.jpg`, `.png`, `.gif`, `.heic` 이미지 | 정적 데스크톱 레이어로 표시 |
-| `scene.pkg` 씬 월페이퍼 | 패키지 안의 2D image layer, text layer, 일부 clock text script, 기본 keyframe 움직임, 일부 물 효과 움직임 렌더링 |
+| `scene.pkg` 씬 월페이퍼 | 패키지 안의 2D image layer, text layer, 일부 clock text script, 기본 keyframe 움직임, 일부 물 효과 움직임 렌더링; 엔진 렌더러 작업에 필요한 shader/effect/script/audio 요구사항 보존 |
 
-scene 지원은 보수적입니다. 기본 image-layer scene은 동작하며, packed `.tex` texture, LZ4 block, 주요 DXT 형식, text layer, 일부 clock text script, position/scale/rotation/opacity keyframe, 일부 water-style effect의 가벼운 움직임을 처리합니다. particle, audio-reactive script, custom shader, media integration, video/GIF texture animation은 생략되거나 Wallpaper Engine과 다르게 보일 수 있습니다.
+scene 지원은 보수적입니다. 기본 image-layer scene은 동작하며, packed `.tex` texture, LZ4 block, 주요 DXT 형식, text layer, 일부 clock text script, position/scale/rotation/opacity keyframe, 일부 water-style effect의 가벼운 움직임을 처리합니다. 이제 package analyzer가 effect file, shader file, shader uniform, SceneScript, particle, sound layer, audio-analysis input, video texture 같은 scene runtime 요구사항을 보존하므로 renderer-engine parity 작업을 정확히 겨냥할 수 있습니다. Metal scene engine이 해당 runtime 기능을 구현하기 전까지 particle, audio-reactive script, custom shader, media integration, video/GIF texture animation은 여전히 생략되거나 Wallpaper Engine과 다르게 보일 수 있습니다.
 
 `preview.jpg`, `thumbnail.jpg`, `cover.png` 같은 Workshop 미리보기 파일은 썸네일로 취급합니다. 프로젝트에 `scene.pkg`가 있으면 낮은 해상도 미리보기를 늘려 쓰지 않고 패키지 내부 scene 데이터를 읽습니다.
 
@@ -142,6 +142,7 @@ swift run wwbctl remove "<asset-id>"
 swift run wwbctl convert input.webm --out output.mp4
 swift run wwbctl scene-info "/path/to/scene.pkg"
 swift run wwbctl scene-render-info "/path/to/scene.pkg"
+swift run wwbctl scene-engine-info "/path/to/scene.pkg"
 swift run wwbctl doctor
 ```
 

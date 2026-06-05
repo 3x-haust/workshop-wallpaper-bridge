@@ -121,10 +121,10 @@ public struct ScenePackageAnalysis: Codable, Equatable, Sendable {
     public let fontEntryCount: Int
     public let audioEntryCount: Int
     public let videoEntryCount: Int
+    public let runtimeFeatures: SceneRuntimeFeatures
 
     public var requiresFullRenderer: Bool {
-        textObjectCount > 0 || particleObjectCount > 0 || soundObjectCount > 0 || modelObjectCount > 0
-            || effectEntryCount > 0 || shaderEntryCount > 0 || audioEntryCount > 0 || videoEntryCount > 0
+        runtimeFeatures.requiresEngineRenderer
     }
 
     public var userFacingSummary: String {
@@ -146,7 +146,7 @@ public struct ScenePackageAnalysis: Codable, Equatable, Sendable {
         let animationSummary = animatedObjectCount > 0 ? "; \(animatedObjectCount) animated object(s)" : ""
         let objects = objectSummary.isEmpty ? "\(objectCount) object(s)" : objectSummary
         let assets = assetSummary.isEmpty ? "\(entryCount) packaged file(s)" : assetSummary
-        return "scene.pkg \(magic): \(objects); \(assets)\(animationSummary). 2D image, text, selected clock text, and selected effect playback is enabled."
+        return "scene.pkg \(magic): \(objects); \(assets)\(animationSummary). 2D image, text, selected clock text, and selected effect playback is enabled. \(runtimeFeatures.userFacingSummary)"
     }
 }
 
@@ -163,6 +163,7 @@ public struct ScenePackageAnalyzer: Sendable {
             throw ScenePackageError.malformedSceneJSON
         }
         let objects = scene["objects"] as? [[String: Any]] ?? []
+        let runtimeFeatures = SceneRuntimeFeatureAnalyzer().analyze(package: package, scene: scene)
         return ScenePackageAnalysis(
             magic: package.magic,
             entryCount: package.entries.count,
@@ -183,7 +184,8 @@ public struct ScenePackageAnalyzer: Sendable {
             shaderEntryCount: package.entries.filter { $0.path.hasPrefix("shaders/") }.count,
             fontEntryCount: package.entries.filter { $0.path.hasSuffix(".ttf") || $0.path.hasSuffix(".otf") }.count,
             audioEntryCount: package.entries.filter { ["mp3", "wav", "ogg"].contains($0.path.pathExtension) }.count,
-            videoEntryCount: package.entries.filter { ["mp4", "webm"].contains($0.path.pathExtension) }.count
+            videoEntryCount: package.entries.filter { ["mp4", "webm"].contains($0.path.pathExtension) }.count,
+            runtimeFeatures: runtimeFeatures
         )
     }
 

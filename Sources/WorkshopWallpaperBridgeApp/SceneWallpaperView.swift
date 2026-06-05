@@ -130,10 +130,10 @@ final class SceneWallpaperView: NSView,
     }
 
     private func buildLayers() {
-        var sceneWideEffects: [SceneLayerEffect] = []
+        var sceneWideEffects: [SceneLayerEffectSetting] = []
         for layerPlan in plan.layers {
             if layerPlan.isEffectOnly {
-                sceneWideEffects.append(contentsOf: layerPlan.effects)
+                sceneWideEffects.append(contentsOf: layerPlan.effectSettings)
                 continue
             }
             let contentLayer: CALayer
@@ -165,7 +165,7 @@ final class SceneWallpaperView: NSView,
                 contentLayer = imageLayer
             }
             contentLayer.name = layerPlan.name
-            contentLayer.opacity = Float(max(0, min(layerPlan.alpha, 1)))
+            contentLayer.opacity = Float(max(0, min(layerPlan.alpha * opacityMultiplier(for: layerPlan), 1)))
             configure(contentLayer, with: layerPlan)
             sceneLayer.addSublayer(contentLayer)
             contentLayers.append(contentLayer)
@@ -285,15 +285,16 @@ final class SceneWallpaperView: NSView,
         }
         let keyframe = CAKeyframeAnimation(keyPath: "opacity")
         configure(keyframe, duration: animation.duration)
+        let opacityEffect = opacityMultiplier(for: plan)
         keyframe.values = animation.keyframes.map { frame in
             let opacity = animation.isRelative ? plan.alpha + frame.value : frame.value
-            return max(0, min(opacity, 1))
+            return max(0, min(opacity * opacityEffect, 1))
         }
         keyframe.keyTimes = keyTimes(for: animation)
         layer.add(keyframe, forKey: "scene-alpha")
     }
 
-    private func addSceneWideEffectAnimations(_ effects: [SceneLayerEffect]) {
+    private func addSceneWideEffectAnimations(_ effects: [SceneLayerEffectSetting]) {
         sceneLayer.removeAnimation(forKey: "scene-wide-water-motion")
         sceneLayer.removeAnimation(forKey: "scene-wide-shake-motion")
         sceneLayer.removeAnimation(forKey: "scene-wide-effect-rotation")
@@ -304,36 +305,81 @@ final class SceneWallpaperView: NSView,
     }
 
     private func addEffectAnimations(to layer: CALayer, plan: SceneLayer) {
-        addEffectAnimations(to: layer, effects: plan.effects, keyPrefix: "scene", amplitude: 8)
+        addEffectAnimations(to: layer, effects: plan.effectSettings, keyPrefix: "scene", amplitude: 8)
     }
 
     private func addEffectAnimations(
         to layer: CALayer,
-        effects: [SceneLayerEffect],
+        effects: [SceneLayerEffectSetting],
         keyPrefix: String,
         amplitude: Double
     ) {
-        if effects.contains(.waterFlow) || effects.contains(.waterWaves) || effects.contains(.waterRipple) {
+        if let water = strongestSetting(in: effects, matching: [.waterFlow, .waterWaves, .waterRipple]) {
             let animation = CAKeyframeAnimation(keyPath: "transform.translation.y")
-            configure(animation, duration: 4)
-            animation.values = [-amplitude, amplitude * 0.75, -amplitude * 0.5, amplitude, -amplitude]
+            configure(animation, duration: effectDuration(water, fallback: 4))
+            let effectAmplitude = effectAmplitude(water, fallback: amplitude)
+            animation.values = [
+                -effectAmplitude,
+                effectAmplitude * 0.75,
+                -effectAmplitude * 0.5,
+                effectAmplitude,
+                -effectAmplitude
+            ]
             animation.keyTimes = [0, 0.25, 0.5, 0.75, 1]
             layer.add(animation, forKey: "\(keyPrefix)-water-motion")
         }
-        if effects.contains(.shake) {
+        if let shake = strongestSetting(in: effects, matching: [.shake]) {
             let animation = CAKeyframeAnimation(keyPath: "transform.translation.x")
-            configure(animation, duration: 3)
-            animation.values = [-5, 4, -3, 5, -5]
+            configure(animation, duration: effectDuration(shake, fallback: 3))
+            let effectAmplitude = effectAmplitude(shake, fallback: 5)
+            animation.values = [
+                -effectAmplitude,
+                effectAmplitude * 0.8,
+                -effectAmplitude * 0.6,
+                effectAmplitude,
+                -effectAmplitude
+            ]
             animation.keyTimes = [0, 0.25, 0.5, 0.75, 1]
             layer.add(animation, forKey: "\(keyPrefix)-shake-motion")
         }
-        if effects.contains(.scroll) || effects.contains(.spin) {
+        if let rotation = strongestSetting(in: effects, matching: [.scroll, .spin]) {
             let animation = CAKeyframeAnimation(keyPath: "transform.rotation.z")
-            configure(animation, duration: 8)
-            animation.values = [0, 0.02, -0.02, 0]
+            configure(animation, duration: effectDuration(rotation, fallback: 8))
+            let angle = min(max((rotation.strength ?? rotation.scale ?? 0.35) * 0.08, 0.01), 0.12)
+            animation.values = [0, angle, -angle, 0]
             animation.keyTimes = [0, 0.33, 0.66, 1]
             layer.add(animation, forKey: "\(keyPrefix)-effect-rotation")
         }
+    }
+
+    private func opacityMultiplier(for plan: SceneLayer) -> Double {
+        guard let opacity = plan.effectSettings.last(where: { $0.effect == .opacity }) else {
+            return 1
+        }
+        return max(0, min(opacity.strength ?? 1, 1))
+    }
+
+    private func strongestSetting(
+        in settings: [SceneLayerEffectSetting],
+        matching effects: Set<SceneLayerEffect>
+    ) -> SceneLayerEffectSetting? {
+        settings
+            .filter { effects.contains($0.effect) }
+            .max { lhs, rhs in
+                (lhs.strength ?? lhs.scale ?? 0) < (rhs.strength ?? rhs.scale ?? 0)
+            }
+    }
+
+    private func effectDuration(_ setting: SceneLayerEffectSetting, fallback: Double) -> Double {
+        guard let speed = setting.speed, speed > 0 else {
+            return fallback
+        }
+        return max(0.8, min(fallback / speed, 12))
+    }
+
+    private func effectAmplitude(_ setting: SceneLayerEffectSetting, fallback: Double) -> Double {
+        let strength = setting.strength ?? setting.scale ?? 1
+        return max(1, min(fallback * max(strength, 0.1), 40))
     }
 
     private func configure(_ animation: CAKeyframeAnimation, duration: Double) {

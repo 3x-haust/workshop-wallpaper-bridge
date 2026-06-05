@@ -144,6 +144,113 @@ final class ScenePackageTests: XCTestCase {
         XCTAssertTrue(analysis.userFacingSummary.contains("2 animated object(s)"))
         XCTAssertTrue(analysis.userFacingSummary.contains("selected clock text"))
         XCTAssertTrue(analysis.userFacingSummary.contains("selected effect playback"))
+        XCTAssertTrue(analysis.userFacingSummary.contains("engine rendering features"))
+    }
+
+    func testRuntimeFeatureAnalyzerPreservesEngineRendererRequirements() throws {
+        // Given
+        let root = try Fixture.makeTempDirectory()
+        let packageURL = root.appending(path: "engine-scene.pkg")
+        let sceneJSON = """
+        {
+          "objects": [
+            {
+              "id": 1,
+              "name": "Water",
+              "image": "models/water.json",
+              "effects": [
+                {
+                  "file": "effects/waterflow/effect.json",
+                  "passes": [
+                    {
+                      "constantshadervalues": {
+                        "speed": 0.45,
+                        "strength": 0.47
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": 2,
+              "name": "Clock",
+              "text": {
+                "value": "12:34",
+                "script": "export function update() { const time = new Date(); return time.getHours(); }"
+              }
+            },
+            { "id": 3, "name": "Foam", "particle": "particles/foam.json" },
+            { "id": 4, "name": "Sea audio", "sound": "sounds/sea.ogg" }
+          ]
+        }
+        """
+        try Fixture.writeScenePackage(
+            to: packageURL,
+            sceneJSON: sceneJSON,
+            extraEntries: [
+                (path: "models/water.json", data: Data(#"{"material":"materials/water.json"}"#.utf8)),
+                (path: "materials/water.json", data: Data(#"{"passes":[{"textures":["water"]}]}"#.utf8)),
+                (path: "materials/water.tex", data: Data([1])),
+                (path: "effects/waterflow/effect.json", data: Data([2])),
+                (
+                    path: "shaders/effects/waterflow.frag",
+                    data: Data("float t = g_Time + g_AudioSpectrum16Left[0];".utf8)
+                ),
+                (path: "sounds/sea.ogg", data: Data([3])),
+                (path: "textures/ripple.webm", data: Data([4]))
+            ]
+        )
+
+        // When
+        let features = try SceneRuntimeFeatureAnalyzer().analyze(url: packageURL)
+
+        // Then
+        XCTAssertTrue(features.requiresEngineRenderer)
+        XCTAssertTrue(features.requiresShaderPipeline)
+        XCTAssertTrue(features.requiresSceneScriptRuntime)
+        XCTAssertTrue(features.requiresParticleRuntime)
+        XCTAssertTrue(features.requiresSoundRuntime)
+        XCTAssertFalse(features.requiresModelRuntime)
+        XCTAssertTrue(features.requiresAudioAnalysis)
+        XCTAssertTrue(features.requiresVideoTextureRuntime)
+        XCTAssertEqual(features.materialFiles, ["materials/water.json"])
+        XCTAssertEqual(features.effectFiles, ["effects/waterflow/effect.json"])
+        XCTAssertEqual(features.shaderFiles, ["shaders/effects/waterflow.frag"])
+        XCTAssertEqual(features.audioFiles, ["sounds/sea.ogg"])
+        XCTAssertEqual(features.videoFiles, ["textures/ripple.webm"])
+        XCTAssertEqual(features.shaderUniforms, ["g_AudioSpectrum16Left", "g_Time"])
+        XCTAssertEqual(features.layers.first?.constantShaderValueKeys, ["speed", "strength"])
+        XCTAssertEqual(features.layers.first { $0.name == "Clock" }?.scriptCount, 1)
+        XCTAssertTrue(features.runtimeGaps.contains("metal-shader-effect-pipeline"))
+        XCTAssertTrue(features.runtimeGaps.contains("audio-analysis-uniforms"))
+    }
+
+    func testRuntimeFeatureAnalyzerMarksModelOnlySceneAsEngineRendererRequirement() throws {
+        // Given
+        let root = try Fixture.makeTempDirectory()
+        let packageURL = root.appending(path: "model-only.pkg")
+        let sceneJSON = """
+        {
+          "objects": [
+            { "id": 1, "name": "Ship mesh", "model": "models/ship.json" }
+          ]
+        }
+        """
+        try Fixture.writeScenePackage(
+            to: packageURL,
+            sceneJSON: sceneJSON,
+            extraEntries: [(path: "models/ship.json", data: Data([1]))]
+        )
+
+        // When
+        let analysis = try ScenePackageAnalyzer().analyze(url: packageURL)
+
+        // Then
+        XCTAssertEqual(analysis.modelObjectCount, 1)
+        XCTAssertTrue(analysis.requiresFullRenderer)
+        XCTAssertTrue(analysis.runtimeFeatures.requiresModelRuntime)
+        XCTAssertEqual(analysis.runtimeFeatures.runtimeGaps, ["model-layer-runtime"])
     }
 }
 

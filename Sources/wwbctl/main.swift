@@ -32,6 +32,8 @@ struct WWBCtl {
             try sceneInfo(arguments: Array(arguments.dropFirst()))
         case "scene-render-info":
             try sceneRenderInfo(arguments: Array(arguments.dropFirst()))
+        case "scene-engine-info":
+            try sceneEngineInfo(arguments: Array(arguments.dropFirst()))
         case "doctor":
             try doctor()
         case "help", "--help", "-h":
@@ -125,9 +127,28 @@ struct WWBCtl {
             alphaAnimationCount: plan.layers.filter { $0.alphaAnimation != nil }.count,
             texturePaths: plan.layers.map(\.texturePath).filter { !$0.isEmpty },
             textValues: plan.layers.compactMap { $0.text?.value },
-            effects: plan.layers.flatMap(\.effects).map(\.rawValue)
+            effects: plan.layers.flatMap(\.effects).map(\.rawValue),
+            effectSettings: plan.layers.flatMap(\.effectSettings).map {
+                SceneRenderEffectInfo(
+                    effect: $0.effect.rawValue,
+                    speed: $0.speed,
+                    strength: $0.strength,
+                    scale: $0.scale,
+                    usesMask: $0.usesMask
+                )
+            }
         )
         let data = try JSONEncoder.cli.encode(info)
+        FileHandle.standardOutput.write(data)
+        print("")
+    }
+
+    private static func sceneEngineInfo(arguments: [String]) throws {
+        guard let path = arguments.first else {
+            throw CLIError.missingPath
+        }
+        let features = try SceneRuntimeFeatureAnalyzer().analyze(url: URL(filePath: path))
+        let data = try JSONEncoder.cli.encode(features)
         FileHandle.standardOutput.write(data)
         print("")
     }
@@ -149,6 +170,15 @@ struct WWBCtl {
         let texturePaths: [String]
         let textValues: [String]
         let effects: [String]
+        let effectSettings: [SceneRenderEffectInfo]
+    }
+
+    private struct SceneRenderEffectInfo: Codable {
+        let effect: String
+        let speed: Double?
+        let strength: Double?
+        let scale: Double?
+        let usesMask: Bool
     }
 
     private static func doctor() throws {
@@ -186,6 +216,7 @@ struct WWBCtl {
         wwbctl convert <input-video> --out <output.mp4>
         wwbctl scene-info <scene.pkg>
         wwbctl scene-render-info <scene.pkg>
+        wwbctl scene-engine-info <scene.pkg>
         wwbctl doctor
         """)
     }

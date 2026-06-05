@@ -258,8 +258,11 @@ final class WallpaperPlayerSuspensionTests: XCTestCase {
         XCTAssertTrue(source.contains("addEffectAnimations(to: imageLayer, plan: layerPlan)"))
         XCTAssertTrue(source.contains("addSceneWideEffectAnimations(sceneWideEffects)"))
         XCTAssertTrue(source.contains("scene-wide-water-motion"))
-        XCTAssertTrue(source.contains("effects.contains(.waterFlow)"))
-        XCTAssertTrue(source.contains("effects.contains(.waterWaves)"))
-        XCTAssertTrue(source.contains("effects.contains(.waterRipple)"))
+        XCTAssertTrue(source.contains("plan.effectSettings"))
+        XCTAssertTrue(source.contains("effectDuration"))
+        XCTAssertTrue(source.contains("effectAmplitude"))
+        XCTAssertTrue(source.contains("opacityMultiplier(for: layerPlan)"))
+        XCTAssertTrue(source.contains("opacityMultiplier(for: plan)"))
+        XCTAssertTrue(source.contains("matching: [.waterFlow, .waterWaves, .waterRipple]"))
     }
 }

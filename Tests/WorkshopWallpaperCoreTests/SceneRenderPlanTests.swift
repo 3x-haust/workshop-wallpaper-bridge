@@ -278,7 +278,15 @@ final class SceneRenderPlanTests: XCTestCase {
               "pointsize": 80,
               "color": "1 1 1",
               "horizontalalign": "center",
-              "verticalalign": "center"
+              "verticalalign": "center",
+              "effects": [
+                {
+                  "file": "effects/opacity/effect.json",
+                  "passes": [
+                    { "constantshadervalues": { "alpha": 0.25 } }
+                  ]
+                }
+              ]
             }
           ]
         }
@@ -300,6 +308,9 @@ final class SceneRenderPlanTests: XCTestCase {
         XCTAssertEqual(plan.layers.count, 3)
         let foam = try XCTUnwrap(plan.layers.first { $0.name == "Espuma" })
         XCTAssertTrue(foam.effects.contains(.waterFlow))
+        XCTAssertEqual(foam.effectSettings.first?.effect, .waterFlow)
+        XCTAssertEqual(foam.effectSettings.first?.speed, 0.45)
+        XCTAssertEqual(foam.effectSettings.first?.strength, 0.47)
         let compose = try XCTUnwrap(plan.layers.first { $0.name == "Compose" })
         XCTAssertTrue(compose.isEffectOnly)
         XCTAssertTrue(compose.effects.contains(.waterRipple))
@@ -326,5 +337,105 @@ final class SceneRenderPlanTests: XCTestCase {
         XCTAssertEqual(clock.text?.pointSize, 80)
         XCTAssertEqual(clock.text?.horizontalAlignment, .center)
         XCTAssertEqual(clock.text?.verticalAlignment, .center)
+        XCTAssertEqual(clock.effectSettings.last?.effect, .opacity)
+        XCTAssertEqual(clock.effectSettings.last?.strength, 0.25)
+        XCTAssertFalse(clock.effectSettings.last?.usesMask ?? true)
+    }
+
+    func testRenderPlanSkipsMaskedDuplicateClockTextUntilMaskPipelineIsAvailable() throws {
+        // Given
+        let root = try Fixture.makeTempDirectory()
+        let packageURL = root.appending(path: "duplicate-clock.pkg")
+        let clockText = """
+        {
+          "value": "12:34",
+          "script": "export function update(value) { let time = new Date(); var hours = time.getHours(); let minutes = time.getMinutes(); return hours + ':' + minutes; }",
+          "scriptproperties": {
+            "delimiter": ":",
+            "showSeconds": false,
+            "use24hFormat": { "value": false }
+          }
+        }
+        """
+        let sceneJSON = """
+        {
+          "objects": [
+            {
+              "id": 1,
+              "name": "Clock",
+              "text": \(clockText),
+              "origin": "300 200 0",
+              "size": "200 100"
+            },
+            {
+              "id": 2,
+              "name": "Clock masked",
+              "text": \(clockText),
+              "origin": "301 200 0",
+              "size": "220 120",
+              "effects": [
+                {
+                  "file": "effects/opacity/effect.json",
+                  "passes": [
+                    {
+                      "constantshadervalues": { "alpha": 1 },
+                      "textures": [null, "masks/clock-mask"]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+        """
+        try Fixture.writeScenePackage(to: packageURL, sceneJSON: sceneJSON)
+
+        // When
+        let plan = try SceneRenderPlanBuilder().build(url: packageURL)
+
+        // Then
+        XCTAssertEqual(plan.layers.map(\.name), ["Clock"])
+        XCTAssertEqual(plan.layers.filter { $0.text != nil }.count, 1)
+    }
+
+    func testRenderPlanKeepsUnmaskedDuplicateOpacityTextLayers() throws {
+        // Given
+        let root = try Fixture.makeTempDirectory()
+        let packageURL = root.appending(path: "duplicate-glow.pkg")
+        let sceneJSON = """
+        {
+          "objects": [
+            {
+              "id": 1,
+              "name": "Title shadow",
+              "text": "HELLO",
+              "origin": "300 200 0",
+              "effects": [
+                {
+                  "file": "effects/opacity/effect.json",
+                  "passes": [
+                    { "constantshadervalues": { "alpha": 0.4 } }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": 2,
+              "name": "Title fill",
+              "text": "HELLO",
+              "origin": "301 200 0"
+            }
+          ]
+        }
+        """
+        try Fixture.writeScenePackage(to: packageURL, sceneJSON: sceneJSON)
+
+        // When
+        let plan = try SceneRenderPlanBuilder().build(url: packageURL)
+
+        // Then
+        XCTAssertEqual(plan.layers.map(\.name), ["Title shadow", "Title fill"])
+        XCTAssertEqual(plan.layers.filter { $0.text != nil }.count, 2)
+        XCTAssertFalse(plan.layers[0].effectSettings.first?.usesMask ?? true)
     }
 }
