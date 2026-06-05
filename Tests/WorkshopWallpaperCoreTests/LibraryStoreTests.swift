@@ -210,6 +210,57 @@ final class LibraryStoreTests: XCTestCase {
         XCTAssertTrue(repaired.issues.contains { $0.code == "scene_renderer_limited" })
     }
 
+    func testLoadRefreshesImportedSceneDiagnostics() throws {
+        // Given
+        let store = LibraryStore(root: try Fixture.makeTempDirectory())
+        let project = try makeImportedProjectDirectory(in: store.root, id: "scene-diagnostics")
+        let scenePackage = project.appending(path: "scene.pkg")
+        try Fixture.writeScenePackage(
+            to: scenePackage,
+            sceneJSON: """
+            {
+              "objects": [
+                {"text": {"value": "12:34"}},
+                {"image": "models/foam.json", "effects": [{"file": "effects/waterflow/effect.json"}]}
+              ]
+            }
+            """
+        )
+        let stale = WallpaperAsset(
+            id: "scene-diagnostics",
+            title: "Scene Diagnostics",
+            kind: .scene,
+            supportStatus: .playable,
+            source: .manualFolder,
+            projectDirectory: project.path,
+            entrypoint: scenePackage.path,
+            thumbnail: nil,
+            workshopId: "scene-diagnostics",
+            redistributionAllowed: false,
+            issues: [
+                ScanIssue(code: "scene_package_detected", message: "2D image-layer playback is enabled."),
+                ScanIssue(code: "scene_renderer_limited", message: "old limited renderer message")
+            ]
+        )
+        try store.replaceAsset(stale)
+
+        // When
+        let repaired = try XCTUnwrap(store.load().assets.first)
+
+        // Then
+        XCTAssertEqual(repaired.issues.filter { $0.code == "scene_package_detected" }.count, 1)
+        XCTAssertTrue(repaired.issues.contains { issue in
+            issue.code == "scene_package_detected"
+                && issue.message.contains("selected clock text")
+                && issue.message.contains("selected effect playback")
+        })
+        XCTAssertTrue(repaired.issues.contains { issue in
+            issue.code == "scene_renderer_limited"
+                && issue.message.contains("selected clock text")
+                && issue.message.contains("selected effect motion")
+        })
+    }
+
     func testLoadRepairsLegacyPreviewImageManifestForVideoProject() throws {
         // Given
         let store = LibraryStore(root: try Fixture.makeTempDirectory())

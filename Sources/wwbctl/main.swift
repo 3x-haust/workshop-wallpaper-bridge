@@ -114,12 +114,18 @@ struct WWBCtl {
             canvasHeight: plan.canvasSize.height,
             layerCount: plan.layers.count,
             textureCount: plan.textures.count,
+            textLayerCount: plan.layers.filter { $0.text != nil }.count,
+            dynamicTextLayerCount: plan.layers.filter { $0.text?.dynamicText != nil }.count,
+            effectLayerCount: plan.layers.filter { !$0.effects.isEmpty }.count,
+            effectOnlyLayerCount: plan.layers.filter(\.isEffectOnly).count,
             animatedLayerCount: plan.layers.filter(\.hasAnimation).count,
             originAnimationCount: plan.layers.filter { $0.originAnimation != nil }.count,
             scaleAnimationCount: plan.layers.filter { $0.scaleAnimation != nil }.count,
             angleAnimationCount: plan.layers.filter { $0.angleAnimation != nil }.count,
             alphaAnimationCount: plan.layers.filter { $0.alphaAnimation != nil }.count,
-            texturePaths: plan.layers.map(\.texturePath)
+            texturePaths: plan.layers.map(\.texturePath).filter { !$0.isEmpty },
+            textValues: plan.layers.compactMap { $0.text?.value },
+            effects: plan.layers.flatMap(\.effects).map(\.rawValue)
         )
         let data = try JSONEncoder.cli.encode(info)
         FileHandle.standardOutput.write(data)
@@ -131,12 +137,18 @@ struct WWBCtl {
         let canvasHeight: Double
         let layerCount: Int
         let textureCount: Int
+        let textLayerCount: Int
+        let dynamicTextLayerCount: Int
+        let effectLayerCount: Int
+        let effectOnlyLayerCount: Int
         let animatedLayerCount: Int
         let originAnimationCount: Int
         let scaleAnimationCount: Int
         let angleAnimationCount: Int
         let alphaAnimationCount: Int
         let texturePaths: [String]
+        let textValues: [String]
+        let effects: [String]
     }
 
     private static func doctor() throws {

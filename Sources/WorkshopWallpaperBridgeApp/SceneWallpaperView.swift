@@ -11,6 +11,8 @@ final class SceneWallpaperView: NSView,
     private let previewLayer = CALayer()
     private let sceneLayer = CALayer()
     private var contentLayers: [CALayer] = []
+    private var dynamicTextLayers: [(layer: CATextLayer, text: SceneTextLayer)] = []
+    private var textRefreshTimer: Timer?
     private var decodeTask: Task<Void, Never>?
     private var isSuspended = false
     private var isClosed = false
@@ -63,6 +65,9 @@ final class SceneWallpaperView: NSView,
             $0.removeFromSuperlayer()
         }
         contentLayers = []
+        dynamicTextLayers = []
+        textRefreshTimer?.invalidate()
+        textRefreshTimer = nil
     }
 
     private func configureSceneLayer() {
@@ -114,6 +119,9 @@ final class SceneWallpaperView: NSView,
             $0.removeFromSuperlayer()
         }
         contentLayers = []
+        dynamicTextLayers = []
+        textRefreshTimer?.invalidate()
+        textRefreshTimer = nil
         buildLayers()
         layoutScene()
         if isSuspended {
@@ -122,22 +130,79 @@ final class SceneWallpaperView: NSView,
     }
 
     private func buildLayers() {
+        var sceneWideEffects: [SceneLayerEffect] = []
         for layerPlan in plan.layers {
-            guard let texture = plan.textures[layerPlan.texturePath],
-                  let image = Self.cgImage(from: texture) else {
+            if layerPlan.isEffectOnly {
+                sceneWideEffects.append(contentsOf: layerPlan.effects)
                 continue
             }
-            let imageLayer = CALayer()
-            imageLayer.name = layerPlan.name
-            imageLayer.contents = image
-            imageLayer.contentsGravity = .resize
-            imageLayer.contentsScale = NSScreen.main?.backingScaleFactor ?? 2
-            imageLayer.minificationFilter = .linear
-            imageLayer.magnificationFilter = .linear
-            imageLayer.opacity = Float(max(0, min(layerPlan.alpha, 1)))
-            configure(imageLayer, with: layerPlan)
-            sceneLayer.addSublayer(imageLayer)
-            contentLayers.append(imageLayer)
+            let contentLayer: CALayer
+            if let text = layerPlan.text {
+                let textLayer = CATextLayer()
+                textLayer.string = string(for: text)
+                textLayer.fontSize = text.pointSize
+                textLayer.foregroundColor = Self.cgColor(from: text.color)
+                textLayer.alignmentMode = Self.textAlignmentMode(for: text.horizontalAlignment)
+                textLayer.isWrapped = true
+                textLayer.truncationMode = .none
+                textLayer.contentsScale = NSScreen.main?.backingScaleFactor ?? 2
+                if text.dynamicText != nil {
+                    dynamicTextLayers.append((layer: textLayer, text: text))
+                }
+                contentLayer = textLayer
+            } else {
+                guard let texture = plan.textures[layerPlan.texturePath],
+                      let image = Self.cgImage(from: texture) else {
+                    continue
+                }
+                let imageLayer = CALayer()
+                imageLayer.contents = image
+                imageLayer.contentsGravity = .resize
+                imageLayer.contentsScale = NSScreen.main?.backingScaleFactor ?? 2
+                imageLayer.minificationFilter = .linear
+                imageLayer.magnificationFilter = .linear
+                addEffectAnimations(to: imageLayer, plan: layerPlan)
+                contentLayer = imageLayer
+            }
+            contentLayer.name = layerPlan.name
+            contentLayer.opacity = Float(max(0, min(layerPlan.alpha, 1)))
+            configure(contentLayer, with: layerPlan)
+            sceneLayer.addSublayer(contentLayer)
+            contentLayers.append(contentLayer)
+        }
+        addSceneWideEffectAnimations(sceneWideEffects)
+        configureTextRefreshTimer()
+    }
+
+    private func configureTextRefreshTimer() {
+        textRefreshTimer?.invalidate()
+        textRefreshTimer = nil
+        guard !dynamicTextLayers.isEmpty else {
+            return
+        }
+        refreshDynamicTextLayers()
+        textRefreshTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.refreshDynamicTextLayers()
+            }
+        }
+    }
+
+    private func refreshDynamicTextLayers(date: Date = Date()) {
+        guard !isClosed else {
+            return
+        }
+        for item in dynamicTextLayers {
+            item.layer.string = string(for: item.text, date: date)
+        }
+    }
+
+    private func string(for text: SceneTextLayer, date: Date = Date()) -> String {
+        switch text.dynamicText {
+        case .clock(let clock):
+            return clock.string(for: date)
+        case nil:
+            return text.value
         }
     }
 
@@ -146,6 +211,7 @@ final class SceneWallpaperView: NSView,
         let height = max(1, abs(plan.size.height))
         layer.bounds = CGRect(x: 0, y: 0, width: width, height: height)
         layer.position = CGPoint(x: plan.origin.x, y: plan.origin.y)
+        layer.zPosition = plan.origin.z
         layer.transform = staticTransform(for: plan)
         addOriginAnimation(to: layer, plan: plan)
         addScaleAnimations(to: layer, plan: plan)
@@ -227,6 +293,49 @@ final class SceneWallpaperView: NSView,
         layer.add(keyframe, forKey: "scene-alpha")
     }
 
+    private func addSceneWideEffectAnimations(_ effects: [SceneLayerEffect]) {
+        sceneLayer.removeAnimation(forKey: "scene-wide-water-motion")
+        sceneLayer.removeAnimation(forKey: "scene-wide-shake-motion")
+        sceneLayer.removeAnimation(forKey: "scene-wide-effect-rotation")
+        guard !effects.isEmpty else {
+            return
+        }
+        addEffectAnimations(to: sceneLayer, effects: effects, keyPrefix: "scene-wide", amplitude: 12)
+    }
+
+    private func addEffectAnimations(to layer: CALayer, plan: SceneLayer) {
+        addEffectAnimations(to: layer, effects: plan.effects, keyPrefix: "scene", amplitude: 8)
+    }
+
+    private func addEffectAnimations(
+        to layer: CALayer,
+        effects: [SceneLayerEffect],
+        keyPrefix: String,
+        amplitude: Double
+    ) {
+        if effects.contains(.waterFlow) || effects.contains(.waterWaves) || effects.contains(.waterRipple) {
+            let animation = CAKeyframeAnimation(keyPath: "transform.translation.y")
+            configure(animation, duration: 4)
+            animation.values = [-amplitude, amplitude * 0.75, -amplitude * 0.5, amplitude, -amplitude]
+            animation.keyTimes = [0, 0.25, 0.5, 0.75, 1]
+            layer.add(animation, forKey: "\(keyPrefix)-water-motion")
+        }
+        if effects.contains(.shake) {
+            let animation = CAKeyframeAnimation(keyPath: "transform.translation.x")
+            configure(animation, duration: 3)
+            animation.values = [-5, 4, -3, 5, -5]
+            animation.keyTimes = [0, 0.25, 0.5, 0.75, 1]
+            layer.add(animation, forKey: "\(keyPrefix)-shake-motion")
+        }
+        if effects.contains(.scroll) || effects.contains(.spin) {
+            let animation = CAKeyframeAnimation(keyPath: "transform.rotation.z")
+            configure(animation, duration: 8)
+            animation.values = [0, 0.02, -0.02, 0]
+            animation.keyTimes = [0, 0.33, 0.66, 1]
+            layer.add(animation, forKey: "\(keyPrefix)-effect-rotation")
+        }
+    }
+
     private func configure(_ animation: CAKeyframeAnimation, duration: Double) {
         animation.duration = duration
         animation.repeatCount = .infinity
@@ -252,33 +361,30 @@ final class SceneWallpaperView: NSView,
         previewLayer.frame = bounds
         previewLayer.contentsGravity = WallpaperContentLayout.imageContentsGravity(for: displayMode)
         previewLayer.contentsScale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
-        sceneLayer.position = CGPoint(x: bounds.midX, y: bounds.midY)
+        let sceneFrame = WallpaperContentLayout.scaledContentFrame(
+            for: CGSize(width: plan.canvasSize.width, height: plan.canvasSize.height),
+            in: bounds,
+            displayMode: displayMode
+        )
+        sceneLayer.position = CGPoint(x: sceneFrame.midX, y: sceneFrame.midY)
         sceneLayer.bounds = CGRect(
             x: 0,
             y: 0,
             width: plan.canvasSize.width,
             height: plan.canvasSize.height
         )
-        sceneLayer.setAffineTransform(transform(for: displayMode))
+        sceneLayer.setAffineTransform(transform(for: sceneFrame))
         contentLayers.forEach {
             $0.contentsScale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
         }
         CATransaction.commit()
     }
 
-    private func transform(for displayMode: WallpaperDisplayMode) -> CGAffineTransform {
-        let xScale = bounds.width / plan.canvasSize.width
-        let yScale = bounds.height / plan.canvasSize.height
-        switch displayMode {
-        case .fit:
-            let scale = min(xScale, yScale)
-            return CGAffineTransform(scaleX: scale, y: scale)
-        case .fill:
-            let scale = max(xScale, yScale)
-            return CGAffineTransform(scaleX: scale, y: scale)
-        case .stretch:
-            return CGAffineTransform(scaleX: xScale, y: yScale)
-        }
+    private func transform(for sceneFrame: CGRect) -> CGAffineTransform {
+        CGAffineTransform(
+            scaleX: sceneFrame.width / max(plan.canvasSize.width, 1),
+            y: sceneFrame.height / max(plan.canvasSize.height, 1)
+        )
     }
 
     private func setLayerTreePaused(_ paused: Bool) {
@@ -318,6 +424,26 @@ final class SceneWallpaperView: NSView,
                 shouldInterpolate: true,
                 intent: .defaultIntent
             )
+        }
+    }
+
+    private static func cgColor(from color: SceneColor) -> CGColor {
+        CGColor(
+            red: max(0, min(color.red, 1)),
+            green: max(0, min(color.green, 1)),
+            blue: max(0, min(color.blue, 1)),
+            alpha: max(0, min(color.alpha, 1))
+        )
+    }
+
+    private static func textAlignmentMode(for alignment: SceneTextHorizontalAlignment) -> CATextLayerAlignmentMode {
+        switch alignment {
+        case .left:
+            return .left
+        case .center:
+            return .center
+        case .right:
+            return .right
         }
     }
 

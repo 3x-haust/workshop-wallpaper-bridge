@@ -14,7 +14,7 @@ public struct LibraryStore: Sendable {
         }
         let data = try Data(contentsOf: manifestURL)
         let manifest = try JSONDecoder.bridge.decode(LibraryManifest.self, from: data)
-        let repaired = repairLegacyPreviewEntrypoints(in: manifest)
+        let repaired = repairStoredAssets(in: manifest)
         if repaired != manifest {
             try? save(repaired)
         }
@@ -200,8 +200,10 @@ public struct LibraryStore: Sendable {
         return target.appending(path: relative).path
     }
 
-    private func repairLegacyPreviewEntrypoints(in manifest: LibraryManifest) -> LibraryManifest {
-        let assets = manifest.assets.map(repairLegacyPreviewEntrypoint)
+    private func repairStoredAssets(in manifest: LibraryManifest) -> LibraryManifest {
+        let assets = manifest.assets
+            .map(repairLegacyPreviewEntrypoint)
+            .map(refreshSceneDiagnostics)
         guard assets != manifest.assets else {
             return manifest
         }
@@ -234,6 +236,57 @@ public struct LibraryStore: Sendable {
             redistributionAllowed: false,
             issues: mergedIssues(asset.issues + scanned.issues)
         )
+    }
+
+    private func refreshSceneDiagnostics(_ asset: WallpaperAsset) -> WallpaperAsset {
+        guard asset.kind == .scene,
+              let entrypoint = asset.entrypoint else {
+            return asset
+        }
+        let refreshed = currentSceneIssues(entrypoint: URL(filePath: entrypoint))
+        guard !refreshed.isEmpty else {
+            return asset
+        }
+        let preserved = asset.issues.filter { issue in
+            issue.code != "scene_package_detected"
+                && issue.code != "scene_renderer_limited"
+                && issue.code != "scene_package_unreadable"
+        }
+        return WallpaperAsset(
+            id: asset.id,
+            title: asset.title,
+            kind: asset.kind,
+            supportStatus: asset.supportStatus,
+            source: asset.source,
+            projectDirectory: asset.projectDirectory,
+            entrypoint: asset.entrypoint,
+            thumbnail: asset.thumbnail,
+            workshopId: asset.workshopId,
+            redistributionAllowed: asset.redistributionAllowed,
+            issues: mergedIssues(preserved + refreshed)
+        )
+    }
+
+    private func currentSceneIssues(entrypoint: URL) -> [ScanIssue] {
+        do {
+            let analysis = try ScenePackageAnalyzer().analyze(url: entrypoint)
+            return [
+                ScanIssue(code: "scene_package_detected", message: analysis.userFacingSummary),
+                ScanIssue(
+                    code: "scene_renderer_limited",
+                    message: "Scene playback supports 2D image layers, text layers, selected clock text, "
+                        + "keyframed motion, and selected effect motion; advanced shaders, particles, scripts, audio, "
+                        + "and video textures may differ."
+                )
+            ]
+        } catch {
+            return [
+                ScanIssue(
+                    code: "scene_package_unreadable",
+                    message: "scene.pkg could not be inspected: \(error.localizedDescription)"
+                )
+            ]
+        }
     }
 }
 

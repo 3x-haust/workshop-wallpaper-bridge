@@ -237,4 +237,29 @@ final class WallpaperPlayerSuspensionTests: XCTestCase {
         XCTAssertTrue(source.contains(#"CAKeyframeAnimation(keyPath: "transform.rotation.z")"#))
         XCTAssertTrue(source.contains(#"CAKeyframeAnimation(keyPath: "opacity")"#))
     }
+
+    func testSceneWallpaperUsesSharedDisplayLayoutAndLayerDepth() throws {
+        // Given
+        let source = try String(contentsOfFile: "Sources/WorkshopWallpaperBridgeApp/SceneWallpaperView.swift")
+
+        // Then
+        XCTAssertTrue(source.contains("WallpaperContentLayout.scaledContentFrame"))
+        XCTAssertTrue(source.contains("layer.zPosition = plan.origin.z"))
+    }
+
+    func testSceneWallpaperRendersTextLayersAndKnownWaterEffects() throws {
+        // Given
+        let source = try String(contentsOfFile: "Sources/WorkshopWallpaperBridgeApp/SceneWallpaperView.swift")
+
+        // Then
+        XCTAssertTrue(source.contains("CATextLayer()"))
+        XCTAssertTrue(source.contains("dynamicTextLayers.append"))
+        XCTAssertTrue(source.contains("Timer.scheduledTimer"))
+        XCTAssertTrue(source.contains("addEffectAnimations(to: imageLayer, plan: layerPlan)"))
+        XCTAssertTrue(source.contains("addSceneWideEffectAnimations(sceneWideEffects)"))
+        XCTAssertTrue(source.contains("scene-wide-water-motion"))
+        XCTAssertTrue(source.contains("effects.contains(.waterFlow)"))
+        XCTAssertTrue(source.contains("effects.contains(.waterWaves)"))
+        XCTAssertTrue(source.contains("effects.contains(.waterRipple)"))
+    }
 }

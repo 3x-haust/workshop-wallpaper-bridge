@@ -142,6 +142,8 @@ final class ScenePackageTests: XCTestCase {
         XCTAssertTrue(analysis.userFacingSummary.contains("1 image layer"))
         XCTAssertTrue(analysis.userFacingSummary.contains("1 particle system"))
         XCTAssertTrue(analysis.userFacingSummary.contains("2 animated object(s)"))
+        XCTAssertTrue(analysis.userFacingSummary.contains("selected clock text"))
+        XCTAssertTrue(analysis.userFacingSummary.contains("selected effect playback"))
     }
 }
 

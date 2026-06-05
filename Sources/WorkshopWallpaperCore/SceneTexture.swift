@@ -22,9 +22,11 @@ public struct SceneTextureDecoder: Sendable {
     private static let maximumCompressedPayloadBytes = 64 * 1024 * 1024
 
     private let maximumSoftwareDecodedPixels: Int
+    private let maximumDisplayDimension: Int
 
-    public init(maximumSoftwareDecodedPixels: Int = 18_000_000) {
+    public init(maximumSoftwareDecodedPixels: Int = 18_000_000, maximumDisplayDimension: Int = 1024) {
         self.maximumSoftwareDecodedPixels = maximumSoftwareDecodedPixels
+        self.maximumDisplayDimension = maximumDisplayDimension
     }
 
     public func decode(data: Data) throws -> SceneTexture {
@@ -54,31 +56,44 @@ public struct SceneTextureDecoder: Sendable {
             imageHeight: imageHeight
         )
         let container = try reader.readCString(maxLength: 32)
-        let firstMipmap = try SceneTextureMipmapReader(container: container).readFirstMipmap(from: &reader)
-        let pixelCount = try Self.checkedProduct(textureWidth, textureHeight)
-        if firstMipmap.compressed, pixelCount > maximumSoftwareDecodedPixels {
-            throw SceneTextureError.textureTooLargeForSoftwareDecode(textureWidth, textureHeight)
+        let mipmap = try SceneTextureMipmapReader(container: container)
+            .readBestMipmap(from: &reader, maximumDimension: maximumDisplayDimension)
+        let pixelCount = try Self.checkedProduct(mipmap.width, mipmap.height)
+        if mipmap.compressed, pixelCount > maximumSoftwareDecodedPixels {
+            throw SceneTextureError.textureTooLargeForSoftwareDecode(mipmap.width, mipmap.height)
         }
-        let payload = try decodePayload(firstMipmap)
+        let payload = try decodePayload(mipmap)
         if Self.isEncodedImage(payload) {
-            return SceneTexture(width: imageWidth, height: imageHeight, storage: .encodedImage(payload))
+            return SceneTexture(width: scaledWidth(imageWidth, textureWidth: textureWidth, mipmapWidth: mipmap.width),
+                                height: scaledHeight(imageHeight, textureHeight: textureHeight, mipmapHeight: mipmap.height),
+                                storage: .encodedImage(payload))
         }
         guard pixelCount <= maximumSoftwareDecodedPixels else {
-            throw SceneTextureError.textureTooLargeForSoftwareDecode(textureWidth, textureHeight)
+            throw SceneTextureError.textureTooLargeForSoftwareDecode(mipmap.width, mipmap.height)
         }
+        let targetWidth = scaledWidth(imageWidth, textureWidth: textureWidth, mipmapWidth: mipmap.width)
+        let targetHeight = scaledHeight(imageHeight, textureHeight: textureHeight, mipmapHeight: mipmap.height)
         let rgba = try decodeRGBA(
             payload,
             format: format,
-            textureWidth: textureWidth,
-            textureHeight: textureHeight,
-            imageWidth: imageWidth,
-            imageHeight: imageHeight
+            textureWidth: mipmap.width,
+            textureHeight: mipmap.height,
+            imageWidth: targetWidth,
+            imageHeight: targetHeight
         )
-        return SceneTexture(width: imageWidth, height: imageHeight, storage: .rgba(
-            width: imageWidth,
-            height: imageHeight,
+        return SceneTexture(width: targetWidth, height: targetHeight, storage: .rgba(
+            width: targetWidth,
+            height: targetHeight,
             data: rgba
         ))
+    }
+
+    private func scaledWidth(_ imageWidth: Int, textureWidth: Int, mipmapWidth: Int) -> Int {
+        max(1, min(mipmapWidth, Int((Double(imageWidth) / Double(textureWidth) * Double(mipmapWidth)).rounded())))
+    }
+
+    private func scaledHeight(_ imageHeight: Int, textureHeight: Int, mipmapHeight: Int) -> Int {
+        max(1, min(mipmapHeight, Int((Double(imageHeight) / Double(textureHeight) * Double(mipmapHeight)).rounded())))
     }
 
     private func validateDimensions(
@@ -348,6 +363,8 @@ public enum SceneTextureError: Error, Equatable, LocalizedError {
 }
 
 private struct SceneTextureMipmap {
+    let width: Int
+    let height: Int
     let compressed: Bool
     let decompressedSize: Int?
     let data: Data
@@ -356,7 +373,7 @@ private struct SceneTextureMipmap {
 private struct SceneTextureMipmapReader {
     let container: String
 
-    func readFirstMipmap(from reader: inout SceneTextureBinaryReader) throws -> SceneTextureMipmap {
+    func readBestMipmap(from reader: inout SceneTextureBinaryReader, maximumDimension: Int) throws -> SceneTextureMipmap {
         let imageCount = try reader.readInt()
         guard imageCount > 0, imageCount <= 4_096 else {
             throw SceneTextureError.invalidCount(imageCount)
@@ -370,19 +387,27 @@ private struct SceneTextureMipmapReader {
         guard mipmapCount > 0, mipmapCount <= 32 else {
             throw SceneTextureError.invalidCount(mipmapCount)
         }
-        let first = try readMipmap(from: &reader)
-        for _ in 1..<mipmapCount {
-            _ = try readMipmap(from: &reader)
+        var selected: SceneTextureMipmap?
+        for _ in 0..<mipmapCount {
+            let mipmap = try readMipmap(from: &reader)
+            if selected == nil || max(mipmap.width, mipmap.height) >= maximumDimension {
+                selected = mipmap
+            }
         }
-        return first
+        guard let selected else {
+            throw SceneTextureError.invalidCount(mipmapCount)
+        }
+        return selected
     }
 
     private func readMipmap(from reader: inout SceneTextureBinaryReader) throws -> SceneTextureMipmap {
-        _ = try reader.readInt()
-        _ = try reader.readInt()
+        let width = try reader.readInt()
+        let height = try reader.readInt()
         if container == "TEXB0001" {
             let byteCount = try reader.readInt()
             return SceneTextureMipmap(
+                width: width,
+                height: height,
                 compressed: false,
                 decompressedSize: nil,
                 data: try reader.readData(count: byteCount)
@@ -392,6 +417,8 @@ private struct SceneTextureMipmapReader {
         let decompressedSize = try reader.readInt()
         let byteCount = try reader.readInt()
         return SceneTextureMipmap(
+            width: width,
+            height: height,
             compressed: lz4Flag != 0,
             decompressedSize: decompressedSize,
             data: try reader.readData(count: byteCount)

@@ -146,7 +146,7 @@ public struct ScenePackageAnalysis: Codable, Equatable, Sendable {
         let animationSummary = animatedObjectCount > 0 ? "; \(animatedObjectCount) animated object(s)" : ""
         let objects = objectSummary.isEmpty ? "\(objectCount) object(s)" : objectSummary
         let assets = assetSummary.isEmpty ? "\(entryCount) packaged file(s)" : assetSummary
-        return "scene.pkg \(magic): \(objects); \(assets)\(animationSummary). 2D image-layer playback is enabled."
+        return "scene.pkg \(magic): \(objects); \(assets)\(animationSummary). 2D image, text, selected clock text, and selected effect playback is enabled."
     }
 }
 
