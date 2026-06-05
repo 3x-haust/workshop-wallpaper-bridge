@@ -128,12 +128,17 @@ struct WWBCtl {
             texturePaths: plan.layers.map(\.texturePath).filter { !$0.isEmpty },
             textValues: plan.layers.compactMap { $0.text?.value },
             effects: plan.layers.flatMap(\.effects).map(\.rawValue),
+            layers: plan.layers.map(SceneRenderLayerInfo.init(layer:)),
             effectSettings: plan.layers.flatMap(\.effectSettings).map {
                 SceneRenderEffectInfo(
                     effect: $0.effect.rawValue,
                     speed: $0.speed,
+                    speedX: $0.speedX,
+                    speedY: $0.speedY,
                     strength: $0.strength,
                     scale: $0.scale,
+                    perspective: $0.perspective,
+                    direction: $0.direction.map(SceneRenderVectorInfo.init),
                     usesMask: $0.usesMask
                 )
             }
@@ -170,14 +175,133 @@ struct WWBCtl {
         let texturePaths: [String]
         let textValues: [String]
         let effects: [String]
+        let layers: [SceneRenderLayerInfo]
         let effectSettings: [SceneRenderEffectInfo]
+    }
+
+    private struct SceneRenderLayerInfo: Codable {
+        let id: Int
+        let name: String
+        let texturePath: String
+        let isText: Bool
+        let isEffectOnly: Bool
+        let origin: SceneRenderVectorInfo
+        let size: SceneRenderSizeInfo
+        let scale: SceneRenderVectorInfo
+        let angles: SceneRenderVectorInfo
+        let alpha: Double
+        let originAnimation: SceneRenderVectorAnimationInfo?
+        let scaleAnimation: SceneRenderVectorAnimationInfo?
+        let angleAnimation: SceneRenderVectorAnimationInfo?
+        let alphaAnimation: SceneRenderScalarAnimationInfo?
+        let effectSettings: [SceneRenderEffectInfo]
+
+        init(layer: SceneLayer) {
+            id = layer.id
+            name = layer.name
+            texturePath = layer.texturePath
+            isText = layer.text != nil
+            isEffectOnly = layer.isEffectOnly
+            origin = SceneRenderVectorInfo(layer.origin)
+            size = SceneRenderSizeInfo(layer.size)
+            scale = SceneRenderVectorInfo(layer.scale)
+            angles = SceneRenderVectorInfo(layer.angles)
+            alpha = layer.alpha
+            originAnimation = layer.originAnimation.map(SceneRenderVectorAnimationInfo.init(animation:))
+            scaleAnimation = layer.scaleAnimation.map(SceneRenderVectorAnimationInfo.init(animation:))
+            angleAnimation = layer.angleAnimation.map(SceneRenderVectorAnimationInfo.init(animation:))
+            alphaAnimation = layer.alphaAnimation.map(SceneRenderScalarAnimationInfo.init(animation:))
+            effectSettings = layer.effectSettings.map {
+                SceneRenderEffectInfo(
+                    effect: $0.effect.rawValue,
+                    speed: $0.speed,
+                    speedX: $0.speedX,
+                    speedY: $0.speedY,
+                    strength: $0.strength,
+                    scale: $0.scale,
+                    perspective: $0.perspective,
+                    direction: $0.direction.map(SceneRenderVectorInfo.init),
+                    usesMask: $0.usesMask
+                )
+            }
+        }
+    }
+
+    private struct SceneRenderVectorInfo: Codable {
+        let x: Double
+        let y: Double
+        let z: Double
+
+        init(_ vector: SceneVector3) {
+            x = vector.x
+            y = vector.y
+            z = vector.z
+        }
+    }
+
+    private struct SceneRenderSizeInfo: Codable {
+        let width: Double
+        let height: Double
+
+        init(_ size: SceneSize) {
+            width = size.width
+            height = size.height
+        }
+    }
+
+    private struct SceneRenderVectorAnimationInfo: Codable {
+        let duration: Double
+        let isRelative: Bool
+        let keyframes: [SceneRenderVectorKeyframeInfo]
+
+        init(animation: SceneVectorAnimation) {
+            duration = animation.duration
+            isRelative = animation.isRelative
+            keyframes = animation.keyframes.map(SceneRenderVectorKeyframeInfo.init(keyframe:))
+        }
+    }
+
+    private struct SceneRenderVectorKeyframeInfo: Codable {
+        let time: Double
+        let value: SceneRenderVectorInfo
+
+        init(keyframe: SceneVectorKeyframe) {
+            time = keyframe.time
+            value = SceneRenderVectorInfo(keyframe.value)
+        }
+    }
+
+    private struct SceneRenderScalarAnimationInfo: Codable {
+        let duration: Double
+        let isRelative: Bool
+        let keyframes: [SceneRenderScalarKeyframeInfo]
+
+        init(animation: SceneScalarAnimation) {
+            duration = animation.duration
+            isRelative = animation.isRelative
+            keyframes = animation.keyframes.map(SceneRenderScalarKeyframeInfo.init(keyframe:))
+        }
+    }
+
+    private struct SceneRenderScalarKeyframeInfo: Codable {
+        let time: Double
+        let value: Double
+
+        init(keyframe: SceneScalarKeyframe) {
+            time = keyframe.time
+            value = keyframe.value
+        }
     }
 
     private struct SceneRenderEffectInfo: Codable {
         let effect: String
         let speed: Double?
+        let speedX: Double?
+        let speedY: Double?
         let strength: Double?
         let scale: Double?
+        let perspective: Double?
+        let direction: SceneRenderVectorInfo?
         let usesMask: Bool
     }
 

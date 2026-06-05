@@ -1,5 +1,6 @@
 import Foundation
 import XCTest
+import WorkshopWallpaperCore
 @testable import WorkshopWallpaperBridgeApp
 
 final class WallpaperPlayerSuspensionTests: XCTestCase {
@@ -255,14 +256,68 @@ final class WallpaperPlayerSuspensionTests: XCTestCase {
         XCTAssertTrue(source.contains("CATextLayer()"))
         XCTAssertTrue(source.contains("dynamicTextLayers.append"))
         XCTAssertTrue(source.contains("Timer.scheduledTimer"))
-        XCTAssertTrue(source.contains("addEffectAnimations(to: imageLayer, plan: layerPlan)"))
-        XCTAssertTrue(source.contains("addSceneWideEffectAnimations(sceneWideEffects)"))
-        XCTAssertTrue(source.contains("scene-wide-water-motion"))
         XCTAssertTrue(source.contains("plan.effectSettings"))
-        XCTAssertTrue(source.contains("effectDuration"))
-        XCTAssertTrue(source.contains("effectAmplitude"))
         XCTAssertTrue(source.contains("opacityMultiplier(for: layerPlan)"))
         XCTAssertTrue(source.contains("opacityMultiplier(for: plan)"))
-        XCTAssertTrue(source.contains("matching: [.waterFlow, .waterWaves, .waterRipple]"))
+    }
+
+    func testSceneWallpaperUsesShaderDerivedWaterWaveRenderingInsteadOfLayerDrift() throws {
+        // Given
+        let source = try String(contentsOfFile: "Sources/WorkshopWallpaperBridgeApp/SceneWallpaperView.swift")
+
+        // Then
+        XCTAssertTrue(source.contains("CIWarpKernel"))
+        XCTAssertTrue(source.contains("waterWavesWarp"))
+        XCTAssertTrue(source.contains("shaderEffectLayers.append"))
+        XCTAssertTrue(source.contains("startShaderEffectTimerIfNeeded"))
+        XCTAssertFalse(source.contains(#"CAKeyframeAnimation(keyPath: "transform.translation.y")"#))
+        XCTAssertFalse(source.contains(#"CAKeyframeAnimation(keyPath: "transform.translation.x")"#))
+        XCTAssertFalse(source.contains(#"layer.add(animation, forKey: "\(keyPrefix)-effect-rotation")"#))
+    }
+
+    func testSceneWallpaperScrollUsesSpeedDirectionWhenAxisSpeedsAreMissing() {
+        // Given
+        let directionalScroll = SceneLayerEffectSetting(
+            effect: .scroll,
+            speed: 0.4,
+            direction: SceneVector3(x: 0, y: -2, z: 0)
+        )
+        let explicitAxisScroll = SceneLayerEffectSetting(
+            effect: .scroll,
+            speed: 0.4,
+            speedX: 0,
+            speedY: -0.35,
+            direction: SceneVector3(x: 1, y: 0, z: 0)
+        )
+
+        // When
+        let directional = SceneWallpaperView.scrollAxisSpeeds(for: directionalScroll)
+        let explicit = SceneWallpaperView.scrollAxisSpeeds(for: explicitAxisScroll)
+
+        // Then
+        XCTAssertEqual(directional.x, 0, accuracy: 0.000_001)
+        XCTAssertEqual(directional.y, -0.4, accuracy: 0.000_001)
+        XCTAssertEqual(explicit.x, 0, accuracy: 0.000_001)
+        XCTAssertEqual(explicit.y, -0.35, accuracy: 0.000_001)
+    }
+
+    func testSceneShaderEffectClockDoesNotAdvanceWhileSuspended() {
+        // When
+        let suspended = SceneWallpaperView.shaderEffectTime(
+            elapsedTime: 4.5,
+            resumeTime: 100,
+            now: 160,
+            isSuspended: true
+        )
+        let running = SceneWallpaperView.shaderEffectTime(
+            elapsedTime: 4.5,
+            resumeTime: 100,
+            now: 103.25,
+            isSuspended: false
+        )
+
+        // Then
+        XCTAssertEqual(suspended, 4.5, accuracy: 0.000_001)
+        XCTAssertEqual(running, 7.75, accuracy: 0.000_001)
     }
 }

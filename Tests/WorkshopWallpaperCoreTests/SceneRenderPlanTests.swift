@@ -243,7 +243,7 @@ final class SceneRenderPlanTests: XCTestCase {
                 {
                   "file": "effects/waterflow/effect.json",
                   "passes": [
-                    { "constantshadervalues": { "speed": 0.45, "strength": 0.47 } }
+                    { "constantshadervalues": { "speed": 0.45, "strength": 0.47, "direction": "0.2 1 0" } }
                   ],
                   "visible": true
                 }
@@ -311,6 +311,7 @@ final class SceneRenderPlanTests: XCTestCase {
         XCTAssertEqual(foam.effectSettings.first?.effect, .waterFlow)
         XCTAssertEqual(foam.effectSettings.first?.speed, 0.45)
         XCTAssertEqual(foam.effectSettings.first?.strength, 0.47)
+        XCTAssertEqual(foam.effectSettings.first?.direction, SceneVector3(x: 0.2, y: 1, z: 0))
         let compose = try XCTUnwrap(plan.layers.first { $0.name == "Compose" })
         XCTAssertTrue(compose.isEffectOnly)
         XCTAssertTrue(compose.effects.contains(.waterRipple))
@@ -437,5 +438,95 @@ final class SceneRenderPlanTests: XCTestCase {
         XCTAssertEqual(plan.layers.map(\.name), ["Title shadow", "Title fill"])
         XCTAssertEqual(plan.layers.filter { $0.text != nil }.count, 2)
         XCTAssertFalse(plan.layers[0].effectSettings.first?.usesMask ?? true)
+    }
+
+    func testRenderPlanPreservesScrollAxisSpeedsForEffectMotionFallbacks() throws {
+        // Given
+        let root = try Fixture.makeTempDirectory()
+        let packageURL = root.appending(path: "scroll-axis.pkg")
+        let sceneJSON = """
+        {
+          "objects": [
+            {
+              "id": 1,
+              "name": "Swimmer",
+              "image": "models/swimmer.json",
+              "effects": [
+                {
+                  "file": "effects/scroll/effect.json",
+                  "passes": [
+                    { "constantshadervalues": { "speedx": 0, "speedy": -0.35, "scrolldirection": "0 -1 0" } }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+        """
+        try Fixture.writeScenePackage(
+            to: packageURL,
+            sceneJSON: sceneJSON,
+            extraEntries: [
+                (path: "models/swimmer.json", data: Data(#"{"material":"materials/swimmer.json"}"#.utf8)),
+                (path: "materials/swimmer.json", data: Data(#"{"passes":[{"textures":["swimmer"]}]}"#.utf8)),
+                (path: "materials/swimmer.tex", data: Fixture.texData(width: 1, height: 1, imageData: png))
+            ]
+        )
+
+        // When
+        let plan = try SceneRenderPlanBuilder().build(url: packageURL)
+
+        // Then
+        let setting = try XCTUnwrap(plan.layers.first?.effectSettings.first)
+        XCTAssertEqual(setting.effect, .scroll)
+        XCTAssertEqual(setting.speed, -0.35)
+        XCTAssertEqual(setting.speedX, 0)
+        XCTAssertEqual(setting.speedY, -0.35)
+        XCTAssertEqual(setting.direction, SceneVector3(x: 0, y: -1, z: 0))
+    }
+
+    func testRenderPlanConvertsShaderDirectionAnglesToVectors() throws {
+        // Given
+        let root = try Fixture.makeTempDirectory()
+        let packageURL = root.appending(path: "direction-angle.pkg")
+        let sceneJSON = """
+        {
+          "objects": [
+            {
+              "id": 1,
+              "name": "Wave",
+              "image": "models/wave.json",
+              "effects": [
+                {
+                  "file": "effects/waterwaves/effect.json",
+                  "passes": [
+                    { "constantshadervalues": { "direction": 1.5707963267948966, "speed": 4, "strength": 0.08, "scale": 40, "perspective": 0.1 } }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+        """
+        try Fixture.writeScenePackage(
+            to: packageURL,
+            sceneJSON: sceneJSON,
+            extraEntries: [
+                (path: "models/wave.json", data: Data(#"{"material":"materials/wave.json"}"#.utf8)),
+                (path: "materials/wave.json", data: Data(#"{"passes":[{"textures":["wave"]}]}"#.utf8)),
+                (path: "materials/wave.tex", data: Fixture.texData(width: 1, height: 1, imageData: png))
+            ]
+        )
+
+        // When
+        let plan = try SceneRenderPlanBuilder().build(url: packageURL)
+
+        // Then
+        let setting = try XCTUnwrap(plan.layers.first?.effectSettings.first)
+        XCTAssertEqual(setting.effect, .waterWaves)
+        XCTAssertEqual(setting.direction?.x ?? 0, -1, accuracy: 0.000_001)
+        XCTAssertEqual(setting.direction?.y ?? 0, 0, accuracy: 0.000_001)
+        XCTAssertEqual(setting.direction?.z ?? 0, 0, accuracy: 0.000_001)
+        XCTAssertEqual(setting.perspective, 0.1)
     }
 }

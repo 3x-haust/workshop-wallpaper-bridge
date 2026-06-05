@@ -174,21 +174,33 @@ public enum SceneLayerEffect: String, Equatable, Sendable {
 public struct SceneLayerEffectSetting: Equatable, Sendable {
     public let effect: SceneLayerEffect
     public let speed: Double?
+    public let speedX: Double?
+    public let speedY: Double?
     public let strength: Double?
     public let scale: Double?
+    public let perspective: Double?
+    public let direction: SceneVector3?
     public let usesMask: Bool
 
     public init(
         effect: SceneLayerEffect,
         speed: Double? = nil,
+        speedX: Double? = nil,
+        speedY: Double? = nil,
         strength: Double? = nil,
         scale: Double? = nil,
+        perspective: Double? = nil,
+        direction: SceneVector3? = nil,
         usesMask: Bool = false
     ) {
         self.effect = effect
         self.speed = speed
+        self.speedX = speedX
+        self.speedY = speedY
         self.strength = strength
         self.scale = scale
+        self.perspective = perspective
+        self.direction = direction
         self.usesMask = usesMask
     }
 }
@@ -571,12 +583,19 @@ public struct SceneRenderPlanBuilder: Sendable {
             }
             if let effect {
                 let constants = constantShaderValues(from: rawEffect)
+                let speedX = doubleValue(constants["speedx"])
+                let speedY = doubleValue(constants["speedy"])
                 settings.append(SceneLayerEffectSetting(
                     effect: effect,
-                    speed: doubleValue(constants["speed"])
-                        ?? doubleValue(constants["scrollspeed"])
-                        ?? doubleValue(constants["animationspeed"])
-                        ?? doubleValue(constants["speedx"]),
+                    speed: firstNonZeroDouble(
+                        doubleValue(constants["speed"]),
+                        doubleValue(constants["scrollspeed"]),
+                        doubleValue(constants["animationspeed"]),
+                        speedX,
+                        speedY
+                    ),
+                    speedX: speedX,
+                    speedY: speedY,
                     strength: doubleValue(constants["strength"])
                         ?? doubleValue(constants["ripplestrength"])
                         ?? doubleValue(constants["rayintensity"])
@@ -584,11 +603,27 @@ public struct SceneRenderPlanBuilder: Sendable {
                     scale: doubleValue(constants["scale"])
                         ?? doubleValue(constants["phasescale"])
                         ?? doubleValue(constants["noisescale"]),
+                    perspective: doubleValue(constants["perspective"]),
+                    direction: vectorValue(constants["direction"])
+                        ?? vectorValue(constants["scrolldirection"])
+                        ?? directionVector(fromAngle: doubleValue(constants["direction"]))
+                        ?? directionVector(fromAngle: doubleValue(constants["scrolldirection"])),
                     usesMask: containsMaskReference(rawEffect, depth: 0)
                 ))
             }
         }
         return settings
+    }
+
+    private static func firstNonZeroDouble(_ values: Double?...) -> Double? {
+        values.compactMap(\.self).first { abs($0) > 0.000_001 } ?? values.compactMap(\.self).first
+    }
+
+    private static func directionVector(fromAngle angle: Double?) -> SceneVector3? {
+        guard let angle else {
+            return nil
+        }
+        return SceneVector3(x: -sin(angle), y: cos(angle), z: 0)
     }
 
     private static func constantShaderValues(from effect: [String: Any]) -> [String: Any] {

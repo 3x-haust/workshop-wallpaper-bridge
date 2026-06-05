@@ -1,4 +1,5 @@
 import AppKit
+import CoreImage
 import WorkshopWallpaperCore
 
 @MainActor
@@ -11,11 +12,68 @@ final class SceneWallpaperView: NSView,
     private let previewLayer = CALayer()
     private let sceneLayer = CALayer()
     private var contentLayers: [CALayer] = []
+    private var shaderEffectLayers: [ShaderEffectLayer] = []
     private var dynamicTextLayers: [(layer: CATextLayer, text: SceneTextLayer)] = []
     private var textRefreshTimer: Timer?
+    private var shaderEffectTimer: Timer?
+    private var shaderEffectElapsedTime: TimeInterval = 0
+    private var shaderEffectResumeTime = CACurrentMediaTime()
     private var decodeTask: Task<Void, Never>?
     private var isSuspended = false
     private var isClosed = false
+    private let ciContext = CIContext()
+
+    private struct ShaderEffectLayer {
+        let layer: CALayer
+        let baseImage: CIImage
+        let effects: [SceneLayerEffectSetting]
+    }
+
+    private static let waterWavesWarpKernel = CIWarpKernel(source: """
+    kernel vec2 waterWavesWarp(
+        float time,
+        float speed,
+        float scale,
+        float strength,
+        float perspective,
+        vec2 direction,
+        vec4 extent
+    ) {
+        vec2 coord = destCoord();
+        vec2 texCoord = (coord - extent.xy) / extent.zw;
+        vec2 safeDirection = direction;
+        float directionLength = length(safeDirection);
+        if (directionLength < 0.0001) {
+            safeDirection = vec2(0.0, 1.0);
+        } else {
+            safeDirection = safeDirection / directionLength;
+        }
+
+        float pos = abs(dot((texCoord - vec2(0.5, 0.5)), safeDirection));
+        float distance = time * speed + dot(texCoord, safeDirection) * (scale + perspective * pos);
+        vec2 offset = vec2(safeDirection.y, -safeDirection.x);
+        float waveStrength = strength * strength + perspective * pos;
+        texCoord -= sin(distance) * offset * waveStrength;
+
+        return extent.xy + texCoord * extent.zw;
+    }
+    """)
+
+    private static let scrollWarpKernel = CIWarpKernel(source: """
+    kernel vec2 scrollWarp(
+        float time,
+        float speedX,
+        float speedY,
+        vec4 extent
+    ) {
+        vec2 coord = destCoord();
+        vec2 texCoord = (coord - extent.xy) / extent.zw;
+        vec2 scroll = vec2(speedX, speedY);
+        scroll = sign(scroll) * scroll * scroll * time;
+        texCoord = fract(texCoord + scroll);
+        return extent.xy + texCoord * extent.zw;
+    }
+    """)
 
     init(url: URL, previewURL: URL?, frame: CGRect, displayMode: WallpaperDisplayMode) throws {
         plan = try SceneRenderPlanBuilder().buildLayout(url: url)
@@ -46,8 +104,18 @@ final class SceneWallpaperView: NSView,
         guard suspended != isSuspended else {
             return
         }
+        if suspended {
+            shaderEffectElapsedTime = currentShaderEffectTime()
+        }
         isSuspended = suspended
         setLayerTreePaused(suspended)
+        if suspended {
+            shaderEffectTimer?.invalidate()
+            shaderEffectTimer = nil
+        } else {
+            shaderEffectResumeTime = CACurrentMediaTime()
+            startShaderEffectTimerIfNeeded()
+        }
     }
 
     func setDisplayMode(_ displayMode: WallpaperDisplayMode) {
@@ -65,9 +133,12 @@ final class SceneWallpaperView: NSView,
             $0.removeFromSuperlayer()
         }
         contentLayers = []
+        shaderEffectLayers = []
         dynamicTextLayers = []
         textRefreshTimer?.invalidate()
         textRefreshTimer = nil
+        shaderEffectTimer?.invalidate()
+        shaderEffectTimer = nil
     }
 
     private func configureSceneLayer() {
@@ -119,9 +190,12 @@ final class SceneWallpaperView: NSView,
             $0.removeFromSuperlayer()
         }
         contentLayers = []
+        shaderEffectLayers = []
         dynamicTextLayers = []
         textRefreshTimer?.invalidate()
         textRefreshTimer = nil
+        shaderEffectTimer?.invalidate()
+        shaderEffectTimer = nil
         buildLayers()
         layoutScene()
         if isSuspended {
@@ -130,10 +204,9 @@ final class SceneWallpaperView: NSView,
     }
 
     private func buildLayers() {
-        var sceneWideEffects: [SceneLayerEffectSetting] = []
+        resetShaderEffectClock()
         for layerPlan in plan.layers {
             if layerPlan.isEffectOnly {
-                sceneWideEffects.append(contentsOf: layerPlan.effectSettings)
                 continue
             }
             let contentLayer: CALayer
@@ -161,7 +234,7 @@ final class SceneWallpaperView: NSView,
                 imageLayer.contentsScale = NSScreen.main?.backingScaleFactor ?? 2
                 imageLayer.minificationFilter = .linear
                 imageLayer.magnificationFilter = .linear
-                addEffectAnimations(to: imageLayer, plan: layerPlan)
+                registerShaderEffects(for: imageLayer, image: image, plan: layerPlan)
                 contentLayer = imageLayer
             }
             contentLayer.name = layerPlan.name
@@ -170,8 +243,8 @@ final class SceneWallpaperView: NSView,
             sceneLayer.addSublayer(contentLayer)
             contentLayers.append(contentLayer)
         }
-        addSceneWideEffectAnimations(sceneWideEffects)
         configureTextRefreshTimer()
+        startShaderEffectTimerIfNeeded()
     }
 
     private func configureTextRefreshTimer() {
@@ -294,64 +367,6 @@ final class SceneWallpaperView: NSView,
         layer.add(keyframe, forKey: "scene-alpha")
     }
 
-    private func addSceneWideEffectAnimations(_ effects: [SceneLayerEffectSetting]) {
-        sceneLayer.removeAnimation(forKey: "scene-wide-water-motion")
-        sceneLayer.removeAnimation(forKey: "scene-wide-shake-motion")
-        sceneLayer.removeAnimation(forKey: "scene-wide-effect-rotation")
-        guard !effects.isEmpty else {
-            return
-        }
-        addEffectAnimations(to: sceneLayer, effects: effects, keyPrefix: "scene-wide", amplitude: 12)
-    }
-
-    private func addEffectAnimations(to layer: CALayer, plan: SceneLayer) {
-        addEffectAnimations(to: layer, effects: plan.effectSettings, keyPrefix: "scene", amplitude: 8)
-    }
-
-    private func addEffectAnimations(
-        to layer: CALayer,
-        effects: [SceneLayerEffectSetting],
-        keyPrefix: String,
-        amplitude: Double
-    ) {
-        if let water = strongestSetting(in: effects, matching: [.waterFlow, .waterWaves, .waterRipple]) {
-            let animation = CAKeyframeAnimation(keyPath: "transform.translation.y")
-            configure(animation, duration: effectDuration(water, fallback: 4))
-            let effectAmplitude = effectAmplitude(water, fallback: amplitude)
-            animation.values = [
-                -effectAmplitude,
-                effectAmplitude * 0.75,
-                -effectAmplitude * 0.5,
-                effectAmplitude,
-                -effectAmplitude
-            ]
-            animation.keyTimes = [0, 0.25, 0.5, 0.75, 1]
-            layer.add(animation, forKey: "\(keyPrefix)-water-motion")
-        }
-        if let shake = strongestSetting(in: effects, matching: [.shake]) {
-            let animation = CAKeyframeAnimation(keyPath: "transform.translation.x")
-            configure(animation, duration: effectDuration(shake, fallback: 3))
-            let effectAmplitude = effectAmplitude(shake, fallback: 5)
-            animation.values = [
-                -effectAmplitude,
-                effectAmplitude * 0.8,
-                -effectAmplitude * 0.6,
-                effectAmplitude,
-                -effectAmplitude
-            ]
-            animation.keyTimes = [0, 0.25, 0.5, 0.75, 1]
-            layer.add(animation, forKey: "\(keyPrefix)-shake-motion")
-        }
-        if let rotation = strongestSetting(in: effects, matching: [.scroll, .spin]) {
-            let animation = CAKeyframeAnimation(keyPath: "transform.rotation.z")
-            configure(animation, duration: effectDuration(rotation, fallback: 8))
-            let angle = min(max((rotation.strength ?? rotation.scale ?? 0.35) * 0.08, 0.01), 0.12)
-            animation.values = [0, angle, -angle, 0]
-            animation.keyTimes = [0, 0.33, 0.66, 1]
-            layer.add(animation, forKey: "\(keyPrefix)-effect-rotation")
-        }
-    }
-
     private func opacityMultiplier(for plan: SceneLayer) -> Double {
         guard let opacity = plan.effectSettings.last(where: { $0.effect == .opacity }) else {
             return 1
@@ -359,33 +374,174 @@ final class SceneWallpaperView: NSView,
         return max(0, min(opacity.strength ?? 1, 1))
     }
 
-    private func strongestSetting(
-        in settings: [SceneLayerEffectSetting],
-        matching effects: Set<SceneLayerEffect>
-    ) -> SceneLayerEffectSetting? {
-        settings
-            .filter { effects.contains($0.effect) }
-            .max { lhs, rhs in
-                (lhs.strength ?? lhs.scale ?? 0) < (rhs.strength ?? rhs.scale ?? 0)
-            }
-    }
-
-    private func effectDuration(_ setting: SceneLayerEffectSetting, fallback: Double) -> Double {
-        guard let speed = setting.speed, speed > 0 else {
-            return fallback
-        }
-        return max(0.8, min(fallback / speed, 12))
-    }
-
-    private func effectAmplitude(_ setting: SceneLayerEffectSetting, fallback: Double) -> Double {
-        let strength = setting.strength ?? setting.scale ?? 1
-        return max(1, min(fallback * max(strength, 0.1), 40))
-    }
-
     private func configure(_ animation: CAKeyframeAnimation, duration: Double) {
         animation.duration = duration
         animation.repeatCount = .infinity
         animation.calculationMode = .linear
+    }
+
+    private func registerShaderEffects(for layer: CALayer, image: CGImage, plan: SceneLayer) {
+        let effects = plan.effectSettings.filter { setting in
+            switch setting.effect {
+            case .waterWaves, .scroll:
+                return true
+            case .waterFlow, .waterRipple, .shake, .spin, .shine, .opacity:
+                return false
+            }
+        }
+        guard !effects.isEmpty else {
+            return
+        }
+        shaderEffectLayers.append(ShaderEffectLayer(
+            layer: layer,
+            baseImage: CIImage(cgImage: image),
+            effects: effects
+        ))
+    }
+
+    private func startShaderEffectTimerIfNeeded() {
+        guard !isClosed, !isSuspended, !shaderEffectLayers.isEmpty, shaderEffectTimer == nil else {
+            return
+        }
+        refreshShaderEffectLayers()
+        shaderEffectTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 24.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.refreshShaderEffectLayers()
+            }
+        }
+    }
+
+    private func refreshShaderEffectLayers() {
+        guard !isClosed, !isSuspended else {
+            return
+        }
+        let time = currentShaderEffectTime()
+        for item in shaderEffectLayers {
+            guard let image = Self.renderShaderEffects(
+                baseImage: item.baseImage,
+                effects: item.effects,
+                time: time,
+                context: ciContext
+            ) else {
+                continue
+            }
+            item.layer.contents = image
+        }
+    }
+
+    private func resetShaderEffectClock() {
+        shaderEffectElapsedTime = 0
+        shaderEffectResumeTime = CACurrentMediaTime()
+    }
+
+    private func currentShaderEffectTime() -> TimeInterval {
+        Self.shaderEffectTime(
+            elapsedTime: shaderEffectElapsedTime,
+            resumeTime: shaderEffectResumeTime,
+            now: CACurrentMediaTime(),
+            isSuspended: isSuspended
+        )
+    }
+
+    nonisolated static func shaderEffectTime(
+        elapsedTime: TimeInterval,
+        resumeTime: TimeInterval,
+        now: TimeInterval,
+        isSuspended: Bool
+    ) -> TimeInterval {
+        if isSuspended {
+            return elapsedTime
+        }
+        return elapsedTime + max(0, now - resumeTime)
+    }
+
+    private static func renderShaderEffects(
+        baseImage: CIImage,
+        effects: [SceneLayerEffectSetting],
+        time: Double,
+        context: CIContext
+    ) -> CGImage? {
+        var image = baseImage
+        for effect in effects {
+            switch effect.effect {
+            case .waterWaves:
+                image = applyWaterWaves(to: image, effect: effect, time: time) ?? image
+            case .scroll:
+                image = applyScroll(to: image, effect: effect, time: time) ?? image
+            case .waterFlow, .waterRipple, .shake, .spin, .shine, .opacity:
+                continue
+            }
+        }
+        return context.createCGImage(image, from: baseImage.extent)
+    }
+
+    private static func applyWaterWaves(
+        to image: CIImage,
+        effect: SceneLayerEffectSetting,
+        time: Double
+    ) -> CIImage? {
+        guard let kernel = waterWavesWarpKernel else {
+            return image
+        }
+        let direction = normalizedDirection(effect.direction)
+        let extent = image.extent
+        return kernel.apply(
+            extent: extent,
+            roiCallback: { _, rect in rect.insetBy(dx: -48, dy: -48) },
+            image: image,
+            arguments: [
+                CGFloat(time),
+                CGFloat(effect.speed ?? 1),
+                CGFloat(effect.scale ?? 40),
+                CGFloat(max(0, min(effect.strength ?? 0.05, 1))),
+                CGFloat(max(0, min(effect.perspective ?? 0, 0.2))),
+                CIVector(x: direction.x, y: direction.y),
+                CIVector(x: extent.origin.x, y: extent.origin.y, z: extent.width, w: extent.height)
+            ]
+        )
+    }
+
+    private static func applyScroll(
+        to image: CIImage,
+        effect: SceneLayerEffectSetting,
+        time: Double
+    ) -> CIImage? {
+        guard let kernel = scrollWarpKernel else {
+            return image
+        }
+        let extent = image.extent
+        let scroll = scrollAxisSpeeds(for: effect)
+        return kernel.apply(
+            extent: extent,
+            roiCallback: { _, rect in rect },
+            image: image,
+            arguments: [
+                CGFloat(time),
+                CGFloat(scroll.x),
+                CGFloat(scroll.y),
+                CIVector(x: extent.origin.x, y: extent.origin.y, z: extent.width, w: extent.height)
+            ]
+        )
+    }
+
+    nonisolated static func scrollAxisSpeeds(for effect: SceneLayerEffectSetting) -> (x: Double, y: Double) {
+        if effect.speedX != nil || effect.speedY != nil {
+            return (effect.speedX ?? 0, effect.speedY ?? 0)
+        }
+        let direction = normalizedDirection(effect.direction)
+        let speed = effect.speed ?? 0
+        return (direction.x * speed, direction.y * speed)
+    }
+
+    nonisolated private static func normalizedDirection(_ direction: SceneVector3?) -> SceneVector3 {
+        guard let direction else {
+            return SceneVector3(x: 0, y: 1, z: 0)
+        }
+        let length = sqrt((direction.x * direction.x) + (direction.y * direction.y))
+        guard length > 0.000_001 else {
+            return SceneVector3(x: 0, y: 1, z: 0)
+        }
+        return SceneVector3(x: direction.x / length, y: direction.y / length, z: 0)
     }
 
     private func keyTimes(for animation: SceneVectorAnimation) -> [NSNumber] {
