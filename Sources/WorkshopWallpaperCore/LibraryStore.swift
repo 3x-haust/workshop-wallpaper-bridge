@@ -243,10 +243,14 @@ public struct LibraryStore: Sendable {
               let entrypoint = asset.entrypoint else {
             return asset
         }
-        let refreshed = currentSceneIssues(entrypoint: URL(filePath: entrypoint))
+        let entrypointURL = URL(filePath: entrypoint)
+        let refreshed = currentSceneIssues(entrypoint: entrypointURL)
         guard !refreshed.isEmpty else {
             return asset
         }
+        let supportStatus: SupportStatus = SceneRenderPlanBuilder().canBuild(url: entrypointURL)
+            ? .playable
+            : .unsupported
         let preserved = asset.issues.filter { issue in
             issue.code != "scene_package_detected"
                 && issue.code != "scene_renderer_limited"
@@ -256,7 +260,7 @@ public struct LibraryStore: Sendable {
             id: asset.id,
             title: asset.title,
             kind: asset.kind,
-            supportStatus: asset.supportStatus,
+            supportStatus: supportStatus,
             source: asset.source,
             projectDirectory: asset.projectDirectory,
             entrypoint: asset.entrypoint,

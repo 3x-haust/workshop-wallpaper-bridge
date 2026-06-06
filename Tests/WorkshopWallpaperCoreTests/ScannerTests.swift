@@ -149,6 +149,61 @@ final class ScannerTests: XCTestCase {
         XCTAssertEqual(asset.supportStatus, .playable)
     }
 
+    func testScanMarksTextOnlySceneAsPlayable() throws {
+        // Given
+        let root = try Fixture.makeTempDirectory()
+        let project = root.appending(path: "text-only-scene")
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        try #"{"title":"Text Scene","file":"scene.pkg"}"#.write(
+            to: project.appending(path: "project.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try Fixture.writeScenePackage(
+            to: project.appending(path: "scene.pkg"),
+            sceneJSON: #"{"objects":[{"text":{"value":"HELLO"},"size":"320 120"}]}"#
+        )
+
+        // When
+        let result = try WallpaperScanner().scan(root: root)
+
+        // Then
+        let asset = try XCTUnwrap(result.assets.first)
+        XCTAssertEqual(asset.kind, .scene)
+        XCTAssertEqual(asset.supportStatus, .playable)
+        XCTAssertTrue(asset.issues.contains { $0.code == "scene_package_detected" })
+        XCTAssertTrue(asset.issues.contains { $0.code == "scene_renderer_limited" })
+    }
+
+    func testScanMarksMixedTextAndBrokenImageSceneAsPlayable() throws {
+        // Given
+        let root = try Fixture.makeTempDirectory()
+        let project = root.appending(path: "mixed-scene")
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        try #"{"title":"Mixed Scene","file":"scene.pkg"}"#.write(
+            to: project.appending(path: "project.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try Fixture.writeScenePackage(
+            to: project.appending(path: "scene.pkg"),
+            sceneJSON: #"{"objects":[{"text":{"value":"CLOCK"}},{"image":"models/background.json"}]}"#,
+            extraEntries: [
+                (path: "models/background.json", data: Data(#"{"material":"materials/background.json"}"#.utf8)),
+                (path: "materials/background.json", data: Data(#"{"passes":[{"textures":["background"]}]}"#.utf8)),
+                (path: "materials/background.tex", data: Data([1, 2, 3]))
+            ]
+        )
+
+        // When
+        let result = try WallpaperScanner().scan(root: root)
+
+        // Then
+        let asset = try XCTUnwrap(result.assets.first)
+        XCTAssertEqual(asset.kind, .scene)
+        XCTAssertEqual(asset.supportStatus, .playable)
+    }
+
     func testScanKeepsSceneUnsupportedWhenTextureCannotDecode() throws {
         // Given
         let root = try Fixture.makeTempDirectory()
@@ -177,6 +232,39 @@ final class ScannerTests: XCTestCase {
                 (path: "materials/background.json", data: Data(#"{"passes":[{"textures":["background"]}]}"#.utf8)),
                 (path: "materials/background.tex", data: Data([1, 2, 3]))
             ]
+        )
+
+        // When
+        let result = try WallpaperScanner().scan(root: root)
+
+        // Then
+        let asset = try XCTUnwrap(result.assets.first)
+        XCTAssertEqual(asset.kind, .scene)
+        XCTAssertEqual(asset.supportStatus, .unsupported)
+    }
+
+    func testScanKeepsEffectOnlySceneUnsupported() throws {
+        // Given
+        let root = try Fixture.makeTempDirectory()
+        let project = root.appending(path: "effect-only-scene")
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        try #"{"title":"Effect Scene","file":"scene.pkg"}"#.write(
+            to: project.appending(path: "project.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try Fixture.writeScenePackage(
+            to: project.appending(path: "scene.pkg"),
+            sceneJSON: """
+            {
+              "objects": [
+                {
+                  "image": "models/util/composelayer.json",
+                  "effects": [{"file": "effects/waterripple/effect.json"}]
+                }
+              ]
+            }
+            """
         )
 
         // When

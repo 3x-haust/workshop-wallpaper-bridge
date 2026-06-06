@@ -12,6 +12,16 @@ struct StatusMenu: View {
         Toggle("Open at Login", isOn: $model.launchAtLogin)
         Toggle("Auto-pause Behind Apps", isOn: $model.autoPauseWhenCovered)
         Toggle("Animate Screen Saver", isOn: $model.lockScreenAnimationEnabled)
+        Toggle("Auto-check Updates", isOn: $model.automaticallyCheckForUpdates)
+        Button("Check for Updates") {
+            model.checkForUpdates()
+        }
+        .disabled(model.isCheckingForUpdates)
+        if model.availableUpdate != nil {
+            Button("Download Update") {
+                model.openAvailableUpdate()
+            }
+        }
         Button("Open Login Items Settings") {
             model.openLoginItemsSettings()
         }

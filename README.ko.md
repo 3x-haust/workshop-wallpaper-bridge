@@ -8,11 +8,15 @@
 
 Workshop Wallpaper Bridge는 복사해 온 Wallpaper Engine Workshop 폴더를 Mac 전용 로컬 라이브러리로 가져오고, 지원되는 월페이퍼를 데스크톱 레이어에서 재생합니다. 이미 로컬에 가지고 있는 파일을 쓰기 위한 앱입니다. Steam에 접속하지 않고, Workshop 항목을 다운로드하지 않고, 복사해 온 Workshop 폴더를 수정하지 않습니다.
 
-[웹사이트](https://3x-haust.github.io/workshop-wallpaper-bridge/) · [English](README.md) · [기여 안내](CONTRIBUTING.md) · [보안 정책](SECURITY.md) · [릴리즈](https://github.com/3x-haust/workshop-wallpaper-bridge/releases)
+[웹사이트](https://3x-haust.github.io/workshop-wallpaper-bridge/) · [English](README.md) · [기여 안내](CONTRIBUTING.md) · [보안 정책](SECURITY.md) · [릴리즈](https://github.com/3x-haust/workshop-wallpaper-bridge/releases) · [후원](https://www.patreon.com/c/3xhaust)
 
 ## 데모
 
 ![Workshop Wallpaper Bridge 데모](assets/workshop-wallpaper-bridge-demo.gif)
+
+## 후원
+
+Workshop Wallpaper Bridge가 도움이 되었다면 [Patreon](https://www.patreon.com/c/3xhaust)에서 호환성 개선과 유지보수를 후원할 수 있습니다.
 
 ## 다운로드
 
@@ -23,6 +27,8 @@ Workshop Wallpaper Bridge는 복사해 온 Wallpaper Engine Workshop 폴더를 M
 3. 앱을 엽니다. Dock 앱이 아니라 메뉴바 유틸리티로 실행됩니다.
 
 릴리즈가 아직 공증되지 않은 경우 macOS가 확인되지 않은 개발자 경고를 띄울 수 있습니다. 원하면 Swift로 직접 빌드해서 실행할 수 있습니다.
+
+**Auto-check Updates**가 켜져 있으면 앱이 GitHub Releases에서 업데이트를 자동 확인합니다. 설정 창의 **Check Updates** 또는 메뉴바 메뉴의 **Check for Updates**로 수동 확인할 수 있습니다. 새 릴리즈가 있으면 **Download Update**가 최신 DMG를 다운로드합니다.
 
 ## 사용 방법
 
@@ -71,9 +77,9 @@ Wallpaper Engine 프로젝트를 쓰는 경우:
 | `.webm`, `.mkv`, `.avi` 동영상 | 로컬 `ffmpeg`로 변환 후 재생 |
 | `index.html` 웹 월페이퍼 | 제한된 로컬 WebView에서 재생 |
 | `.jpg`, `.png`, `.gif`, `.heic` 이미지 | 정적 데스크톱 레이어로 표시 |
-| `scene.pkg` 씬 월페이퍼 | 패키지 안의 2D image layer, text layer, 일부 clock text script, 기본 keyframe 움직임, image-layer의 `waterWaves` / `scroll` shader 움직임을 package constant 기반으로 렌더링; 엔진 렌더러 작업에 필요한 shader/effect/script/audio 요구사항 보존 |
+| `scene.pkg` 씬 월페이퍼 | 패키지 안의 2D image layer, text-only scene, 일부 clock text script, 기본 keyframe 움직임, image-layer의 `waterFlow` / `waterWaves` / `waterRipple` / `scroll` shader 움직임, 단순 `shake` / `spin` / `shine` layer effect를 package constant 기반으로 렌더링; 엔진 렌더러 작업에 필요한 shader/effect/script/audio 요구사항 보존 |
 
-scene 지원은 보수적입니다. 기본 image-layer scene은 동작하며, packed `.tex` texture, LZ4 block, 주요 DXT 형식, text layer, 일부 clock text script, position/scale/rotation/opacity keyframe을 처리합니다. 지원되는 image-layer `waterWaves`와 `scroll` effect는 임의의 layer drift가 아니라 package shader constant의 speed, axis speed, direction, scale, strength, perspective 값을 사용해 움직입니다. 이제 package analyzer가 effect file, shader file, shader uniform, SceneScript, particle, sound layer, audio-analysis input, video texture 같은 scene runtime 요구사항을 보존하므로 renderer-engine parity 작업을 정확히 겨냥할 수 있습니다. Metal scene engine이 해당 runtime 기능을 구현하기 전까지 full-scene effect-only pass, masked effect composition, particle, audio-reactive script, 전체 custom shader pipeline, media integration, video/GIF texture animation은 여전히 생략되거나 Wallpaper Engine과 다르게 보일 수 있습니다.
+scene 지원은 보수적입니다. 기본 image-layer와 text-only scene은 동작하며, packed `.tex` texture, LZ4 block, 주요 DXT 형식, text layer, 일부 clock text script, position/scale/rotation/opacity keyframe을 처리합니다. 지원되는 image-layer `waterFlow`, `waterWaves`, `waterRipple`, `scroll` effect는 임의의 layer drift가 아니라 package shader constant의 speed, axis speed, direction, scale, strength, perspective 값을 사용해 움직이고, 단순 `shake`, `spin`, `shine` layer effect는 Core Animation으로 매핑합니다. 이제 package analyzer가 effect file, shader file, shader uniform, SceneScript, particle, sound layer, audio-analysis input, video texture 같은 scene runtime 요구사항을 보존하므로 renderer-engine parity 작업을 정확히 겨냥할 수 있습니다. Metal scene engine이 해당 runtime 기능을 구현하기 전까지 full-scene effect-only pass, masked effect composition, particle, audio-reactive script, 전체 custom shader pipeline, media integration, video/GIF texture animation은 여전히 생략되거나 Wallpaper Engine과 다르게 보일 수 있습니다.
 
 `preview.jpg`, `thumbnail.jpg`, `cover.png` 같은 Workshop 미리보기 파일은 썸네일로 취급합니다. 프로젝트에 `scene.pkg`가 있으면 낮은 해상도 미리보기를 늘려 쓰지 않고 패키지 내부 scene 데이터를 읽습니다.
 

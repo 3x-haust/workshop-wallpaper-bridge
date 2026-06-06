@@ -164,7 +164,7 @@
         <h1>Workshop Wallpaper Bridge</h1>
         <p>Use personally copied Wallpaper Engine Workshop wallpapers on macOS. Local files only; no Steam login, no Workshop downloading, no asset redistribution.</p>
         <div class="actions">
-          <a id="latest-release-download" class="button" href="https://github.com/3x-haust/workshop-wallpaper-bridge/releases/latest">Download latest DMG</a>
+          <a id="latest-release-download" class="button" href="https://github.com/3x-haust/workshop-wallpaper-bridge/releases/latest/download/WorkshopWallpaperBridge-macOS-arm64.dmg" download="WorkshopWallpaperBridge-macOS-arm64.dmg">Download latest DMG</a>
           <a class="button secondary" href="https://github.com/3x-haust/workshop-wallpaper-bridge">GitHub</a>
         </div>
         <p id="release-status" class="status">Checking the latest GitHub release...</p>
@@ -241,7 +241,7 @@
             statusText.textContent = `Latest release: ${release.tag_name || "latest"}`;
           }
         } catch (error) {
-          statusText.textContent = "Could not resolve the latest asset. The button opens the latest GitHub release instead.";
+          statusText.textContent = "Could not resolve release metadata. The button downloads the latest DMG directly.";
         }
       }
 

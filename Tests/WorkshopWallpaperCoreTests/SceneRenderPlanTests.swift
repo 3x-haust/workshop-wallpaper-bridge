@@ -52,6 +52,113 @@ final class SceneRenderPlanTests: XCTestCase {
         XCTAssertEqual(plan.layers[0].alpha, 0.75)
     }
 
+    func testCanBuildAllowsTextOnlySceneWithoutDecodedTextures() throws {
+        // Given
+        let root = try Fixture.makeTempDirectory()
+        let packageURL = root.appending(path: "text-only.pkg")
+        try Fixture.writeScenePackage(
+            to: packageURL,
+            sceneJSON: #"{"objects":[{"name":"Title","text":{"value":"HELLO"},"size":"320 120"}]}"#
+        )
+
+        // When
+        let plan = try SceneRenderPlanBuilder().build(url: packageURL)
+        let canBuild = SceneRenderPlanBuilder().canBuild(url: packageURL)
+
+        // Then
+        XCTAssertTrue(canBuild)
+        XCTAssertTrue(plan.hasRenderableContent)
+        XCTAssertTrue(plan.textures.isEmpty)
+        XCTAssertEqual(plan.layers.count, 1)
+        XCTAssertEqual(plan.layers.first?.text?.value, "HELLO")
+    }
+
+    func testCanBuildAllowsTextSceneWhenImageTextureFailsDecode() throws {
+        // Given
+        let root = try Fixture.makeTempDirectory()
+        let packageURL = root.appending(path: "mixed-text-broken-image.pkg")
+        try Fixture.writeScenePackage(
+            to: packageURL,
+            sceneJSON: """
+            {
+              "objects": [
+                {"text": {"value": "CLOCK"}},
+                {"image": "models/background.json"}
+              ]
+            }
+            """,
+            extraEntries: [
+                (path: "models/background.json", data: Data(#"{"material":"materials/background.json"}"#.utf8)),
+                (path: "materials/background.json", data: Data(#"{"passes":[{"textures":["background"]}]}"#.utf8)),
+                (path: "materials/background.tex", data: Data([1, 2, 3]))
+            ]
+        )
+
+        // When
+        let plan = try SceneRenderPlanBuilder().build(url: packageURL)
+        let canBuild = SceneRenderPlanBuilder().canBuild(url: packageURL)
+
+        // Then
+        XCTAssertTrue(canBuild)
+        XCTAssertTrue(plan.hasRenderableContent)
+        XCTAssertTrue(plan.textures.isEmpty)
+        XCTAssertEqual(plan.layers.count, 1)
+        XCTAssertEqual(plan.layers.first?.text?.value, "CLOCK")
+    }
+
+    func testCanBuildRejectsEffectOnlySceneWithoutRenderableContent() throws {
+        // Given
+        let root = try Fixture.makeTempDirectory()
+        let packageURL = root.appending(path: "effect-only.pkg")
+        try Fixture.writeScenePackage(
+            to: packageURL,
+            sceneJSON: """
+            {
+              "objects": [
+                {
+                  "image": "models/util/composelayer.json",
+                  "effects": [{"file": "effects/waterripple/effect.json"}]
+                }
+              ]
+            }
+            """
+        )
+
+        // When
+        let plan = try SceneRenderPlanBuilder().build(url: packageURL)
+        let canBuild = SceneRenderPlanBuilder().canBuild(url: packageURL)
+
+        // Then
+        XCTAssertFalse(canBuild)
+        XCTAssertFalse(plan.hasRenderableContent)
+        XCTAssertEqual(plan.layers.count, 1)
+        XCTAssertTrue(plan.layers[0].isEffectOnly)
+    }
+
+    func testCanBuildRejectsImageOnlySceneWhenTextureCannotDecode() throws {
+        // Given
+        let root = try Fixture.makeTempDirectory()
+        let packageURL = root.appending(path: "broken-image-only.pkg")
+        try Fixture.writeScenePackage(
+            to: packageURL,
+            sceneJSON: #"{"objects":[{"image":"models/background.json"}]}"#,
+            extraEntries: [
+                (path: "models/background.json", data: Data(#"{"material":"materials/background.json"}"#.utf8)),
+                (path: "materials/background.json", data: Data(#"{"passes":[{"textures":["background"]}]}"#.utf8)),
+                (path: "materials/background.tex", data: Data([1, 2, 3]))
+            ]
+        )
+
+        // When
+        let canBuild = SceneRenderPlanBuilder().canBuild(url: packageURL)
+
+        // Then
+        XCTAssertFalse(canBuild)
+        XCTAssertThrowsError(try SceneRenderPlanBuilder().build(url: packageURL)) { error in
+            XCTAssertEqual(error as? SceneRenderPlanError, .noRenderableLayers)
+        }
+    }
+
     func testRenderPlanPreservesLayerTransformAndOpacityAnimations() throws {
         // Given
         let root = try Fixture.makeTempDirectory()

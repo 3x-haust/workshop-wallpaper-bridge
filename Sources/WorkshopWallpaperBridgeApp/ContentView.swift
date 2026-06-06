@@ -16,30 +16,60 @@ struct ContentView: View {
             Divider()
             statusBar
         }
+        .alert(item: $model.updateAlert) { alert in
+            updateAlert(alert)
+        }
     }
 
     private var header: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Workshop Wallpaper Bridge")
-                    .font(.title2.weight(.semibold))
-                Text("Menu bar wallpaper utility for copied Wallpaper Engine projects.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Workshop Wallpaper Bridge")
+                        .font(.title2.weight(.semibold))
+                    Text("Menu bar wallpaper utility for copied Wallpaper Engine projects.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Stop") {
+                    model.stopPlayback()
+                }
+                .keyboardShortcut(".", modifiers: [.command, .shift])
             }
-            Spacer()
-            Toggle("Open at Login", isOn: $model.launchAtLogin)
-                .toggleStyle(.switch)
-            Toggle("Auto-pause behind apps", isOn: $model.autoPauseWhenCovered)
-                .toggleStyle(.switch)
-            Toggle("Animate Screen Saver", isOn: $model.lockScreenAnimationEnabled)
-                .toggleStyle(.switch)
-            Button("Stop") {
-                model.stopPlayback()
+
+            HStack(spacing: 14) {
+                headerToggle("Open at Login", isOn: $model.launchAtLogin)
+                headerToggle("Auto-pause behind apps", isOn: $model.autoPauseWhenCovered)
+                headerToggle("Animate Screen Saver", isOn: $model.lockScreenAnimationEnabled)
+                headerToggle("Auto-check Updates", isOn: $model.automaticallyCheckForUpdates)
             }
-            .keyboardShortcut(".", modifiers: [.command, .shift])
+
+            HStack(spacing: 8) {
+                Button("Check Updates") {
+                    model.checkForUpdates()
+                }
+                .disabled(model.isCheckingForUpdates)
+                if model.availableUpdate != nil {
+                    Button("Download Update") {
+                        model.openAvailableUpdate()
+                    }
+                }
+                Spacer()
+            }
         }
         .padding()
+    }
+
+    private func headerToggle(_ title: String, isOn: Binding<Bool>) -> some View {
+        Toggle(isOn: isOn) {
+            Text(title)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+        }
+        .toggleStyle(.switch)
+        .font(.callout)
+        .frame(width: 220, alignment: .leading)
     }
 
     private var scanPanel: some View {
@@ -109,29 +139,7 @@ struct ContentView: View {
                     set: { model.selectLibraryAssets($0) }
                 )
             )
-            HStack {
-                Button("Play on Desktop") {
-                    model.playSelected()
-                }
-                .disabled(model.selectedLibraryAsset == nil)
-                Button("Convert Video") {
-                    model.convertSelected()
-                }
-                .disabled(model.selectedLibraryAsset?.supportStatus != .needsConversion || model.isWorking)
-                Button("Set Still Wallpaper") {
-                    model.setStillWallpaper()
-                }
-                .disabled(model.selectedLibraryAsset == nil)
-                Button("Screen Saver Settings") {
-                    model.openScreenSaverSettings()
-                }
-                Button(model.selectedLibraryAssetCount > 1 ? "Remove Selected" : "Remove") {
-                    model.removeSelectedLibraryAssets()
-                }
-                .disabled(model.selectedLibraryAssetIds.isEmpty)
-                .keyboardShortcut(.delete, modifiers: [])
-                Spacer()
-            }
+            libraryActions
             Text(
                 "Video wallpapers use a generated video frame for still wallpaper. "
                     + "Still images are written to the macOS Lock Screen cache when available. "
@@ -148,6 +156,53 @@ struct ContentView: View {
         model.selectedScannedAssetCount > 1
             ? "Import Selected (\(model.selectedScannedAssetCount))"
             : "Import Selected"
+    }
+
+    private var libraryActions: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                actionButton("Play on Desktop") {
+                    model.playSelected()
+                }
+                .disabled(model.selectedLibraryAsset == nil)
+                actionButton("Convert Video") {
+                    model.convertSelected()
+                }
+                .disabled(model.selectedLibraryAsset?.supportStatus != .needsConversion || model.isWorking)
+                actionButton("Set Still Wallpaper") {
+                    model.setStillWallpaper()
+                }
+                .disabled(model.selectedLibraryAsset == nil)
+                Spacer()
+            }
+            HStack(spacing: 8) {
+                actionButton("Screen Saver Settings") {
+                    model.openScreenSaverSettings()
+                }
+                actionButton(model.selectedLibraryAssetCount > 1 ? "Remove Selected" : "Remove") {
+                    model.removeSelectedLibraryAssets()
+                }
+                .disabled(model.selectedLibraryAssetIds.isEmpty)
+                .keyboardShortcut(.delete, modifiers: [])
+                Spacer()
+            }
+        }
+    }
+
+    private func actionButton(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+        }
+    }
+
+    private func updateAlert(_ alert: UpdateAlert) -> Alert {
+        return Alert(
+            title: Text(alert.title),
+            message: Text(alert.message),
+            dismissButton: .default(Text("OK"))
+        )
     }
 
     private var statusBar: some View {

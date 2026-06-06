@@ -269,6 +269,18 @@ public struct SceneRenderPlan: Equatable, Sendable {
     public let layers: [SceneLayer]
     public let textures: [String: SceneTexture]
 
+    public var hasRenderableContent: Bool {
+        layers.contains { layer in
+            guard !layer.isEffectOnly else {
+                return false
+            }
+            if layer.text != nil {
+                return true
+            }
+            return !layer.texturePath.isEmpty && textures[layer.texturePath] != nil
+        }
+    }
+
     public init(canvasSize: SceneSize, layers: [SceneLayer], textures: [String: SceneTexture]) {
         self.canvasSize = canvasSize
         self.layers = layers
@@ -287,7 +299,7 @@ public struct SceneRenderPlanBuilder: Sendable {
         guard let plan = try? build(url: url, decodeTextures: true) else {
             return false
         }
-        return !plan.layers.isEmpty && !plan.textures.isEmpty
+        return plan.hasRenderableContent
     }
 
     public func build(url: URL) throws -> SceneRenderPlan {
@@ -951,7 +963,7 @@ public enum SceneRenderPlanError: Error, Equatable, LocalizedError {
         case .missingSceneJSON:
             return "The scene package does not contain readable scene.json."
         case .noRenderableLayers:
-            return "The scene package has no renderable image layers."
+            return "The scene package has no renderable scene layers."
         }
     }
 }
