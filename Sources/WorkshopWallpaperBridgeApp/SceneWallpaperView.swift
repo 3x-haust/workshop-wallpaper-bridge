@@ -290,6 +290,7 @@ final class SceneWallpaperView: NSView,
         addScaleAnimations(to: layer, plan: plan)
         addAngleAnimation(to: layer, plan: plan)
         addAlphaAnimation(to: layer, plan: plan)
+        addLayerEffectAnimations(to: layer, plan: plan)
     }
 
     private func staticTransform(for plan: SceneLayer) -> CATransform3D {
@@ -367,6 +368,58 @@ final class SceneWallpaperView: NSView,
         layer.add(keyframe, forKey: "scene-alpha")
     }
 
+    private func addLayerEffectAnimations(to layer: CALayer, plan: SceneLayer) {
+        for effect in plan.effectSettings where Self.isLayerAnimatedEffect(effect.effect) {
+            switch effect.effect {
+            case .shake:
+                addShakeEffectAnimation(to: layer, effect: effect)
+            case .spin:
+                addSpinEffectAnimation(to: layer, effect: effect)
+            case .shine:
+                addShineEffectAnimation(to: layer, effect: effect)
+            case .waterFlow, .waterWaves, .waterRipple, .scroll, .opacity:
+                continue
+            }
+        }
+    }
+
+    private func addShakeEffectAnimation(to layer: CALayer, effect: SceneLayerEffectSetting) {
+        let offsets = Self.shakeOffsets(for: effect, layerSize: layer.bounds.size)
+        guard offsets.contains(where: { abs($0.x) > 0.000_001 || abs($0.y) > 0.000_001 }) else {
+            return
+        }
+        let keyframe = CAKeyframeAnimation(keyPath: "position")
+        configure(keyframe, duration: Self.layerEffectDuration(for: effect, defaultDuration: 0.8))
+        keyframe.isAdditive = true
+        keyframe.values = offsets.map { CGPoint(x: $0.x, y: $0.y) }
+        keyframe.keyTimes = [0, 0.25, 0.5, 0.75, 1]
+        layer.add(keyframe, forKey: "scene-effect-shake")
+    }
+
+    private func addSpinEffectAnimation(to layer: CALayer, effect: SceneLayerEffectSetting) {
+        let animation = CABasicAnimation(keyPath: "transform.rotation.z")
+        animation.byValue = CGFloat.pi * 2
+        animation.duration = Self.layerEffectDuration(for: effect, defaultDuration: 8)
+        animation.repeatCount = .infinity
+        animation.timingFunction = CAMediaTimingFunction(name: .linear)
+        layer.add(animation, forKey: "scene-effect-spin")
+    }
+
+    private func addShineEffectAnimation(to layer: CALayer, effect: SceneLayerEffectSetting) {
+        let baseOpacity = Double(layer.opacity)
+        guard baseOpacity > 0 else {
+            return
+        }
+        let strength = max(0, min(effect.strength ?? 0.35, 1))
+        let low = max(0, min(baseOpacity * (1 - (strength * 0.35)), 1))
+        let high = max(0, min(baseOpacity * (1 + (strength * 0.2)), 1))
+        let keyframe = CAKeyframeAnimation(keyPath: "opacity")
+        configure(keyframe, duration: Self.layerEffectDuration(for: effect, defaultDuration: 2.5))
+        keyframe.values = [baseOpacity, high, low, baseOpacity]
+        keyframe.keyTimes = [0, 0.35, 0.7, 1]
+        layer.add(keyframe, forKey: "scene-effect-shine")
+    }
+
     private func opacityMultiplier(for plan: SceneLayer) -> Double {
         guard let opacity = plan.effectSettings.last(where: { $0.effect == .opacity }) else {
             return 1
@@ -381,14 +434,7 @@ final class SceneWallpaperView: NSView,
     }
 
     private func registerShaderEffects(for layer: CALayer, image: CGImage, plan: SceneLayer) {
-        let effects = plan.effectSettings.filter { setting in
-            switch setting.effect {
-            case .waterWaves, .scroll:
-                return true
-            case .waterFlow, .waterRipple, .shake, .spin, .shine, .opacity:
-                return false
-            }
-        }
+        let effects = Self.shaderRenderableEffects(from: plan.effectSettings)
         guard !effects.isEmpty else {
             return
         }
@@ -464,15 +510,67 @@ final class SceneWallpaperView: NSView,
         var image = baseImage
         for effect in effects {
             switch effect.effect {
-            case .waterWaves:
+            case .waterFlow, .waterWaves, .waterRipple:
                 image = applyWaterWaves(to: image, effect: effect, time: time) ?? image
             case .scroll:
                 image = applyScroll(to: image, effect: effect, time: time) ?? image
-            case .waterFlow, .waterRipple, .shake, .spin, .shine, .opacity:
+            case .shake, .spin, .shine, .opacity:
                 continue
             }
         }
         return context.createCGImage(image, from: baseImage.extent)
+    }
+
+    nonisolated static func shaderRenderableEffects(
+        from effects: [SceneLayerEffectSetting]
+    ) -> [SceneLayerEffectSetting] {
+        effects.filter { setting in
+            switch setting.effect {
+            case .waterFlow, .waterWaves, .waterRipple, .scroll:
+                return true
+            case .shake, .spin, .shine, .opacity:
+                return false
+            }
+        }
+    }
+
+    nonisolated static func isLayerAnimatedEffect(_ effect: SceneLayerEffect) -> Bool {
+        switch effect {
+        case .shake, .spin, .shine:
+            return true
+        case .waterFlow, .waterWaves, .waterRipple, .scroll, .opacity:
+            return false
+        }
+    }
+
+    nonisolated static func layerEffectDuration(
+        for effect: SceneLayerEffectSetting,
+        defaultDuration: Double
+    ) -> Double {
+        guard let speed = effect.speed, abs(speed) > 0.000_001 else {
+            return defaultDuration
+        }
+        return max(0.1, defaultDuration / abs(speed))
+    }
+
+    nonisolated static func shakeOffsets(
+        for effect: SceneLayerEffectSetting,
+        layerSize: CGSize
+    ) -> [(x: Double, y: Double)] {
+        let strength = max(0, min(effect.strength ?? 0.08, 1))
+        let amplitude = min(max(layerSize.width, layerSize.height) * strength * 0.1, 32)
+        guard amplitude > 0 else {
+            return Array(repeating: (0, 0), count: 5)
+        }
+        let direction = normalizedDirection(effect.direction)
+        let perpendicular = (x: direction.y, y: -direction.x)
+        return [
+            (0, 0),
+            (perpendicular.x * amplitude, perpendicular.y * amplitude),
+            (-perpendicular.x * amplitude * 0.75, -perpendicular.y * amplitude * 0.75),
+            (perpendicular.x * amplitude * 0.5, perpendicular.y * amplitude * 0.5),
+            (0, 0)
+        ]
     }
 
     private static func applyWaterWaves(
