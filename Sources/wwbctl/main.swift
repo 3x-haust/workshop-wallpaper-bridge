@@ -32,6 +32,8 @@ struct WWBCtl {
             try sceneInfo(arguments: Array(arguments.dropFirst()))
         case "scene-render-info":
             try sceneRenderInfo(arguments: Array(arguments.dropFirst()))
+        case "scene-engine-info":
+            try sceneEngineInfo(arguments: Array(arguments.dropFirst()))
         case "doctor":
             try doctor()
         case "help", "--help", "-h":
@@ -114,14 +116,44 @@ struct WWBCtl {
             canvasHeight: plan.canvasSize.height,
             layerCount: plan.layers.count,
             textureCount: plan.textures.count,
+            textLayerCount: plan.layers.filter { $0.text != nil }.count,
+            dynamicTextLayerCount: plan.layers.filter { $0.text?.dynamicText != nil }.count,
+            effectLayerCount: plan.layers.filter { !$0.effects.isEmpty }.count,
+            effectOnlyLayerCount: plan.layers.filter(\.isEffectOnly).count,
             animatedLayerCount: plan.layers.filter(\.hasAnimation).count,
             originAnimationCount: plan.layers.filter { $0.originAnimation != nil }.count,
             scaleAnimationCount: plan.layers.filter { $0.scaleAnimation != nil }.count,
             angleAnimationCount: plan.layers.filter { $0.angleAnimation != nil }.count,
             alphaAnimationCount: plan.layers.filter { $0.alphaAnimation != nil }.count,
-            texturePaths: plan.layers.map(\.texturePath)
+            texturePaths: plan.layers.map(\.texturePath).filter { !$0.isEmpty },
+            textValues: plan.layers.compactMap { $0.text?.value },
+            effects: plan.layers.flatMap(\.effects).map(\.rawValue),
+            layers: plan.layers.map(SceneRenderLayerInfo.init(layer:)),
+            effectSettings: plan.layers.flatMap(\.effectSettings).map {
+                SceneRenderEffectInfo(
+                    effect: $0.effect.rawValue,
+                    speed: $0.speed,
+                    speedX: $0.speedX,
+                    speedY: $0.speedY,
+                    strength: $0.strength,
+                    scale: $0.scale,
+                    perspective: $0.perspective,
+                    direction: $0.direction.map(SceneRenderVectorInfo.init),
+                    usesMask: $0.usesMask
+                )
+            }
         )
         let data = try JSONEncoder.cli.encode(info)
+        FileHandle.standardOutput.write(data)
+        print("")
+    }
+
+    private static func sceneEngineInfo(arguments: [String]) throws {
+        guard let path = arguments.first else {
+            throw CLIError.missingPath
+        }
+        let features = try SceneRuntimeFeatureAnalyzer().analyze(url: URL(filePath: path))
+        let data = try JSONEncoder.cli.encode(features)
         FileHandle.standardOutput.write(data)
         print("")
     }
@@ -131,12 +163,146 @@ struct WWBCtl {
         let canvasHeight: Double
         let layerCount: Int
         let textureCount: Int
+        let textLayerCount: Int
+        let dynamicTextLayerCount: Int
+        let effectLayerCount: Int
+        let effectOnlyLayerCount: Int
         let animatedLayerCount: Int
         let originAnimationCount: Int
         let scaleAnimationCount: Int
         let angleAnimationCount: Int
         let alphaAnimationCount: Int
         let texturePaths: [String]
+        let textValues: [String]
+        let effects: [String]
+        let layers: [SceneRenderLayerInfo]
+        let effectSettings: [SceneRenderEffectInfo]
+    }
+
+    private struct SceneRenderLayerInfo: Codable {
+        let id: Int
+        let name: String
+        let texturePath: String
+        let isText: Bool
+        let isEffectOnly: Bool
+        let origin: SceneRenderVectorInfo
+        let size: SceneRenderSizeInfo
+        let scale: SceneRenderVectorInfo
+        let angles: SceneRenderVectorInfo
+        let alpha: Double
+        let originAnimation: SceneRenderVectorAnimationInfo?
+        let scaleAnimation: SceneRenderVectorAnimationInfo?
+        let angleAnimation: SceneRenderVectorAnimationInfo?
+        let alphaAnimation: SceneRenderScalarAnimationInfo?
+        let effectSettings: [SceneRenderEffectInfo]
+
+        init(layer: SceneLayer) {
+            id = layer.id
+            name = layer.name
+            texturePath = layer.texturePath
+            isText = layer.text != nil
+            isEffectOnly = layer.isEffectOnly
+            origin = SceneRenderVectorInfo(layer.origin)
+            size = SceneRenderSizeInfo(layer.size)
+            scale = SceneRenderVectorInfo(layer.scale)
+            angles = SceneRenderVectorInfo(layer.angles)
+            alpha = layer.alpha
+            originAnimation = layer.originAnimation.map(SceneRenderVectorAnimationInfo.init(animation:))
+            scaleAnimation = layer.scaleAnimation.map(SceneRenderVectorAnimationInfo.init(animation:))
+            angleAnimation = layer.angleAnimation.map(SceneRenderVectorAnimationInfo.init(animation:))
+            alphaAnimation = layer.alphaAnimation.map(SceneRenderScalarAnimationInfo.init(animation:))
+            effectSettings = layer.effectSettings.map {
+                SceneRenderEffectInfo(
+                    effect: $0.effect.rawValue,
+                    speed: $0.speed,
+                    speedX: $0.speedX,
+                    speedY: $0.speedY,
+                    strength: $0.strength,
+                    scale: $0.scale,
+                    perspective: $0.perspective,
+                    direction: $0.direction.map(SceneRenderVectorInfo.init),
+                    usesMask: $0.usesMask
+                )
+            }
+        }
+    }
+
+    private struct SceneRenderVectorInfo: Codable {
+        let x: Double
+        let y: Double
+        let z: Double
+
+        init(_ vector: SceneVector3) {
+            x = vector.x
+            y = vector.y
+            z = vector.z
+        }
+    }
+
+    private struct SceneRenderSizeInfo: Codable {
+        let width: Double
+        let height: Double
+
+        init(_ size: SceneSize) {
+            width = size.width
+            height = size.height
+        }
+    }
+
+    private struct SceneRenderVectorAnimationInfo: Codable {
+        let duration: Double
+        let isRelative: Bool
+        let keyframes: [SceneRenderVectorKeyframeInfo]
+
+        init(animation: SceneVectorAnimation) {
+            duration = animation.duration
+            isRelative = animation.isRelative
+            keyframes = animation.keyframes.map(SceneRenderVectorKeyframeInfo.init(keyframe:))
+        }
+    }
+
+    private struct SceneRenderVectorKeyframeInfo: Codable {
+        let time: Double
+        let value: SceneRenderVectorInfo
+
+        init(keyframe: SceneVectorKeyframe) {
+            time = keyframe.time
+            value = SceneRenderVectorInfo(keyframe.value)
+        }
+    }
+
+    private struct SceneRenderScalarAnimationInfo: Codable {
+        let duration: Double
+        let isRelative: Bool
+        let keyframes: [SceneRenderScalarKeyframeInfo]
+
+        init(animation: SceneScalarAnimation) {
+            duration = animation.duration
+            isRelative = animation.isRelative
+            keyframes = animation.keyframes.map(SceneRenderScalarKeyframeInfo.init(keyframe:))
+        }
+    }
+
+    private struct SceneRenderScalarKeyframeInfo: Codable {
+        let time: Double
+        let value: Double
+
+        init(keyframe: SceneScalarKeyframe) {
+            time = keyframe.time
+            value = keyframe.value
+        }
+    }
+
+    private struct SceneRenderEffectInfo: Codable {
+        let effect: String
+        let speed: Double?
+        let speedX: Double?
+        let speedY: Double?
+        let strength: Double?
+        let scale: Double?
+        let perspective: Double?
+        let direction: SceneRenderVectorInfo?
+        let usesMask: Bool
     }
 
     private static func doctor() throws {
@@ -174,6 +340,7 @@ struct WWBCtl {
         wwbctl convert <input-video> --out <output.mp4>
         wwbctl scene-info <scene.pkg>
         wwbctl scene-render-info <scene.pkg>
+        wwbctl scene-engine-info <scene.pkg>
         wwbctl doctor
         """)
     }

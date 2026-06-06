@@ -86,6 +86,7 @@ final class DocumentationTests: XCTestCase {
         let site = try String(contentsOfFile: "docs/index.html")
 
         XCTAssertTrue(site.contains("https://api.github.com/repos/3x-haust/workshop-wallpaper-bridge/releases/latest"))
+        XCTAssertTrue(site.contains("https://github.com/3x-haust/workshop-wallpaper-bridge/releases/latest/download/WorkshopWallpaperBridge-macOS-arm64.dmg"))
         XCTAssertTrue(site.contains("WorkshopWallpaperBridge-macOS-arm64.dmg"))
         XCTAssertTrue(site.contains("assets/workshop-wallpaper-bridge-demo.gif"))
         XCTAssertTrue(site.contains("latest-release-download"))
@@ -112,6 +113,13 @@ final class DocumentationTests: XCTestCase {
         XCTAssertTrue(workflow.contains("gh release upload"))
         XCTAssertTrue(workflow.contains("WorkshopWallpaperBridge-macOS-arm64.dmg"))
         XCTAssertTrue(workflow.contains("contents: write"))
+    }
+
+    func testPackagedAppDefaultsToCurrentReleaseVersion() throws {
+        let script = try String(contentsOfFile: "Scripts/package-app.sh")
+
+        XCTAssertTrue(script.contains("APP_VERSION=\"${APP_VERSION:-1.1.1}\""))
+        XCTAssertTrue(script.contains("BUNDLE_VERSION=\"${BUNDLE_VERSION:-9}\""))
     }
 
     private func assertHeadings(_ headings: [String], appearInOrderIn readme: String) {

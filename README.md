@@ -8,11 +8,15 @@ Use local Wallpaper Engine Workshop files on macOS.
 
 Workshop Wallpaper Bridge imports a copied Wallpaper Engine Workshop folder into a private Mac library and plays supported wallpapers on the desktop layer. It is built for files you already have locally. It does not talk to Steam, download Workshop items, or modify the copied Workshop folder.
 
-[Website](https://3x-haust.github.io/workshop-wallpaper-bridge/) · [한국어](README.ko.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Releases](https://github.com/3x-haust/workshop-wallpaper-bridge/releases)
+[Website](https://3x-haust.github.io/workshop-wallpaper-bridge/) · [한국어](README.ko.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Releases](https://github.com/3x-haust/workshop-wallpaper-bridge/releases) · [Support](https://www.patreon.com/c/3xhaust)
 
 ## Demo
 
 ![Workshop Wallpaper Bridge demo](assets/workshop-wallpaper-bridge-demo.gif)
+
+## Support
+
+If Workshop Wallpaper Bridge helps your setup, you can support ongoing compatibility and maintenance on [Patreon](https://www.patreon.com/c/3xhaust).
 
 ## Download
 
@@ -23,6 +27,8 @@ Download the latest `WorkshopWallpaperBridge-macOS-arm64.dmg` from [Releases](ht
 3. Open the app. It runs as a menu bar utility, not a Dock app.
 
 macOS may warn that the app is from an unidentified developer if the release is not notarized yet. You can still build from source with Swift.
+
+The app checks GitHub Releases for updates automatically when **Auto-check Updates** is enabled. Use **Check Updates** from the settings window, or **Check for Updates** from the menu bar menu, to check manually. When a newer release exists, **Download Update** downloads the latest DMG.
 
 ## Use It
 
@@ -71,9 +77,9 @@ Imported files are stored in:
 | `.webm`, `.mkv`, `.avi` video | Converts locally with `ffmpeg`, then plays |
 | `index.html` web wallpaper | Plays in a restricted local WebView |
 | `.jpg`, `.png`, `.gif`, `.heic` image | Displays as a static desktop layer |
-| `scene.pkg` scene wallpaper | Renders packed 2D image layers and basic keyframed motion |
+| `scene.pkg` scene wallpaper | Renders packed 2D image layers, text-only scenes, selected clock text scripts, basic keyframed motion, selected image-layer `waterFlow` / `waterWaves` / `waterRipple` / `scroll` shader motion, and simple `shake` / `spin` / `shine` layer effects from package constants; preserves shader/effect/script/audio requirements for engine-renderer work |
 
-Scene support is conservative. Basic image-layer scenes work, including packed `.tex` textures, LZ4 blocks, common DXT formats, and keyframed position, scale, rotation, and opacity. Particles, audio-reactive scripts, custom shaders, text layers, media integration, and video/GIF texture animation may be skipped or look different from Wallpaper Engine.
+Scene support is conservative. Basic image-layer and text-only scenes work, including packed `.tex` textures, LZ4 blocks, common DXT formats, text layers, selected clock text scripts, keyframed position, scale, rotation, and opacity. Supported image-layer `waterFlow`, `waterWaves`, `waterRipple`, and `scroll` effects are driven from package shader constants such as speed, axis speed, direction, scale, strength, and perspective instead of generic layer drift; simple `shake`, `spin`, and `shine` layer effects are mapped to Core Animation. The package analyzer preserves scene runtime requirements such as effect files, shader files, shader uniforms, SceneScript, particles, sound layers, audio-analysis inputs, and video textures so renderer-engine parity work can be targeted. Full-scene effect-only passes, masked effect composition, particles, audio-reactive scripts, full custom shader pipelines, media integration, and video/GIF texture animation may still be skipped or look different from Wallpaper Engine until the Metal scene engine implements those runtime features.
 
 Workshop preview files such as `preview.jpg`, `thumbnail.jpg`, and `cover.png` are treated as thumbnails. If a project contains `scene.pkg`, the app reads the packed scene data instead of stretching a low-resolution preview across the screen.
 
@@ -142,6 +148,7 @@ swift run wwbctl remove "<asset-id>"
 swift run wwbctl convert input.webm --out output.mp4
 swift run wwbctl scene-info "/path/to/scene.pkg"
 swift run wwbctl scene-render-info "/path/to/scene.pkg"
+swift run wwbctl scene-engine-info "/path/to/scene.pkg"
 swift run wwbctl doctor
 ```
 

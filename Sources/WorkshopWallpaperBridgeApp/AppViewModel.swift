@@ -3,6 +3,12 @@ import Foundation
 import UniformTypeIdentifiers
 import WorkshopWallpaperCore
 
+struct UpdateAlert: Identifiable {
+    let id = UUID()
+    let title: String
+    let message: String
+}
+
 @MainActor
 final class AppViewModel: ObservableObject {
     @Published var sourcePath = ""
@@ -35,6 +41,20 @@ final class AppViewModel: ObservableObject {
             setLockScreenAnimation(lockScreenAnimationEnabled)
         }
     }
+    @Published var automaticallyCheckForUpdates = true {
+        didSet {
+            guard automaticallyCheckForUpdates != oldValue else {
+                return
+            }
+            userDefaults.set(automaticallyCheckForUpdates, forKey: PreferenceKey.automaticallyCheckForUpdates)
+            if automaticallyCheckForUpdates {
+                scheduleAutomaticUpdateCheck(force: true)
+            }
+        }
+    }
+    @Published private(set) var isCheckingForUpdates = false
+    @Published private(set) var availableUpdate: UpdateRelease?
+    @Published var updateAlert: UpdateAlert?
     @Published var launchAtLogin = false {
         didSet {
             guard !isSyncingLaunchAtLogin, launchAtLogin != oldValue else {
@@ -51,6 +71,9 @@ final class AppViewModel: ObservableObject {
     private let loginItemController: LoginItemManaging
     private let lockScreenAnimationController: LockScreenAnimationManaging
     private let userDefaults: UserDefaults
+    private let updateChecker: UpdateChecking
+    private let updateURLOpener: UpdateURLOpening
+    private let currentVersionProvider: () -> String
     private var isSyncingLaunchAtLogin = false
     private var isSyncingLockScreenAnimation = false
 
@@ -58,6 +81,9 @@ final class AppViewModel: ObservableObject {
         userDefaults = .standard
         loginItemController = LoginItemController()
         lockScreenAnimationController = LockScreenAnimationController()
+        updateChecker = GitHubReleaseUpdateChecker()
+        updateURLOpener = WorkspaceUpdateURLOpener()
+        currentVersionProvider = { AppVersionProvider.currentVersion() }
         do {
             store = try LibraryStore.defaultStore()
             restorePreferences()
@@ -71,17 +97,24 @@ final class AppViewModel: ObservableObject {
             status = error.localizedDescription
         }
         syncLaunchAtLoginStatus()
+        scheduleAutomaticUpdateCheck()
     }
 
     init(
         store: LibraryStore,
         loginItemController: LoginItemManaging = LoginItemController(),
         lockScreenAnimationController: LockScreenAnimationManaging = LockScreenAnimationController(),
+        updateChecker: UpdateChecking = DisabledUpdateChecker(),
+        updateURLOpener: UpdateURLOpening = WorkspaceUpdateURLOpener(),
+        currentVersionProvider: @escaping () -> String = { "0.0.0" },
         userDefaults: UserDefaults = .standard
     ) {
         self.store = store
         self.loginItemController = loginItemController
         self.lockScreenAnimationController = lockScreenAnimationController
+        self.updateChecker = updateChecker
+        self.updateURLOpener = updateURLOpener
+        self.currentVersionProvider = currentVersionProvider
         self.userDefaults = userDefaults
         restorePreferences()
         loadLibrary()
@@ -324,6 +357,64 @@ extension AppViewModel {
         }
     }
 
+    func checkForUpdates() {
+        Task {
+            await checkForUpdatesNow(userInitiated: true)
+        }
+    }
+
+    func checkForUpdatesNow(userInitiated: Bool = true) async {
+        guard !isCheckingForUpdates else {
+            return
+        }
+        isCheckingForUpdates = true
+        defer {
+            isCheckingForUpdates = false
+        }
+        if userInitiated {
+            status = "Checking for updates..."
+        }
+        do {
+            let result = try await updateChecker.checkForUpdates(currentVersion: currentVersionProvider())
+            userDefaults.set(Date(), forKey: PreferenceKey.lastUpdateCheckAt)
+            applyUpdateCheckResult(result, userInitiated: userInitiated)
+        } catch {
+            if userInitiated {
+                let message = error.localizedDescription
+                status = "Update check failed: \(message)"
+                updateAlert = UpdateAlert(
+                    title: "Update Check Failed",
+                    message: message
+                )
+            }
+        }
+    }
+
+    func performAutomaticUpdateCheckIfNeeded(force: Bool = false, now: Date = Date()) async {
+        guard automaticallyCheckForUpdates else {
+            return
+        }
+        if !force,
+           let lastCheck = userDefaults.object(forKey: PreferenceKey.lastUpdateCheckAt) as? Date,
+           now.timeIntervalSince(lastCheck) < Self.automaticUpdateCheckInterval {
+            return
+        }
+        await checkForUpdatesNow(userInitiated: false)
+    }
+
+    func openAvailableUpdate() {
+        guard let update = availableUpdate else {
+            status = "No update is available."
+            return
+        }
+        let url = update.downloadURL ?? update.releaseURL
+        if updateURLOpener.open(url) {
+            status = "Opened Workshop Wallpaper Bridge \(update.version) update."
+        } else {
+            status = "Could not open the update download page."
+        }
+    }
+
     func loadLibrary() {
         do {
             libraryAssets = try store.load().assets
@@ -397,6 +488,9 @@ extension AppViewModel {
             isSyncingLockScreenAnimation = true
             lockScreenAnimationEnabled = userDefaults.bool(forKey: PreferenceKey.lockScreenAnimationEnabled)
             isSyncingLockScreenAnimation = false
+        }
+        if userDefaults.object(forKey: PreferenceKey.automaticallyCheckForUpdates) != nil {
+            automaticallyCheckForUpdates = userDefaults.bool(forKey: PreferenceKey.automaticallyCheckForUpdates)
         }
     }
 
@@ -497,11 +591,42 @@ extension AppViewModel {
         )
     }
 
+    private func scheduleAutomaticUpdateCheck(force: Bool = false) {
+        Task {
+            await performAutomaticUpdateCheckIfNeeded(force: force)
+        }
+    }
+
+    private func applyUpdateCheckResult(_ result: UpdateCheckResult, userInitiated: Bool) {
+        switch result {
+        case .upToDate(_, let latestVersion):
+            availableUpdate = nil
+            if userInitiated {
+                status = "Workshop Wallpaper Bridge is up to date (\(latestVersion))."
+                updateAlert = UpdateAlert(
+                    title: "Already Up to Date",
+                    message: "Workshop Wallpaper Bridge \(latestVersion) is already the latest version."
+                )
+            }
+        case .updateAvailable(let update):
+            availableUpdate = update
+            status = "Workshop Wallpaper Bridge \(update.version) is available."
+            if userInitiated {
+                updateAlert = UpdateAlert(
+                    title: "Update Available",
+                    message: "Workshop Wallpaper Bridge \(update.version) is available. Click Download Update to download the latest DMG."
+                )
+            }
+        }
+    }
+
     private static let videoContentTypes: [UTType] = [
         .movie,
         .mpeg4Movie,
         .quickTimeMovie
     ] + ["m4v", "webm", "mkv", "avi"].compactMap { UTType(filenameExtension: $0) }
+
+    private static let automaticUpdateCheckInterval: TimeInterval = 12 * 60 * 60
 }
 
 private enum PreferenceKey {
@@ -509,4 +634,6 @@ private enum PreferenceKey {
     static let autoPauseWhenCovered = "autoPauseWhenCovered"
     static let lockScreenAnimationEnabled = "lockScreenAnimationEnabled"
     static let lastPlayedAssetId = "lastPlayedAssetId"
+    static let automaticallyCheckForUpdates = "automaticallyCheckForUpdates"
+    static let lastUpdateCheckAt = "lastUpdateCheckAt"
 }

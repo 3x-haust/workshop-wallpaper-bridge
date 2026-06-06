@@ -67,10 +67,152 @@ public struct SceneScalarAnimation: Equatable, Sendable {
     }
 }
 
+public struct SceneColor: Equatable, Sendable {
+    public let red: Double
+    public let green: Double
+    public let blue: Double
+    public let alpha: Double
+
+    public init(red: Double, green: Double, blue: Double, alpha: Double = 1) {
+        self.red = red
+        self.green = green
+        self.blue = blue
+        self.alpha = alpha
+    }
+}
+
+public enum SceneTextHorizontalAlignment: String, Equatable, Sendable {
+    case left
+    case center
+    case right
+}
+
+public enum SceneTextVerticalAlignment: String, Equatable, Sendable {
+    case top
+    case center
+    case bottom
+}
+
+public enum SceneDynamicText: Equatable, Sendable {
+    case clock(SceneClockText)
+}
+
+public struct SceneClockText: Equatable, Sendable {
+    public let uses24HourFormat: Bool
+    public let showsSeconds: Bool
+    public let delimiter: String
+
+    public init(uses24HourFormat: Bool, showsSeconds: Bool, delimiter: String) {
+        self.uses24HourFormat = uses24HourFormat
+        self.showsSeconds = showsSeconds
+        self.delimiter = delimiter
+    }
+
+    public func string(for date: Date, calendar: Calendar = .current) -> String {
+        let components = calendar.dateComponents([.hour, .minute, .second], from: date)
+        var hour = components.hour ?? 0
+        if !uses24HourFormat {
+            hour %= 12
+            if hour == 0 {
+                hour = 12
+            }
+        }
+        var parts = [
+            Self.twoDigit(hour),
+            Self.twoDigit(components.minute ?? 0)
+        ]
+        if showsSeconds {
+            parts.append(Self.twoDigit(components.second ?? 0))
+        }
+        return parts.joined(separator: delimiter)
+    }
+
+    private static func twoDigit(_ value: Int) -> String {
+        value < 10 ? "0\(value)" : "\(value)"
+    }
+}
+
+public struct SceneTextLayer: Equatable, Sendable {
+    public let value: String
+    public let fontPath: String?
+    public let pointSize: Double
+    public let color: SceneColor
+    public let horizontalAlignment: SceneTextHorizontalAlignment
+    public let verticalAlignment: SceneTextVerticalAlignment
+    public let dynamicText: SceneDynamicText?
+
+    public init(
+        value: String,
+        fontPath: String?,
+        pointSize: Double,
+        color: SceneColor,
+        horizontalAlignment: SceneTextHorizontalAlignment,
+        verticalAlignment: SceneTextVerticalAlignment,
+        dynamicText: SceneDynamicText? = nil
+    ) {
+        self.value = value
+        self.fontPath = fontPath
+        self.pointSize = pointSize
+        self.color = color
+        self.horizontalAlignment = horizontalAlignment
+        self.verticalAlignment = verticalAlignment
+        self.dynamicText = dynamicText
+    }
+}
+
+public enum SceneLayerEffect: String, Equatable, Sendable {
+    case waterFlow
+    case waterWaves
+    case waterRipple
+    case shake
+    case scroll
+    case spin
+    case shine
+    case opacity
+}
+
+public struct SceneLayerEffectSetting: Equatable, Sendable {
+    public let effect: SceneLayerEffect
+    public let speed: Double?
+    public let speedX: Double?
+    public let speedY: Double?
+    public let strength: Double?
+    public let scale: Double?
+    public let perspective: Double?
+    public let direction: SceneVector3?
+    public let usesMask: Bool
+
+    public init(
+        effect: SceneLayerEffect,
+        speed: Double? = nil,
+        speedX: Double? = nil,
+        speedY: Double? = nil,
+        strength: Double? = nil,
+        scale: Double? = nil,
+        perspective: Double? = nil,
+        direction: SceneVector3? = nil,
+        usesMask: Bool = false
+    ) {
+        self.effect = effect
+        self.speed = speed
+        self.speedX = speedX
+        self.speedY = speedY
+        self.strength = strength
+        self.scale = scale
+        self.perspective = perspective
+        self.direction = direction
+        self.usesMask = usesMask
+    }
+}
+
 public struct SceneLayer: Equatable, Sendable {
     public let id: Int
     public let name: String
     public let texturePath: String
+    public let text: SceneTextLayer?
+    public let effects: [SceneLayerEffect]
+    public let effectSettings: [SceneLayerEffectSetting]
+    public let isEffectOnly: Bool
     public let origin: SceneVector3
     public let size: SceneSize
     public let scale: SceneVector3
@@ -89,6 +231,10 @@ public struct SceneLayer: Equatable, Sendable {
         id: Int,
         name: String,
         texturePath: String,
+        text: SceneTextLayer? = nil,
+        effects: [SceneLayerEffect] = [],
+        effectSettings: [SceneLayerEffectSetting] = [],
+        isEffectOnly: Bool = false,
         origin: SceneVector3,
         size: SceneSize,
         scale: SceneVector3,
@@ -102,6 +248,10 @@ public struct SceneLayer: Equatable, Sendable {
         self.id = id
         self.name = name
         self.texturePath = texturePath
+        self.text = text
+        self.effects = effects
+        self.effectSettings = effectSettings
+        self.isEffectOnly = isEffectOnly
         self.origin = origin
         self.size = size
         self.scale = scale
@@ -119,6 +269,18 @@ public struct SceneRenderPlan: Equatable, Sendable {
     public let layers: [SceneLayer]
     public let textures: [String: SceneTexture]
 
+    public var hasRenderableContent: Bool {
+        layers.contains { layer in
+            guard !layer.isEffectOnly else {
+                return false
+            }
+            if layer.text != nil {
+                return true
+            }
+            return !layer.texturePath.isEmpty && textures[layer.texturePath] != nil
+        }
+    }
+
     public init(canvasSize: SceneSize, layers: [SceneLayer], textures: [String: SceneTexture]) {
         self.canvasSize = canvasSize
         self.layers = layers
@@ -129,7 +291,7 @@ public struct SceneRenderPlan: Equatable, Sendable {
 public struct SceneRenderPlanBuilder: Sendable {
     private let maximumDecodedLayerCount: Int
 
-    public init(maximumDecodedLayerCount: Int = 16) {
+    public init(maximumDecodedLayerCount: Int = 24) {
         self.maximumDecodedLayerCount = maximumDecodedLayerCount
     }
 
@@ -137,7 +299,7 @@ public struct SceneRenderPlanBuilder: Sendable {
         guard let plan = try? build(url: url, decodeTextures: true) else {
             return false
         }
-        return !plan.layers.isEmpty && !plan.textures.isEmpty
+        return plan.hasRenderableContent
     }
 
     public func build(url: URL) throws -> SceneRenderPlan {
@@ -160,23 +322,52 @@ public struct SceneRenderPlanBuilder: Sendable {
         var textures: [String: SceneTexture] = [:]
 
         for object in objects where Self.isVisible(object["visible"]) {
-            guard let imagePath = Self.stringValue(object["image"]),
-                  let texturePath = try resolveTexturePath(imagePath: imagePath, package: package) else {
-                continue
-            }
-            var texture: SceneTexture?
-            if decodeTextures {
-                guard let textureData = package.data(forPath: texturePath) else {
-                    continue
+            if let imagePath = Self.stringValue(object["image"]) {
+                if let texturePath = try resolveTexturePath(imagePath: imagePath, package: package) {
+                    var texture: SceneTexture?
+                    if decodeTextures {
+                        if let cachedTexture = textures[texturePath] {
+                            texture = cachedTexture
+                        } else {
+                            guard let textureData = package.data(forPath: texturePath) else {
+                                continue
+                            }
+                            do {
+                                texture = try SceneTextureDecoder().decode(data: textureData)
+                            } catch {
+                                continue
+                            }
+                            textures[texturePath] = texture
+                        }
+                    }
+                    layers.append(Self.layer(
+                        from: object,
+                        texturePath: texturePath,
+                        text: nil,
+                        texture: texture,
+                        isEffectOnly: false,
+                        canvasSize: canvasSize
+                    ))
+                } else if Self.isEffectOnlyImageLayer(imagePath: imagePath, object: object) {
+                    layers.append(Self.layer(
+                        from: object,
+                        texturePath: "",
+                        text: nil,
+                        texture: nil,
+                        isEffectOnly: true,
+                        canvasSize: canvasSize
+                    ))
                 }
-                do {
-                    texture = try SceneTextureDecoder().decode(data: textureData)
-                } catch {
-                    continue
-                }
-                textures[texturePath] = texture
+            } else if let text = Self.textLayer(from: object) {
+                layers.append(Self.layer(
+                    from: object,
+                    texturePath: "",
+                    text: text,
+                    texture: nil,
+                    isEffectOnly: false,
+                    canvasSize: canvasSize
+                ))
             }
-            layers.append(Self.layer(from: object, texturePath: texturePath, texture: texture, canvasSize: canvasSize))
             if decodeTextures, layers.count >= maximumDecodedLayerCount {
                 break
             }
@@ -185,7 +376,11 @@ public struct SceneRenderPlanBuilder: Sendable {
         guard !layers.isEmpty else {
             throw SceneRenderPlanError.noRenderableLayers
         }
-        return SceneRenderPlan(canvasSize: canvasSize, layers: layers, textures: textures)
+        return SceneRenderPlan(
+            canvasSize: canvasSize,
+            layers: Self.deduplicatedMaskedTextLayers(Self.sortedLayers(layers)),
+            textures: textures
+        )
     }
 
     private func resolveTexturePath(imagePath: String, package: ScenePackage) throws -> String? {
@@ -210,6 +405,11 @@ public struct SceneRenderPlanBuilder: Sendable {
         if let texture = stringValue(material["texture"]) {
             return texture
         }
+        for key in ["name", "file", "path"] {
+            if let texture = stringValue(material[key]) {
+                return texture
+            }
+        }
         guard let passes = material["passes"] as? [[String: Any]] else {
             return nil
         }
@@ -220,6 +420,10 @@ public struct SceneRenderPlanBuilder: Sendable {
             if let textures = pass["textures"] as? [Any] {
                 for item in textures {
                     if let value = stringValue(item) {
+                        return value
+                    }
+                    if let dict = item as? [String: Any],
+                       let value = firstTextureName(in: dict) {
                         return value
                     }
                 }
@@ -248,7 +452,9 @@ public struct SceneRenderPlanBuilder: Sendable {
     private static func layer(
         from object: [String: Any],
         texturePath: String,
+        text: SceneTextLayer?,
         texture: SceneTexture?,
+        isEffectOnly: Bool,
         canvasSize: SceneSize
     ) -> SceneLayer {
         let originValue = vectorValue(object["origin"]) ?? SceneVector3(
@@ -263,10 +469,15 @@ public struct SceneRenderPlanBuilder: Sendable {
             width: texture.map { Double($0.width) } ?? canvasSize.width,
             height: texture.map { Double($0.height) } ?? canvasSize.height
         )
+        let layerEffectSettings = effectSettings(from: object)
         return SceneLayer(
             id: intValue(object["id"]) ?? 0,
             name: stringValue(object["name"]) ?? stringValue(object["id"]) ?? texturePath,
             texturePath: texturePath,
+            text: text,
+            effects: layerEffectSettings.map(\.effect),
+            effectSettings: layerEffectSettings,
+            isEffectOnly: isEffectOnly,
             origin: originValue,
             size: sizeValue,
             scale: scaleValue,
@@ -277,6 +488,202 @@ public struct SceneRenderPlanBuilder: Sendable {
             angleAnimation: vectorAnimation(object["angles"], fallback: anglesValue),
             alphaAnimation: scalarAnimation(object["alpha"], fallback: alphaValue)
         )
+    }
+
+    private static func sortedLayers(_ layers: [SceneLayer]) -> [SceneLayer] {
+        layers.enumerated().sorted { lhs, rhs in
+            let left = lhs.element
+            let right = rhs.element
+            if left.origin.z != right.origin.z {
+                return left.origin.z < right.origin.z
+            }
+            return lhs.offset < rhs.offset
+        }.map(\.element)
+    }
+
+    private static func deduplicatedMaskedTextLayers(_ layers: [SceneLayer]) -> [SceneLayer] {
+        var result: [SceneLayer] = []
+        for layer in layers {
+            if isMaskedDuplicateTextLayer(layer, existingLayers: result) {
+                continue
+            }
+            result.append(layer)
+        }
+        return result
+    }
+
+    private static func isMaskedDuplicateTextLayer(_ layer: SceneLayer, existingLayers: [SceneLayer]) -> Bool {
+        guard let text = layer.text,
+              layer.effectSettings.contains(where: { $0.effect == .opacity && $0.usesMask }) else {
+            return false
+        }
+        return existingLayers.contains { existing in
+            guard let existingText = existing.text else {
+                return false
+            }
+            return existingText.value == text.value
+                && existingText.dynamicText == text.dynamicText
+                && abs(existing.origin.x - layer.origin.x) <= 4
+                && abs(existing.origin.y - layer.origin.y) <= 4
+        }
+    }
+
+    private static func textLayer(from object: [String: Any]) -> SceneTextLayer? {
+        let textObject = object["text"]
+        guard let value = stringValue(unwrappedValue(textObject))?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.isEmpty else {
+            return nil
+        }
+        return SceneTextLayer(
+            value: value,
+            fontPath: stringValue(object["font"]),
+            pointSize: scalarValue(object["pointsize"]) ?? 64,
+            color: colorValue(object["color"]) ?? SceneColor(red: 1, green: 1, blue: 1),
+            horizontalAlignment: horizontalAlignment(from: stringValue(object["horizontalalign"])),
+            verticalAlignment: verticalAlignment(from: stringValue(object["verticalalign"])),
+            dynamicText: dynamicText(from: textObject)
+        )
+    }
+
+    private static func dynamicText(from value: Any?) -> SceneDynamicText? {
+        guard let text = value as? [String: Any],
+              let script = stringValue(text["script"]),
+              script.contains("new Date()"),
+              script.contains("time.getHours()"),
+              script.contains("time.getMinutes()") else {
+            return nil
+        }
+        let scriptProperties = text["scriptproperties"] as? [String: Any] ?? [:]
+        let uses24HourFormat = boolValue(unwrappedValue(scriptProperties["use24hFormat"])) ?? true
+        let showsSeconds = boolValue(unwrappedValue(scriptProperties["showSeconds"])) ?? false
+        let delimiter = stringValue(unwrappedValue(scriptProperties["delimiter"])) ?? ":"
+        return .clock(SceneClockText(
+            uses24HourFormat: uses24HourFormat,
+            showsSeconds: showsSeconds,
+            delimiter: delimiter
+        ))
+    }
+
+    private static func effectSettings(from object: [String: Any]) -> [SceneLayerEffectSetting] {
+        guard let rawEffects = object["effects"] as? [[String: Any]] else {
+            return []
+        }
+        var settings: [SceneLayerEffectSetting] = []
+        for rawEffect in rawEffects where isVisible(rawEffect["visible"]) {
+            guard let file = stringValue(rawEffect["file"])?.lowercased() else {
+                continue
+            }
+            let effect: SceneLayerEffect?
+            if file.contains("waterflow") {
+                effect = .waterFlow
+            } else if file.contains("waterwaves") {
+                effect = .waterWaves
+            } else if file.contains("waterripple") {
+                effect = .waterRipple
+            } else if file.contains("shake") {
+                effect = .shake
+            } else if file.contains("scroll") {
+                effect = .scroll
+            } else if file.contains("spin") {
+                effect = .spin
+            } else if file.contains("shine") {
+                effect = .shine
+            } else if file.contains("opacity") {
+                effect = .opacity
+            } else {
+                effect = nil
+            }
+            if let effect {
+                let constants = constantShaderValues(from: rawEffect)
+                let speedX = doubleValue(constants["speedx"])
+                let speedY = doubleValue(constants["speedy"])
+                settings.append(SceneLayerEffectSetting(
+                    effect: effect,
+                    speed: firstNonZeroDouble(
+                        doubleValue(constants["speed"]),
+                        doubleValue(constants["scrollspeed"]),
+                        doubleValue(constants["animationspeed"]),
+                        speedX,
+                        speedY
+                    ),
+                    speedX: speedX,
+                    speedY: speedY,
+                    strength: doubleValue(constants["strength"])
+                        ?? doubleValue(constants["ripplestrength"])
+                        ?? doubleValue(constants["rayintensity"])
+                        ?? doubleValue(constants["alpha"]),
+                    scale: doubleValue(constants["scale"])
+                        ?? doubleValue(constants["phasescale"])
+                        ?? doubleValue(constants["noisescale"]),
+                    perspective: doubleValue(constants["perspective"]),
+                    direction: vectorValue(constants["direction"])
+                        ?? vectorValue(constants["scrolldirection"])
+                        ?? directionVector(fromAngle: doubleValue(constants["direction"]))
+                        ?? directionVector(fromAngle: doubleValue(constants["scrolldirection"])),
+                    usesMask: containsMaskReference(rawEffect, depth: 0)
+                ))
+            }
+        }
+        return settings
+    }
+
+    private static func firstNonZeroDouble(_ values: Double?...) -> Double? {
+        values.compactMap(\.self).first { abs($0) > 0.000_001 } ?? values.compactMap(\.self).first
+    }
+
+    private static func directionVector(fromAngle angle: Double?) -> SceneVector3? {
+        guard let angle else {
+            return nil
+        }
+        return SceneVector3(x: -sin(angle), y: cos(angle), z: 0)
+    }
+
+    private static func constantShaderValues(from effect: [String: Any]) -> [String: Any] {
+        var values: [String: Any] = [:]
+        collectConstantShaderValues(effect, into: &values, depth: 0)
+        return values
+    }
+
+    private static func collectConstantShaderValues(_ value: Any, into values: inout [String: Any], depth: Int) {
+        guard depth <= 64 else {
+            return
+        }
+        if let dict = value as? [String: Any] {
+            if let constants = dict["constantshadervalues"] as? [String: Any] {
+                for (key, value) in constants {
+                    values[key.lowercased()] = unwrappedValue(value)
+                }
+            }
+            for child in dict.values {
+                collectConstantShaderValues(child, into: &values, depth: depth + 1)
+            }
+        } else if let array = value as? [Any] {
+            for child in array {
+                collectConstantShaderValues(child, into: &values, depth: depth + 1)
+            }
+        }
+    }
+
+    private static func containsMaskReference(_ value: Any, depth: Int) -> Bool {
+        guard depth <= 64 else {
+            return false
+        }
+        if let dict = value as? [String: Any] {
+            return dict.contains { key, child in
+                key.lowercased().contains("mask") || containsMaskReference(child, depth: depth + 1)
+            }
+        }
+        if let array = value as? [Any] {
+            return array.contains { containsMaskReference($0, depth: depth + 1) }
+        }
+        if let string = stringValue(value) {
+            return string.lowercased().contains("mask")
+        }
+        return false
+    }
+
+    private static func isEffectOnlyImageLayer(imagePath: String, object: [String: Any]) -> Bool {
+        imagePath == "models/util/composelayer.json" && !effectSettings(from: object).isEmpty
     }
 
     private static func canvasSize(from scene: [String: Any]) -> SceneSize {
@@ -442,6 +849,48 @@ public struct SceneRenderPlanBuilder: Sendable {
         return SceneSize(width: numbers[0], height: numbers[1])
     }
 
+    private static func colorValue(_ value: Any?) -> SceneColor? {
+        let numbers = numericList(value)
+        guard numbers.count >= 3 else {
+            return nil
+        }
+        return SceneColor(
+            red: numbers[0],
+            green: numbers[1],
+            blue: numbers[2],
+            alpha: numbers.count >= 4 ? numbers[3] : 1
+        )
+    }
+
+    private static func horizontalAlignment(from value: String?) -> SceneTextHorizontalAlignment {
+        switch value?.lowercased() {
+        case "left":
+            return .left
+        case "right":
+            return .right
+        default:
+            return .center
+        }
+    }
+
+    private static func verticalAlignment(from value: String?) -> SceneTextVerticalAlignment {
+        switch value?.lowercased() {
+        case "top":
+            return .top
+        case "bottom":
+            return .bottom
+        default:
+            return .center
+        }
+    }
+
+    private static func unwrappedValue(_ value: Any?) -> Any? {
+        if let dict = value as? [String: Any], dict.keys.contains("value") {
+            return dict["value"]
+        }
+        return value
+    }
+
     private static func numericList(_ value: Any?) -> [Double] {
         if let string = stringValue(value) {
             return string
@@ -514,7 +963,7 @@ public enum SceneRenderPlanError: Error, Equatable, LocalizedError {
         case .missingSceneJSON:
             return "The scene package does not contain readable scene.json."
         case .noRenderableLayers:
-            return "The scene package has no renderable image layers."
+            return "The scene package has no renderable scene layers."
         }
     }
 }

@@ -210,6 +210,131 @@ final class LibraryStoreTests: XCTestCase {
         XCTAssertTrue(repaired.issues.contains { $0.code == "scene_renderer_limited" })
     }
 
+    func testLoadRefreshesImportedSceneDiagnostics() throws {
+        // Given
+        let store = LibraryStore(root: try Fixture.makeTempDirectory())
+        let project = try makeImportedProjectDirectory(in: store.root, id: "scene-diagnostics")
+        let scenePackage = project.appending(path: "scene.pkg")
+        try Fixture.writeScenePackage(
+            to: scenePackage,
+            sceneJSON: """
+            {
+              "objects": [
+                {"text": {"value": "12:34"}},
+                {"image": "models/foam.json", "effects": [{"file": "effects/waterflow/effect.json"}]}
+              ]
+            }
+            """
+        )
+        let stale = WallpaperAsset(
+            id: "scene-diagnostics",
+            title: "Scene Diagnostics",
+            kind: .scene,
+            supportStatus: .playable,
+            source: .manualFolder,
+            projectDirectory: project.path,
+            entrypoint: scenePackage.path,
+            thumbnail: nil,
+            workshopId: "scene-diagnostics",
+            redistributionAllowed: false,
+            issues: [
+                ScanIssue(code: "scene_package_detected", message: "2D image-layer playback is enabled."),
+                ScanIssue(code: "scene_renderer_limited", message: "old limited renderer message")
+            ]
+        )
+        try store.replaceAsset(stale)
+
+        // When
+        let repaired = try XCTUnwrap(store.load().assets.first)
+
+        // Then
+        XCTAssertEqual(repaired.issues.filter { $0.code == "scene_package_detected" }.count, 1)
+        XCTAssertTrue(repaired.issues.contains { issue in
+            issue.code == "scene_package_detected"
+                && issue.message.contains("selected clock text")
+                && issue.message.contains("selected effect playback")
+        })
+        XCTAssertTrue(repaired.issues.contains { issue in
+            issue.code == "scene_renderer_limited"
+                && issue.message.contains("selected clock text")
+                && issue.message.contains("selected effect motion")
+        })
+    }
+
+    func testLoadRefreshesTextOnlySceneSupportStatusToPlayable() throws {
+        // Given
+        let store = LibraryStore(root: try Fixture.makeTempDirectory())
+        let project = try makeImportedProjectDirectory(in: store.root, id: "text-only-scene")
+        let scenePackage = project.appending(path: "scene.pkg")
+        try Fixture.writeScenePackage(
+            to: scenePackage,
+            sceneJSON: #"{"objects":[{"text":{"value":"HELLO"},"size":"320 120"}]}"#
+        )
+        let stale = WallpaperAsset(
+            id: "text-only-scene",
+            title: "Text Scene",
+            kind: .scene,
+            supportStatus: .unsupported,
+            source: .manualFolder,
+            projectDirectory: project.path,
+            entrypoint: scenePackage.path,
+            thumbnail: nil,
+            workshopId: "text-only-scene",
+            redistributionAllowed: false,
+            issues: [
+                ScanIssue(code: "scene_package_detected", message: "old summary"),
+                ScanIssue(code: "scene_renderer_limited", message: "old renderer message")
+            ]
+        )
+        try store.replaceAsset(stale)
+
+        // When
+        let repaired = try XCTUnwrap(store.load().assets.first)
+
+        // Then
+        XCTAssertEqual(repaired.supportStatus, .playable)
+        XCTAssertTrue(repaired.issues.contains { $0.code == "scene_package_detected" })
+        XCTAssertTrue(repaired.issues.contains { $0.code == "scene_renderer_limited" })
+    }
+
+    func testLoadKeepsBrokenSceneSupportStatusUnsupported() throws {
+        // Given
+        let store = LibraryStore(root: try Fixture.makeTempDirectory())
+        let project = try makeImportedProjectDirectory(in: store.root, id: "broken-scene")
+        let scenePackage = project.appending(path: "scene.pkg")
+        try Fixture.writeScenePackage(
+            to: scenePackage,
+            sceneJSON: #"{"objects":[{"image":"models/background.json"}]}"#,
+            extraEntries: [
+                (path: "models/background.json", data: Data(#"{"material":"materials/background.json"}"#.utf8)),
+                (path: "materials/background.json", data: Data(#"{"passes":[{"textures":["background"]}]}"#.utf8)),
+                (path: "materials/background.tex", data: Data([1, 2, 3]))
+            ]
+        )
+        let stale = WallpaperAsset(
+            id: "broken-scene",
+            title: "Broken Scene",
+            kind: .scene,
+            supportStatus: .playable,
+            source: .manualFolder,
+            projectDirectory: project.path,
+            entrypoint: scenePackage.path,
+            thumbnail: nil,
+            workshopId: "broken-scene",
+            redistributionAllowed: false,
+            issues: []
+        )
+        try store.replaceAsset(stale)
+
+        // When
+        let repaired = try XCTUnwrap(store.load().assets.first)
+
+        // Then
+        XCTAssertEqual(repaired.supportStatus, .unsupported)
+        XCTAssertTrue(repaired.issues.contains { $0.code == "scene_package_detected" })
+        XCTAssertTrue(repaired.issues.contains { $0.code == "scene_renderer_limited" })
+    }
+
     func testLoadRepairsLegacyPreviewImageManifestForVideoProject() throws {
         // Given
         let store = LibraryStore(root: try Fixture.makeTempDirectory())

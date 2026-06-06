@@ -68,6 +68,7 @@ Before proposing or committing changes, check:
 
 Treat this repository like a public open-source project, even for local agent work.
 
+- Never publish work directly from `main`. Create a focused branch before committing, pushing, opening a PR, or preparing a release.
 - Do not commit directly to `main` unless the user explicitly asks for a direct hotfix.
 - Create a focused branch before publishing changes, for example `fix/dock-flicker` or `docs/contribution-workflow`.
 - Keep each branch and pull request scoped to one problem.
@@ -78,6 +79,7 @@ Treat this repository like a public open-source project, even for local agent wo
   - `swift run wwbctl doctor` for CLI behavior changes.
 - Open a GitHub pull request with a short summary, test evidence, and any AI assistance note when an assistant materially shaped the change.
 - Do not merge a PR until the local checks are green and the diff has been reviewed.
+- Release only from a tag created after the reviewed PR has landed on `main`; do not tag or release an unreviewed feature branch unless the user explicitly requests a prerelease.
 
 ## Patch And Release Workflow
 

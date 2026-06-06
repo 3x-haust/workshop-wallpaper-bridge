@@ -1,5 +1,6 @@
 import Foundation
 import XCTest
+import WorkshopWallpaperCore
 @testable import WorkshopWallpaperBridgeApp
 
 final class WallpaperPlayerSuspensionTests: XCTestCase {
@@ -213,6 +214,29 @@ final class WallpaperPlayerSuspensionTests: XCTestCase {
         XCTAssertTrue(sceneSource.contains("sceneLayer.backgroundColor = nil"))
     }
 
+    @MainActor
+    func testSceneWallpaperInitializesTextOnlySceneWithoutPreviewOrTextures() throws {
+        // Given
+        let root = try Self.makeTempDirectory()
+        let packageURL = root.appending(path: "text-only.pkg")
+        try Self.writeScenePackage(
+            to: packageURL,
+            sceneJSON: #"{"objects":[{"text":{"value":"HELLO"},"size":"320 120"}]}"#
+        )
+
+        // When
+        let view = try SceneWallpaperView(
+            url: packageURL,
+            previewURL: nil,
+            frame: CGRect(x: 0, y: 0, width: 640, height: 360),
+            displayMode: .fit
+        )
+        view.prepareForClose()
+
+        // Then
+        XCTAssertEqual(view.frame.size, CGSize(width: 640, height: 360))
+    }
+
     func testVideoWallpaperKeepsStillFallbackBehindPlayerLayer() throws {
         // Given
         let playerSource = try String(contentsOfFile: "Sources/WorkshopWallpaperBridgeApp/WallpaperPlayer.swift")
@@ -236,5 +260,180 @@ final class WallpaperPlayerSuspensionTests: XCTestCase {
         XCTAssertTrue(source.contains(#"CAKeyframeAnimation(keyPath: "transform.scale.y")"#))
         XCTAssertTrue(source.contains(#"CAKeyframeAnimation(keyPath: "transform.rotation.z")"#))
         XCTAssertTrue(source.contains(#"CAKeyframeAnimation(keyPath: "opacity")"#))
+    }
+
+    func testSceneWallpaperUsesSharedDisplayLayoutAndLayerDepth() throws {
+        // Given
+        let source = try String(contentsOfFile: "Sources/WorkshopWallpaperBridgeApp/SceneWallpaperView.swift")
+
+        // Then
+        XCTAssertTrue(source.contains("WallpaperContentLayout.scaledContentFrame"))
+        XCTAssertTrue(source.contains("layer.zPosition = plan.origin.z"))
+    }
+
+    func testSceneWallpaperRendersTextLayersAndKnownWaterEffects() throws {
+        // Given
+        let source = try String(contentsOfFile: "Sources/WorkshopWallpaperBridgeApp/SceneWallpaperView.swift")
+
+        // Then
+        XCTAssertTrue(source.contains("CATextLayer()"))
+        XCTAssertTrue(source.contains("dynamicTextLayers.append"))
+        XCTAssertTrue(source.contains("Timer.scheduledTimer"))
+        XCTAssertTrue(source.contains("plan.effectSettings"))
+        XCTAssertTrue(source.contains("opacityMultiplier(for: layerPlan)"))
+        XCTAssertTrue(source.contains("opacityMultiplier(for: plan)"))
+    }
+
+    func testSceneWallpaperUsesShaderDerivedWaterWaveRenderingInsteadOfLayerDrift() throws {
+        // Given
+        let source = try String(contentsOfFile: "Sources/WorkshopWallpaperBridgeApp/SceneWallpaperView.swift")
+
+        // Then
+        XCTAssertTrue(source.contains("CIWarpKernel"))
+        XCTAssertTrue(source.contains("waterWavesWarp"))
+        XCTAssertTrue(source.contains("shaderEffectLayers.append"))
+        XCTAssertTrue(source.contains("startShaderEffectTimerIfNeeded"))
+        XCTAssertFalse(source.contains(#"CAKeyframeAnimation(keyPath: "transform.translation.y")"#))
+        XCTAssertFalse(source.contains(#"CAKeyframeAnimation(keyPath: "transform.translation.x")"#))
+        XCTAssertFalse(source.contains(#"layer.add(animation, forKey: "\(keyPrefix)-effect-rotation")"#))
+    }
+
+    func testSceneWallpaperRendersParsedWaterShaderEffects() {
+        // Given
+        let effects = [
+            SceneLayerEffectSetting(effect: .waterFlow),
+            SceneLayerEffectSetting(effect: .waterWaves),
+            SceneLayerEffectSetting(effect: .waterRipple),
+            SceneLayerEffectSetting(effect: .scroll),
+            SceneLayerEffectSetting(effect: .shake),
+            SceneLayerEffectSetting(effect: .spin),
+            SceneLayerEffectSetting(effect: .shine),
+            SceneLayerEffectSetting(effect: .opacity)
+        ]
+
+        // When
+        let rendered = SceneWallpaperView.shaderRenderableEffects(from: effects).map(\.effect)
+
+        // Then
+        XCTAssertEqual(rendered, [.waterFlow, .waterWaves, .waterRipple, .scroll])
+    }
+
+    func testSceneWallpaperAnimatesParsedLayerEffects() {
+        // Given
+        let effects = [
+            SceneLayerEffectSetting(effect: .shake),
+            SceneLayerEffectSetting(effect: .spin),
+            SceneLayerEffectSetting(effect: .shine),
+            SceneLayerEffectSetting(effect: .waterFlow),
+            SceneLayerEffectSetting(effect: .waterRipple),
+            SceneLayerEffectSetting(effect: .opacity)
+        ]
+
+        // When
+        let animated = effects.map { SceneWallpaperView.isLayerAnimatedEffect($0.effect) }
+
+        // Then
+        XCTAssertEqual(animated, [true, true, true, false, false, false])
+    }
+
+    func testSceneWallpaperDerivesEffectAnimationTimingFromShaderSpeed() {
+        // Given
+        let fastSpin = SceneLayerEffectSetting(effect: .spin, speed: 2)
+        let staticShake = SceneLayerEffectSetting(effect: .shake, speed: 0, strength: 0.2)
+        let strongShake = SceneLayerEffectSetting(
+            effect: .shake,
+            speed: 1,
+            strength: 0.4,
+            direction: SceneVector3(x: 1, y: 0, z: 0)
+        )
+
+        // When
+        let spinDuration = SceneWallpaperView.layerEffectDuration(for: fastSpin, defaultDuration: 8)
+        let staticDuration = SceneWallpaperView.layerEffectDuration(for: staticShake, defaultDuration: 1)
+        let shakeOffsets = SceneWallpaperView.shakeOffsets(for: strongShake, layerSize: CGSize(width: 200, height: 100))
+
+        // Then
+        XCTAssertEqual(spinDuration, 4, accuracy: 0.000_001)
+        XCTAssertEqual(staticDuration, 1, accuracy: 0.000_001)
+        XCTAssertEqual(shakeOffsets.count, 5)
+        XCTAssertEqual(shakeOffsets[1].x, 0, accuracy: 0.000_001)
+        XCTAssertEqual(shakeOffsets[1].y, -8, accuracy: 0.000_001)
+    }
+
+    func testSceneWallpaperScrollUsesSpeedDirectionWhenAxisSpeedsAreMissing() {
+        // Given
+        let directionalScroll = SceneLayerEffectSetting(
+            effect: .scroll,
+            speed: 0.4,
+            direction: SceneVector3(x: 0, y: -2, z: 0)
+        )
+        let explicitAxisScroll = SceneLayerEffectSetting(
+            effect: .scroll,
+            speed: 0.4,
+            speedX: 0,
+            speedY: -0.35,
+            direction: SceneVector3(x: 1, y: 0, z: 0)
+        )
+
+        // When
+        let directional = SceneWallpaperView.scrollAxisSpeeds(for: directionalScroll)
+        let explicit = SceneWallpaperView.scrollAxisSpeeds(for: explicitAxisScroll)
+
+        // Then
+        XCTAssertEqual(directional.x, 0, accuracy: 0.000_001)
+        XCTAssertEqual(directional.y, -0.4, accuracy: 0.000_001)
+        XCTAssertEqual(explicit.x, 0, accuracy: 0.000_001)
+        XCTAssertEqual(explicit.y, -0.35, accuracy: 0.000_001)
+    }
+
+    func testSceneShaderEffectClockDoesNotAdvanceWhileSuspended() {
+        // When
+        let suspended = SceneWallpaperView.shaderEffectTime(
+            elapsedTime: 4.5,
+            resumeTime: 100,
+            now: 160,
+            isSuspended: true
+        )
+        let running = SceneWallpaperView.shaderEffectTime(
+            elapsedTime: 4.5,
+            resumeTime: 100,
+            now: 103.25,
+            isSuspended: false
+        )
+
+        // Then
+        XCTAssertEqual(suspended, 4.5, accuracy: 0.000_001)
+        XCTAssertEqual(running, 7.75, accuracy: 0.000_001)
+    }
+
+    private static func makeTempDirectory() throws -> URL {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "wwb-app-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        return root
+    }
+
+    private static func writeScenePackage(to url: URL, sceneJSON: String) throws {
+        var data = Data()
+        data.appendLengthPrefixedString("PKGV0007")
+        data.appendInt32(1)
+        data.appendLengthPrefixedString("scene.json")
+        data.appendInt32(0)
+        data.appendInt32(Data(sceneJSON.utf8).count)
+        data.append(Data(sceneJSON.utf8))
+        try data.write(to: url, options: [.atomic])
+    }
+}
+
+private extension Data {
+    mutating func appendInt32(_ value: Int) {
+        var raw = Int32(value).littleEndian
+        Swift.withUnsafeBytes(of: &raw) { append(contentsOf: $0) }
+    }
+
+    mutating func appendLengthPrefixedString(_ string: String) {
+        let bytes = Data(string.utf8)
+        appendInt32(bytes.count)
+        append(bytes)
     }
 }

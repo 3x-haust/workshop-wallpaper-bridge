@@ -241,6 +241,147 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertTrue(model.status.contains("Installed and selected"))
     }
 
+    func testInitRestoresAutomaticUpdatePreference() throws {
+        // Given
+        let defaults = try makeUserDefaults()
+        defaults.set(false, forKey: "automaticallyCheckForUpdates")
+
+        // When
+        let model = AppViewModel(
+            store: LibraryStore(root: try makeTempDirectory()),
+            loginItemController: MockLoginItemController(),
+            userDefaults: defaults
+        )
+
+        // Then
+        XCTAssertFalse(model.automaticallyCheckForUpdates)
+    }
+
+    func testManualUpdateCheckReportsAvailableUpdate() async throws {
+        // Given
+        let update = UpdateRelease(
+            version: "1.2.0",
+            tagName: "v1.2.0",
+            releaseURL: URL(string: "https://example.com/release")!,
+            downloadURL: URL(string: "https://example.com/app.dmg")!
+        )
+        let checker = MockUpdateChecker(result: .updateAvailable(update))
+        let opener = MockUpdateURLOpener()
+        let model = AppViewModel(
+            store: LibraryStore(root: try makeTempDirectory()),
+            loginItemController: MockLoginItemController(),
+            updateChecker: checker,
+            updateURLOpener: opener,
+            currentVersionProvider: { "1.1.0" },
+            userDefaults: try makeUserDefaults()
+        )
+
+        // When
+        await model.checkForUpdatesNow()
+        model.openAvailableUpdate()
+
+        // Then
+        XCTAssertEqual(checker.requestedVersions, ["1.1.0"])
+        XCTAssertEqual(model.availableUpdate, update)
+        XCTAssertEqual(model.updateAlert?.title, "Update Available")
+        XCTAssertEqual(
+            model.updateAlert?.message,
+            "Workshop Wallpaper Bridge 1.2.0 is available. Click Download Update to download the latest DMG."
+        )
+        XCTAssertEqual(opener.openedURLs, [try XCTUnwrap(update.downloadURL)])
+        XCTAssertEqual(model.status, "Opened Workshop Wallpaper Bridge 1.2.0 update.")
+    }
+
+    func testManualUpdateCheckReportsUpToDateAndClearsAvailableUpdate() async throws {
+        // Given
+        let checker = MockUpdateChecker(result: .upToDate(currentVersion: "1.1.0", latestVersion: "1.1.0"))
+        let model = AppViewModel(
+            store: LibraryStore(root: try makeTempDirectory()),
+            loginItemController: MockLoginItemController(),
+            updateChecker: checker,
+            currentVersionProvider: { "1.1.0" },
+            userDefaults: try makeUserDefaults()
+        )
+
+        // When
+        await model.checkForUpdatesNow()
+
+        // Then
+        XCTAssertNil(model.availableUpdate)
+        XCTAssertEqual(model.status, "Workshop Wallpaper Bridge is up to date (1.1.0).")
+        XCTAssertEqual(model.updateAlert?.title, "Already Up to Date")
+        XCTAssertEqual(
+            model.updateAlert?.message,
+            "Workshop Wallpaper Bridge 1.1.0 is already the latest version."
+        )
+    }
+
+    func testManualUpdateCheckReportsFailureInAlert() async throws {
+        // Given
+        let checker = MockUpdateChecker(error: LocalizedTestError.expected)
+        let model = AppViewModel(
+            store: LibraryStore(root: try makeTempDirectory()),
+            loginItemController: MockLoginItemController(),
+            updateChecker: checker,
+            currentVersionProvider: { "1.1.0" },
+            userDefaults: try makeUserDefaults()
+        )
+
+        // When
+        await model.checkForUpdatesNow()
+
+        // Then
+        XCTAssertEqual(model.status, "Update check failed: Expected update error.")
+        XCTAssertEqual(model.updateAlert?.title, "Update Check Failed")
+        XCTAssertEqual(model.updateAlert?.message, "Expected update error.")
+    }
+
+    func testAutomaticUpdateCheckHonorsPreferenceAndInterval() async throws {
+        // Given
+        let defaults = try makeUserDefaults()
+        let now = Date(timeIntervalSince1970: 100)
+        defaults.set(now, forKey: "lastUpdateCheckAt")
+        let checker = MockUpdateChecker(
+            result: .upToDate(currentVersion: "1.1.0", latestVersion: "1.1.0")
+        )
+        let model = AppViewModel(
+            store: LibraryStore(root: try makeTempDirectory()),
+            loginItemController: MockLoginItemController(),
+            updateChecker: checker,
+            currentVersionProvider: { "1.1.0" },
+            userDefaults: defaults
+        )
+
+        // When
+        await model.performAutomaticUpdateCheckIfNeeded(now: now.addingTimeInterval(60))
+        await model.performAutomaticUpdateCheckIfNeeded(force: true, now: now.addingTimeInterval(60))
+
+        // Then
+        XCTAssertEqual(checker.requestedVersions, ["1.1.0"])
+    }
+
+    func testAutomaticUpdateCheckCanBeDisabled() async throws {
+        // Given
+        let defaults = try makeUserDefaults()
+        defaults.set(false, forKey: "automaticallyCheckForUpdates")
+        let checker = MockUpdateChecker(
+            result: .upToDate(currentVersion: "1.1.0", latestVersion: "1.1.0")
+        )
+        let model = AppViewModel(
+            store: LibraryStore(root: try makeTempDirectory()),
+            loginItemController: MockLoginItemController(),
+            updateChecker: checker,
+            currentVersionProvider: { "1.1.0" },
+            userDefaults: defaults
+        )
+
+        // When
+        await model.performAutomaticUpdateCheckIfNeeded(force: true)
+
+        // Then
+        XCTAssertTrue(checker.requestedVersions.isEmpty)
+    }
+
     func testStopPlaybackClearsLastPlayedWallpaperPreference() throws {
         // Given
         let defaults = try makeUserDefaults()
@@ -341,6 +482,47 @@ private final class MockLockScreenAnimationController: LockScreenAnimationManagi
     }
 }
 
+private final class MockUpdateChecker: UpdateChecking {
+    let result: UpdateCheckResult?
+    let error: Error?
+    var requestedVersions: [String] = []
+
+    init(result: UpdateCheckResult) {
+        self.result = result
+        error = nil
+    }
+
+    init(error: Error) {
+        result = nil
+        self.error = error
+    }
+
+    func checkForUpdates(currentVersion: String) async throws -> UpdateCheckResult {
+        requestedVersions.append(currentVersion)
+        if let error {
+            throw error
+        }
+        return try XCTUnwrap(result)
+    }
+}
+
+private final class MockUpdateURLOpener: UpdateURLOpening {
+    var openedURLs: [URL] = []
+
+    func open(_ url: URL) -> Bool {
+        openedURLs.append(url)
+        return true
+    }
+}
+
 private enum TestError: Error {
     case expected
+}
+
+private enum LocalizedTestError: LocalizedError {
+    case expected
+
+    var errorDescription: String? {
+        "Expected update error."
+    }
 }
