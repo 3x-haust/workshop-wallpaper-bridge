@@ -251,12 +251,12 @@ final class LibraryStoreTests: XCTestCase {
         XCTAssertEqual(repaired.issues.filter { $0.code == "scene_package_detected" }.count, 1)
         XCTAssertTrue(repaired.issues.contains { issue in
             issue.code == "scene_package_detected"
-                && issue.message.contains("selected clock text")
+                && issue.message.contains("selected text SceneScript")
                 && issue.message.contains("selected effect playback")
         })
         XCTAssertTrue(repaired.issues.contains { issue in
             issue.code == "scene_renderer_limited"
-                && issue.message.contains("selected clock text")
+                && issue.message.contains("selected text SceneScript")
                 && issue.message.contains("selected effect motion")
         })
     }

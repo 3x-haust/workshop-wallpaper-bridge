@@ -318,6 +318,17 @@ final class WallpaperPlayerSuspensionTests: XCTestCase {
         XCTAssertEqual(rendered, [.waterFlow, .waterWaves, .waterRipple, .scroll])
     }
 
+    func testSceneWallpaperRefreshesSceneScriptTextLayers() throws {
+        // Given
+        let source = try String(contentsOfFile: "Sources/WorkshopWallpaperBridgeApp/SceneWallpaperView.swift")
+
+        // Then
+        XCTAssertTrue(source.contains("SceneScriptTextEvaluator(script:"))
+        XCTAssertTrue(source.contains("text.script != nil"))
+        XCTAssertTrue(source.contains("SceneScriptRuntime("))
+        XCTAssertTrue(source.contains("1.0 / 24.0"))
+    }
+
     func testSceneWallpaperAnimatesParsedLayerEffects() {
         // Given
         let effects = [

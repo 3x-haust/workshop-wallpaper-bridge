@@ -13,7 +13,7 @@ final class SceneWallpaperView: NSView,
     private let sceneLayer = CALayer()
     private var contentLayers: [CALayer] = []
     private var shaderEffectLayers: [ShaderEffectLayer] = []
-    private var dynamicTextLayers: [(layer: CATextLayer, text: SceneTextLayer)] = []
+    private var dynamicTextLayers: [DynamicTextLayer] = []
     private var textRefreshTimer: Timer?
     private var shaderEffectTimer: Timer?
     private var shaderEffectElapsedTime: TimeInterval = 0
@@ -27,6 +27,12 @@ final class SceneWallpaperView: NSView,
         let layer: CALayer
         let baseImage: CIImage
         let effects: [SceneLayerEffectSetting]
+    }
+
+    private struct DynamicTextLayer {
+        let layer: CATextLayer
+        let text: SceneTextLayer
+        let scriptEvaluator: SceneScriptTextEvaluator?
     }
 
     private static let waterWavesWarpKernel = CIWarpKernel(source: """
@@ -211,16 +217,21 @@ final class SceneWallpaperView: NSView,
             }
             let contentLayer: CALayer
             if let text = layerPlan.text {
+                let scriptEvaluator = text.script.map { SceneScriptTextEvaluator(script: $0) }
                 let textLayer = CATextLayer()
-                textLayer.string = string(for: text)
+                textLayer.string = string(for: text, scriptEvaluator: scriptEvaluator)
                 textLayer.fontSize = text.pointSize
                 textLayer.foregroundColor = Self.cgColor(from: text.color)
                 textLayer.alignmentMode = Self.textAlignmentMode(for: text.horizontalAlignment)
                 textLayer.isWrapped = true
                 textLayer.truncationMode = .none
                 textLayer.contentsScale = NSScreen.main?.backingScaleFactor ?? 2
-                if text.dynamicText != nil {
-                    dynamicTextLayers.append((layer: textLayer, text: text))
+                if text.dynamicText != nil || text.script != nil {
+                    dynamicTextLayers.append(DynamicTextLayer(
+                        layer: textLayer,
+                        text: text,
+                        scriptEvaluator: scriptEvaluator
+                    ))
                 }
                 contentLayer = textLayer
             } else {
@@ -253,30 +264,52 @@ final class SceneWallpaperView: NSView,
         guard !dynamicTextLayers.isEmpty else {
             return
         }
-        refreshDynamicTextLayers()
-        textRefreshTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+        let interval = dynamicTextLayers.contains { $0.scriptEvaluator != nil }
+            ? 1.0 / 24.0
+            : 1
+        refreshDynamicTextLayers(frameTime: interval)
+        textRefreshTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                self?.refreshDynamicTextLayers()
+                self?.refreshDynamicTextLayers(frameTime: interval)
             }
         }
     }
 
-    private func refreshDynamicTextLayers(date: Date = Date()) {
+    private func refreshDynamicTextLayers(date: Date = Date(), frameTime: TimeInterval = 1) {
         guard !isClosed else {
             return
         }
         for item in dynamicTextLayers {
-            item.layer.string = string(for: item.text, date: date)
+            item.layer.string = string(
+                for: item.text,
+                scriptEvaluator: item.scriptEvaluator,
+                date: date,
+                frameTime: frameTime
+            )
         }
     }
 
-    private func string(for text: SceneTextLayer, date: Date = Date()) -> String {
+    private func string(
+        for text: SceneTextLayer,
+        scriptEvaluator: SceneScriptTextEvaluator? = nil,
+        date: Date = Date(),
+        frameTime: TimeInterval = 1.0 / 24.0
+    ) -> String {
+        let fallback: String
         switch text.dynamicText {
         case .clock(let clock):
-            return clock.string(for: date)
+            fallback = clock.string(for: date)
         case nil:
-            return text.value
+            fallback = text.value
         }
+        guard let scriptEvaluator else {
+            return fallback
+        }
+        return scriptEvaluator.string(
+            currentValue: fallback,
+            date: date,
+            runtime: SceneScriptRuntime(time: currentShaderEffectTime(), frameTime: frameTime)
+        )
     }
 
     private func configure(_ layer: CALayer, with plan: SceneLayer) {
