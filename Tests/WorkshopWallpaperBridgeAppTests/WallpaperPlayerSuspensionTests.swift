@@ -336,6 +336,15 @@ final class WallpaperPlayerSuspensionTests: XCTestCase {
         XCTAssertEqual(animated, [true, true, true, false, false, false])
     }
 
+    func testSceneWallpaperSkipsEffectAnimationsThatConflictWithSceneKeyframes() {
+        // Then
+        XCTAssertFalse(SceneWallpaperView.shouldAnimateLayerEffect(.spin, hasAngleAnimation: true, hasAlphaAnimation: false))
+        XCTAssertFalse(SceneWallpaperView.shouldAnimateLayerEffect(.shine, hasAngleAnimation: false, hasAlphaAnimation: true))
+        XCTAssertTrue(SceneWallpaperView.shouldAnimateLayerEffect(.shake, hasAngleAnimation: true, hasAlphaAnimation: true))
+        XCTAssertTrue(SceneWallpaperView.shouldAnimateLayerEffect(.spin, hasAngleAnimation: false, hasAlphaAnimation: false))
+        XCTAssertTrue(SceneWallpaperView.shouldAnimateLayerEffect(.shine, hasAngleAnimation: false, hasAlphaAnimation: false))
+    }
+
     func testSceneWallpaperDerivesEffectAnimationTimingFromShaderSpeed() {
         // Given
         let fastSpin = SceneLayerEffectSetting(effect: .spin, speed: 2)

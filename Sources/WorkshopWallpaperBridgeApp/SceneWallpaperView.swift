@@ -369,7 +369,11 @@ final class SceneWallpaperView: NSView,
     }
 
     private func addLayerEffectAnimations(to layer: CALayer, plan: SceneLayer) {
-        for effect in plan.effectSettings where Self.isLayerAnimatedEffect(effect.effect) {
+        for effect in plan.effectSettings where Self.shouldAnimateLayerEffect(
+            effect.effect,
+            hasAngleAnimation: plan.angleAnimation != nil,
+            hasAlphaAnimation: plan.alphaAnimation != nil
+        ) {
             switch effect.effect {
             case .shake:
                 addShakeEffectAnimation(to: layer, effect: effect)
@@ -537,6 +541,26 @@ final class SceneWallpaperView: NSView,
     nonisolated static func isLayerAnimatedEffect(_ effect: SceneLayerEffect) -> Bool {
         switch effect {
         case .shake, .spin, .shine:
+            return true
+        case .waterFlow, .waterWaves, .waterRipple, .scroll, .opacity:
+            return false
+        }
+    }
+
+    nonisolated static func shouldAnimateLayerEffect(
+        _ effect: SceneLayerEffect,
+        hasAngleAnimation: Bool,
+        hasAlphaAnimation: Bool
+    ) -> Bool {
+        guard isLayerAnimatedEffect(effect) else {
+            return false
+        }
+        switch effect {
+        case .spin:
+            return !hasAngleAnimation
+        case .shine:
+            return !hasAlphaAnimation
+        case .shake:
             return true
         case .waterFlow, .waterWaves, .waterRipple, .scroll, .opacity:
             return false
