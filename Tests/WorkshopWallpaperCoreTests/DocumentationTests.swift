@@ -142,7 +142,7 @@ final class DocumentationTests: XCTestCase {
     func testPackagedAppDefaultsToCurrentReleaseVersion() throws {
         let script = try String(contentsOfFile: "Scripts/package-app.sh")
 
-        XCTAssertTrue(script.contains("APP_VERSION=\"${APP_VERSION:-1.1.3}\""))
+        XCTAssertTrue(script.contains("APP_VERSION=\"${APP_VERSION:-1.1.4}\""))
         XCTAssertTrue(script.contains("BUNDLE_VERSION=\"${BUNDLE_VERSION:-10}\""))
     }
 
