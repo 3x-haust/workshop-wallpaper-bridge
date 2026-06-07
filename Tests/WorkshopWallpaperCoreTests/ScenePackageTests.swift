@@ -226,6 +226,82 @@ final class ScenePackageTests: XCTestCase {
         XCTAssertTrue(features.runtimeGaps.contains("audio-analysis-uniforms"))
     }
 
+    func testRuntimeFeatureAnalyzerReportsMaskedEffectComposition() throws {
+        // Given
+        let root = try Fixture.makeTempDirectory()
+        let packageURL = root.appending(path: "masked-composition.pkg")
+        let sceneJSON = """
+        {
+          "objects": [
+            {
+              "id": 1,
+              "name": "Masked layer",
+              "image": "models/fish.json",
+              "effects": [
+                {
+                  "file": "effects/opacity/effect.json",
+                  "passes": [
+                    { "textures": [null, "masks/fish-mask"] }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+        """
+        try Fixture.writeScenePackage(
+            to: packageURL,
+            sceneJSON: sceneJSON,
+            extraEntries: [
+                (path: "models/fish.json", data: Data(#"{"material":"materials/fish.json"}"#.utf8)),
+                (path: "materials/fish.json", data: Data(#"{"passes":[{"textures":["fish"]}]}"#.utf8)),
+                (path: "materials/fish.tex", data: Data([1])),
+                (path: "masks/fish-mask.tex", data: Data([2]))
+            ]
+        )
+
+        // When
+        let features = try SceneRuntimeFeatureAnalyzer().analyze(url: packageURL)
+
+        // Then
+        XCTAssertTrue(features.requiresMaskedEffectComposition)
+        XCTAssertTrue(features.requiresEngineRenderer)
+        XCTAssertTrue(features.runtimeGaps.contains("masked-effect-composition"))
+    }
+
+    func testRuntimeFeatureAnalyzerIgnoresMaskTextOutsideEffectMaskReferences() throws {
+        // Given
+        let root = try Fixture.makeTempDirectory()
+        let packageURL = root.appending(path: "mask-name-only.pkg")
+        let sceneJSON = """
+        {
+          "objects": [
+            {
+              "id": 1,
+              "name": "Masked layer but no effect mask",
+              "image": "models/fish.json"
+            }
+          ]
+        }
+        """
+        try Fixture.writeScenePackage(
+            to: packageURL,
+            sceneJSON: sceneJSON,
+            extraEntries: [
+                (path: "models/fish.json", data: Data(#"{"material":"materials/fish.json"}"#.utf8)),
+                (path: "materials/fish.json", data: Data(#"{"passes":[{"textures":["fish"]}]}"#.utf8)),
+                (path: "materials/fish.tex", data: Data([1]))
+            ]
+        )
+
+        // When
+        let features = try SceneRuntimeFeatureAnalyzer().analyze(url: packageURL)
+
+        // Then
+        XCTAssertFalse(features.requiresMaskedEffectComposition)
+        XCTAssertFalse(features.runtimeGaps.contains("masked-effect-composition"))
+    }
+
     func testRuntimeFeatureAnalyzerMarksModelOnlySceneAsEngineRendererRequirement() throws {
         // Given
         let root = try Fixture.makeTempDirectory()

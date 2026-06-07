@@ -188,6 +188,24 @@ public enum SceneLayerEffect: String, Equatable, Sendable {
     case spin
     case shine
     case opacity
+    case bloom
+    case blur
+    case chromaticAberration
+    case clouds
+    case godRays
+    case localContrast
+    case materialColor
+    case pulse
+}
+
+public struct SceneEffectMaskReference: Equatable, Sendable {
+    public let source: String
+    public let texturePath: String?
+
+    public init(source: String, texturePath: String? = nil) {
+        self.source = source
+        self.texturePath = texturePath
+    }
 }
 
 public struct SceneLayerEffectSetting: Equatable, Sendable {
@@ -200,6 +218,7 @@ public struct SceneLayerEffectSetting: Equatable, Sendable {
     public let perspective: Double?
     public let direction: SceneVector3?
     public let usesMask: Bool
+    public let maskReference: SceneEffectMaskReference?
 
     public init(
         effect: SceneLayerEffect,
@@ -210,7 +229,8 @@ public struct SceneLayerEffectSetting: Equatable, Sendable {
         scale: Double? = nil,
         perspective: Double? = nil,
         direction: SceneVector3? = nil,
-        usesMask: Bool = false
+        usesMask: Bool = false,
+        maskReference: SceneEffectMaskReference? = nil
     ) {
         self.effect = effect
         self.speed = speed
@@ -220,7 +240,8 @@ public struct SceneLayerEffectSetting: Equatable, Sendable {
         self.scale = scale
         self.perspective = perspective
         self.direction = direction
-        self.usesMask = usesMask
+        self.usesMask = usesMask || maskReference != nil
+        self.maskReference = maskReference
     }
 }
 
@@ -361,6 +382,7 @@ public struct SceneRenderPlanBuilder: Sendable {
                     }
                     layers.append(Self.layer(
                         from: object,
+                        package: package,
                         texturePath: texturePath,
                         text: nil,
                         texture: texture,
@@ -370,6 +392,7 @@ public struct SceneRenderPlanBuilder: Sendable {
                 } else if Self.isEffectOnlyImageLayer(imagePath: imagePath, object: object) {
                     layers.append(Self.layer(
                         from: object,
+                        package: package,
                         texturePath: "",
                         text: nil,
                         texture: nil,
@@ -380,6 +403,7 @@ public struct SceneRenderPlanBuilder: Sendable {
             } else if let text = Self.textLayer(from: object) {
                 layers.append(Self.layer(
                     from: object,
+                    package: package,
                     texturePath: "",
                     text: text,
                     texture: nil,
@@ -394,6 +418,9 @@ public struct SceneRenderPlanBuilder: Sendable {
 
         guard !layers.isEmpty else {
             throw SceneRenderPlanError.noRenderableLayers
+        }
+        if decodeTextures {
+            try Self.decodeMaskTextures(in: layers, package: package, textures: &textures)
         }
         return SceneRenderPlan(
             canvasSize: canvasSize,
@@ -470,6 +497,7 @@ public struct SceneRenderPlanBuilder: Sendable {
 
     private static func layer(
         from object: [String: Any],
+        package: ScenePackage,
         texturePath: String,
         text: SceneTextLayer?,
         texture: SceneTexture?,
@@ -488,7 +516,7 @@ public struct SceneRenderPlanBuilder: Sendable {
             width: texture.map { Double($0.width) } ?? canvasSize.width,
             height: texture.map { Double($0.height) } ?? canvasSize.height
         )
-        let layerEffectSettings = effectSettings(from: object)
+        let layerEffectSettings = effectSettings(from: object, package: package)
         return SceneLayer(
             id: intValue(object["id"]) ?? 0,
             name: stringValue(object["name"]) ?? stringValue(object["id"]) ?? texturePath,
@@ -622,7 +650,7 @@ public struct SceneRenderPlanBuilder: Sendable {
         ))
     }
 
-    private static func effectSettings(from object: [String: Any]) -> [SceneLayerEffectSetting] {
+    private static func effectSettings(from object: [String: Any], package: ScenePackage? = nil) -> [SceneLayerEffectSetting] {
         guard let rawEffects = object["effects"] as? [[String: Any]] else {
             return []
         }
@@ -648,6 +676,22 @@ public struct SceneRenderPlanBuilder: Sendable {
                 effect = .shine
             } else if file.contains("opacity") {
                 effect = .opacity
+            } else if file.contains("bloom") {
+                effect = .bloom
+            } else if file.contains("blur") {
+                effect = .blur
+            } else if file.contains("chromatic") || file.contains("aberration") {
+                effect = .chromaticAberration
+            } else if file.contains("cloud") {
+                effect = .clouds
+            } else if file.contains("godray") || file.contains("god-ray") || file.contains("god_ray") {
+                effect = .godRays
+            } else if file.contains("localcontrast") || file.contains("local-contrast") || file.contains("local_contrast") {
+                effect = .localContrast
+            } else if file.contains("materialcolor") || file.contains("material-color") || file.contains("material_color") {
+                effect = .materialColor
+            } else if file.contains("pulse") {
+                effect = .pulse
             } else {
                 effect = nil
             }
@@ -655,6 +699,7 @@ public struct SceneRenderPlanBuilder: Sendable {
                 let constants = constantShaderValues(from: rawEffect)
                 let speedX = doubleValue(constants["speedx"])
                 let speedY = doubleValue(constants["speedy"])
+                let maskReference = maskReference(in: rawEffect, package: package)
                 settings.append(SceneLayerEffectSetting(
                     effect: effect,
                     speed: firstNonZeroDouble(
@@ -678,11 +723,33 @@ public struct SceneRenderPlanBuilder: Sendable {
                         ?? vectorValue(constants["scrolldirection"])
                         ?? directionVector(fromAngle: doubleValue(constants["direction"]))
                         ?? directionVector(fromAngle: doubleValue(constants["scrolldirection"])),
-                    usesMask: containsMaskReference(rawEffect, depth: 0)
+                    usesMask: containsMaskReference(rawEffect, depth: 0),
+                    maskReference: maskReference
                 ))
             }
         }
         return settings
+    }
+
+    private static func decodeMaskTextures(
+        in layers: [SceneLayer],
+        package: ScenePackage,
+        textures: inout [String: SceneTexture]
+    ) throws {
+        let maskTexturePaths = Set(layers.flatMap { layer in
+            layer.effectSettings.compactMap { $0.maskReference?.texturePath }
+        })
+        let decoder = SceneTextureDecoder()
+        for texturePath in maskTexturePaths where textures[texturePath] == nil {
+            guard let data = package.data(forPath: texturePath) else {
+                continue
+            }
+            do {
+                textures[texturePath] = try decoder.decode(data: data)
+            } catch {
+                continue
+            }
+        }
     }
 
     private static func firstNonZeroDouble(_ values: Double?...) -> Double? {
@@ -700,6 +767,81 @@ public struct SceneRenderPlanBuilder: Sendable {
         var values: [String: Any] = [:]
         collectConstantShaderValues(effect, into: &values, depth: 0)
         return values
+    }
+
+    private static func maskReference(in effect: [String: Any], package: ScenePackage?) -> SceneEffectMaskReference? {
+        guard let source = firstMaskReferenceSource(in: effect, depth: 0) else {
+            return nil
+        }
+        return SceneEffectMaskReference(
+            source: source,
+            texturePath: resolvedTexturePath(for: source, package: package)
+        )
+    }
+
+    private static func resolvedTexturePath(for source: String, package: ScenePackage?) -> String? {
+        guard let package else {
+            return nil
+        }
+        return textureCandidates(for: source).first { package.entry(named: $0) != nil }
+    }
+
+    private static func firstMaskReferenceSource(in value: Any, depth: Int) -> String? {
+        guard depth <= 64 else {
+            return nil
+        }
+        if let dict = value as? [String: Any] {
+            for (key, child) in dict where key.lowercased().contains("mask") {
+                if let childSource = firstString(in: child, depth: depth + 1) {
+                    return childSource
+                }
+                return key
+            }
+            for child in dict.values {
+                if let source = firstMaskReferenceSource(in: child, depth: depth + 1) {
+                    return source
+                }
+            }
+            return nil
+        }
+        if let array = value as? [Any] {
+            for child in array {
+                if let source = firstMaskReferenceSource(in: child, depth: depth + 1) {
+                    return source
+                }
+            }
+            return nil
+        }
+        guard let string = stringValue(value),
+              string.lowercased().contains("mask") else {
+            return nil
+        }
+        return string
+    }
+
+    private static func firstString(in value: Any, depth: Int) -> String? {
+        guard depth <= 64 else {
+            return nil
+        }
+        if let string = stringValue(value), !string.isEmpty {
+            return string
+        }
+        if let array = value as? [Any] {
+            for child in array {
+                if let source = firstString(in: child, depth: depth + 1) {
+                    return source
+                }
+            }
+            return nil
+        }
+        if let dict = value as? [String: Any] {
+            for child in dict.values {
+                if let source = firstString(in: child, depth: depth + 1) {
+                    return source
+                }
+            }
+        }
+        return nil
     }
 
     private static func collectConstantShaderValues(_ value: Any, into values: inout [String: Any], depth: Int) {

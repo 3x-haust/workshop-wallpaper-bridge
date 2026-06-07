@@ -41,6 +41,7 @@ public struct SceneRuntimeFeatures: Codable, Equatable, Sendable {
     public let requiresVideoTextureRuntime: Bool
     public let requiresShaderPipeline: Bool
     public let requiresAudioAnalysis: Bool
+    public let requiresMaskedEffectComposition: Bool
 
     init(
         layers: [SceneRuntimeLayerFeature],
@@ -57,7 +58,8 @@ public struct SceneRuntimeFeatures: Codable, Equatable, Sendable {
         requiresModelRuntime: Bool,
         requiresVideoTextureRuntime: Bool,
         requiresShaderPipeline: Bool,
-        requiresAudioAnalysis: Bool
+        requiresAudioAnalysis: Bool,
+        requiresMaskedEffectComposition: Bool
     ) {
         self.layers = layers
         self.materialFiles = materialFiles
@@ -74,6 +76,7 @@ public struct SceneRuntimeFeatures: Codable, Equatable, Sendable {
         self.requiresVideoTextureRuntime = requiresVideoTextureRuntime
         self.requiresShaderPipeline = requiresShaderPipeline
         self.requiresAudioAnalysis = requiresAudioAnalysis
+        self.requiresMaskedEffectComposition = requiresMaskedEffectComposition
     }
 
     public var requiresEngineRenderer: Bool {
@@ -84,6 +87,7 @@ public struct SceneRuntimeFeatures: Codable, Equatable, Sendable {
             || requiresVideoTextureRuntime
             || requiresShaderPipeline
             || requiresAudioAnalysis
+            || requiresMaskedEffectComposition
     }
 
     public var runtimeGaps: [String] {
@@ -108,6 +112,9 @@ public struct SceneRuntimeFeatures: Codable, Equatable, Sendable {
         }
         if requiresVideoTextureRuntime {
             gaps.append("video-texture-runtime")
+        }
+        if requiresMaskedEffectComposition {
+            gaps.append("masked-effect-composition")
         }
         return gaps
     }
@@ -135,6 +142,7 @@ public struct SceneRuntimeFeatures: Codable, Equatable, Sendable {
         case requiresVideoTextureRuntime
         case requiresShaderPipeline
         case requiresAudioAnalysis
+        case requiresMaskedEffectComposition
         case requiresEngineRenderer
         case runtimeGaps
         case userFacingSummary
@@ -157,6 +165,8 @@ public struct SceneRuntimeFeatures: Codable, Equatable, Sendable {
         requiresVideoTextureRuntime = try container.decode(Bool.self, forKey: .requiresVideoTextureRuntime)
         requiresShaderPipeline = try container.decode(Bool.self, forKey: .requiresShaderPipeline)
         requiresAudioAnalysis = try container.decode(Bool.self, forKey: .requiresAudioAnalysis)
+        requiresMaskedEffectComposition = try container
+            .decodeIfPresent(Bool.self, forKey: .requiresMaskedEffectComposition) ?? false
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -176,6 +186,7 @@ public struct SceneRuntimeFeatures: Codable, Equatable, Sendable {
         try container.encode(requiresVideoTextureRuntime, forKey: .requiresVideoTextureRuntime)
         try container.encode(requiresShaderPipeline, forKey: .requiresShaderPipeline)
         try container.encode(requiresAudioAnalysis, forKey: .requiresAudioAnalysis)
+        try container.encode(requiresMaskedEffectComposition, forKey: .requiresMaskedEffectComposition)
         try container.encode(requiresEngineRenderer, forKey: .requiresEngineRenderer)
         try container.encode(runtimeGaps, forKey: .runtimeGaps)
         try container.encode(userFacingSummary, forKey: .userFacingSummary)
@@ -225,7 +236,8 @@ public struct SceneRuntimeFeatureAnalyzer: Sendable {
             requiresModelRuntime: layers.contains { $0.kind == "model" },
             requiresVideoTextureRuntime: !videoFiles.isEmpty,
             requiresShaderPipeline: !shaderFiles.isEmpty || layers.contains { !$0.effectFiles.isEmpty },
-            requiresAudioAnalysis: hasAudioUniforms || Self.containsAudioScript(in: objects)
+            requiresAudioAnalysis: hasAudioUniforms || Self.containsAudioScript(in: objects),
+            requiresMaskedEffectComposition: Self.containsEffectMaskReference(in: objects)
         )
     }
 
@@ -359,6 +371,39 @@ public struct SceneRuntimeFeatureAnalyzer: Sendable {
                     || source.contains("audio")
             }
         }
+    }
+
+    private static func containsEffectMaskReference(in objects: [[String: Any]]) -> Bool {
+        objects.contains { object in
+            guard let effects = object["effects"] as? [[String: Any]] else {
+                return false
+            }
+            return effects.contains(where: effectContainsMaskReference)
+        }
+    }
+
+    private static func effectContainsMaskReference(_ effect: [String: Any]) -> Bool {
+        if let mask = stringValue(effect["mask"]), isLikelyMaskTextureReference(mask) {
+            return true
+        }
+        guard let passes = effect["passes"] as? [[String: Any]] else {
+            return false
+        }
+        return passes.contains { pass in
+            guard let textures = pass["textures"] as? [Any] else {
+                return false
+            }
+            return textures.dropFirst().contains { texture in
+                guard let texture = stringValue(texture) else {
+                    return false
+                }
+                return isLikelyMaskTextureReference(texture)
+            }
+        }
+    }
+
+    private static func isLikelyMaskTextureReference(_ value: String) -> Bool {
+        value.lowercased().contains("mask")
     }
 
     private static func scriptSource(in value: Any, depth: Int = 0) -> [String] {

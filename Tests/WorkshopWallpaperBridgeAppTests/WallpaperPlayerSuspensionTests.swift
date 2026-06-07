@@ -136,7 +136,7 @@ final class WallpaperPlayerSuspensionTests: XCTestCase {
         XCTAssertTrue(WallpaperScreenFrames.shouldReopenWindows(previous: previous, current: current))
     }
 
-    func testWallpaperWindowFrameAvoidsMenuBarButKeepsDockArea() {
+    func testWallpaperWindowFrameExtendsBehindMenuBarAndDockForContinuousBackdrop() {
         // Given
         let screenFrame = CGRect(x: 0, y: 0, width: 1470, height: 956)
         let visibleFrame = CGRect(x: 0, y: 80, width: 1470, height: 846)
@@ -145,7 +145,21 @@ final class WallpaperPlayerSuspensionTests: XCTestCase {
         let frame = WallpaperScreenFrames.wallpaperFrame(screenFrame: screenFrame, visibleFrame: visibleFrame)
 
         // Then
-        XCTAssertEqual(frame, CGRect(x: 0, y: 0, width: 1470, height: 926))
+        XCTAssertEqual(frame, screenFrame)
+    }
+
+    func testWallpaperWindowDoesNotInjectSyntheticBackgroundColorIntoMenuBarBackdrop() throws {
+        // Given
+        let source = try String(contentsOfFile: "Sources/WorkshopWallpaperBridgeApp/WallpaperPlayer.swift")
+        let windowStart = try XCTUnwrap(source.range(of: "private final class WallpaperWindow"))
+        let initStart = try XCTUnwrap(source.range(of: "init(asset:", range: windowStart.lowerBound..<source.endIndex))
+        let initEnd = try XCTUnwrap(source.range(of: "func show()", range: initStart.lowerBound..<source.endIndex))
+        let body = String(source[initStart.lowerBound..<initEnd.lowerBound])
+
+        // Then
+        XCTAssertTrue(body.contains("window.isOpaque = false"))
+        XCTAssertTrue(body.contains("window.backgroundColor = .clear"))
+        XCTAssertFalse(body.contains("window.backgroundColor = .black"))
     }
 
     func testAutoPauseDoesNotHideWallpaperWindow() throws {
@@ -243,6 +257,9 @@ final class WallpaperPlayerSuspensionTests: XCTestCase {
     func testSceneWallpaperInitializesTextOnlySceneWithoutPreviewOrTextures() throws {
         // Given
         let root = try Self.makeTempDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: root)
+        }
         let packageURL = root.appending(path: "text-only.pkg")
         try Self.writeScenePackage(
             to: packageURL,
@@ -304,6 +321,7 @@ final class WallpaperPlayerSuspensionTests: XCTestCase {
         XCTAssertTrue(source.contains("CATextLayer()"))
         XCTAssertTrue(source.contains("dynamicTextLayers.append"))
         XCTAssertTrue(source.contains("Timer.scheduledTimer"))
+        XCTAssertTrue(source.contains("includeScripted: false"))
         XCTAssertTrue(source.contains("plan.effectSettings"))
         XCTAssertTrue(source.contains("opacityMultiplier(for: layerPlan)"))
         XCTAssertTrue(source.contains("opacityMultiplier(for: plan)"))
@@ -317,7 +335,7 @@ final class WallpaperPlayerSuspensionTests: XCTestCase {
         XCTAssertTrue(source.contains("CIWarpKernel"))
         XCTAssertTrue(source.contains("waterWavesWarp"))
         XCTAssertTrue(source.contains("shaderEffectLayers.append"))
-        XCTAssertTrue(source.contains("startShaderEffectTimerIfNeeded"))
+        XCTAssertTrue(source.contains("startSceneTickSourceIfNeeded"))
         XCTAssertFalse(source.contains(#"CAKeyframeAnimation(keyPath: "transform.translation.y")"#))
         XCTAssertFalse(source.contains(#"CAKeyframeAnimation(keyPath: "transform.translation.x")"#))
         XCTAssertFalse(source.contains(#"layer.add(animation, forKey: "\(keyPrefix)-effect-rotation")"#))
@@ -330,17 +348,36 @@ final class WallpaperPlayerSuspensionTests: XCTestCase {
             SceneLayerEffectSetting(effect: .waterWaves),
             SceneLayerEffectSetting(effect: .waterRipple),
             SceneLayerEffectSetting(effect: .scroll),
+            SceneLayerEffectSetting(effect: .bloom),
+            SceneLayerEffectSetting(effect: .blur),
+            SceneLayerEffectSetting(effect: .chromaticAberration),
+            SceneLayerEffectSetting(effect: .clouds),
+            SceneLayerEffectSetting(effect: .godRays),
+            SceneLayerEffectSetting(effect: .localContrast),
+            SceneLayerEffectSetting(effect: .materialColor),
             SceneLayerEffectSetting(effect: .shake),
             SceneLayerEffectSetting(effect: .spin),
             SceneLayerEffectSetting(effect: .shine),
-            SceneLayerEffectSetting(effect: .opacity)
+            SceneLayerEffectSetting(effect: .opacity),
+            SceneLayerEffectSetting(effect: .pulse)
         ]
 
         // When
         let rendered = SceneWallpaperView.shaderRenderableEffects(from: effects).map(\.effect)
 
         // Then
-        XCTAssertEqual(rendered, [.waterFlow, .waterWaves, .waterRipple, .scroll])
+        XCTAssertEqual(rendered, [
+            .waterFlow,
+            .waterWaves,
+            .waterRipple,
+            .scroll,
+            .bloom,
+            .blur,
+            .chromaticAberration,
+            .godRays,
+            .localContrast,
+            .materialColor
+        ])
     }
 
     func testSceneWallpaperRefreshesSceneScriptTextLayers() throws {
@@ -351,7 +388,34 @@ final class WallpaperPlayerSuspensionTests: XCTestCase {
         XCTAssertTrue(source.contains("SceneScriptTextEvaluator(script:"))
         XCTAssertTrue(source.contains("text.script != nil"))
         XCTAssertTrue(source.contains("SceneScriptRuntime("))
-        XCTAssertTrue(source.contains("1.0 / 24.0"))
+        XCTAssertTrue(source.contains("refreshSceneTickDrivenLayers"))
+        XCTAssertTrue(source.contains("tick.frameTime"))
+        XCTAssertFalse(source.contains("1.0 / 24.0"))
+    }
+
+    func testSceneWallpaperSuspensionPausesAndResumesSceneTickSource() throws {
+        // Given
+        let source = try String(contentsOfFile: "Sources/WorkshopWallpaperBridgeApp/SceneWallpaperView.swift")
+        let start = try XCTUnwrap(source.range(of: "func setPlaybackSuspended"))
+        let end = try XCTUnwrap(source.range(of: "func setDisplayMode", range: start.lowerBound..<source.endIndex))
+        let body = String(source[start.lowerBound..<end.lowerBound])
+
+        // Then
+        XCTAssertTrue(body.contains("sceneTickSource.suspend()"))
+        XCTAssertTrue(body.contains("sceneTickSource.resume()"))
+        XCTAssertTrue(body.contains("startSceneTickSourceIfNeeded()"))
+    }
+
+    func testSceneWallpaperCloseInvalidatesSceneTickSource() throws {
+        // Given
+        let source = try String(contentsOfFile: "Sources/WorkshopWallpaperBridgeApp/SceneWallpaperView.swift")
+        let start = try XCTUnwrap(source.range(of: "func prepareForClose()"))
+        let end = try XCTUnwrap(source.range(of: "private func configureSceneLayer", range: start.lowerBound..<source.endIndex))
+        let body = String(source[start.lowerBound..<end.lowerBound])
+
+        // Then
+        XCTAssertTrue(body.contains("sceneTickSource.invalidate()"))
+        XCTAssertFalse(body.contains("shaderEffectTimer"))
     }
 
     func testSceneWallpaperAnimatesParsedLayerEffects() {
@@ -360,8 +424,10 @@ final class WallpaperPlayerSuspensionTests: XCTestCase {
             SceneLayerEffectSetting(effect: .shake),
             SceneLayerEffectSetting(effect: .spin),
             SceneLayerEffectSetting(effect: .shine),
+            SceneLayerEffectSetting(effect: .pulse),
             SceneLayerEffectSetting(effect: .waterFlow),
             SceneLayerEffectSetting(effect: .waterRipple),
+            SceneLayerEffectSetting(effect: .bloom),
             SceneLayerEffectSetting(effect: .opacity)
         ]
 
@@ -369,16 +435,18 @@ final class WallpaperPlayerSuspensionTests: XCTestCase {
         let animated = effects.map { SceneWallpaperView.isLayerAnimatedEffect($0.effect) }
 
         // Then
-        XCTAssertEqual(animated, [true, true, true, false, false, false])
+        XCTAssertEqual(animated, [true, true, true, true, false, false, false, false])
     }
 
     func testSceneWallpaperSkipsEffectAnimationsThatConflictWithSceneKeyframes() {
         // Then
         XCTAssertFalse(SceneWallpaperView.shouldAnimateLayerEffect(.spin, hasAngleAnimation: true, hasAlphaAnimation: false))
         XCTAssertFalse(SceneWallpaperView.shouldAnimateLayerEffect(.shine, hasAngleAnimation: false, hasAlphaAnimation: true))
+        XCTAssertFalse(SceneWallpaperView.shouldAnimateLayerEffect(.pulse, hasAngleAnimation: false, hasAlphaAnimation: true))
         XCTAssertTrue(SceneWallpaperView.shouldAnimateLayerEffect(.shake, hasAngleAnimation: true, hasAlphaAnimation: true))
         XCTAssertTrue(SceneWallpaperView.shouldAnimateLayerEffect(.spin, hasAngleAnimation: false, hasAlphaAnimation: false))
         XCTAssertTrue(SceneWallpaperView.shouldAnimateLayerEffect(.shine, hasAngleAnimation: false, hasAlphaAnimation: false))
+        XCTAssertTrue(SceneWallpaperView.shouldAnimateLayerEffect(.pulse, hasAngleAnimation: false, hasAlphaAnimation: false))
     }
 
     func testSceneWallpaperDerivesEffectAnimationTimingFromShaderSpeed() {
@@ -431,24 +499,64 @@ final class WallpaperPlayerSuspensionTests: XCTestCase {
         XCTAssertEqual(explicit.y, -0.35, accuracy: 0.000_001)
     }
 
-    func testSceneShaderEffectClockDoesNotAdvanceWhileSuspended() {
+    func testSceneTickClockStopsWhileSuspended() throws {
+        // Given
+        var clock = SceneTickClock()
+
         // When
-        let suspended = SceneWallpaperView.shaderEffectTime(
-            elapsedTime: 4.5,
-            resumeTime: 100,
-            now: 160,
-            isSuspended: true
-        )
-        let running = SceneWallpaperView.shaderEffectTime(
-            elapsedTime: 4.5,
-            resumeTime: 100,
-            now: 103.25,
-            isSuspended: false
-        )
+        let firstTick = clock.advance(by: 0.25)
+        clock.suspend()
+        let suspendedTick = clock.advance(by: 10)
+        clock.resume()
+        let resumedTick = clock.advance(by: 0.5)
 
         // Then
-        XCTAssertEqual(suspended, 4.5, accuracy: 0.000_001)
-        XCTAssertEqual(running, 7.75, accuracy: 0.000_001)
+        XCTAssertEqual(try XCTUnwrap(firstTick).elapsedTime, 0.25, accuracy: 0.000_001)
+        XCTAssertNil(suspendedTick)
+        XCTAssertEqual(try XCTUnwrap(resumedTick).elapsedTime, 0.75, accuracy: 0.000_001)
+        XCTAssertEqual(clock.elapsedTime, 0.75, accuracy: 0.000_001)
+    }
+
+    @MainActor
+    func testSceneTickClockInvalidatesOnClose() throws {
+        // Given
+        let root = try Self.makeTempDirectory()
+        let packageURL = root.appending(path: "text-only.pkg")
+        let tickSource = TestSceneTickSource()
+        try Self.writeScenePackage(
+            to: packageURL,
+            sceneJSON: #"{"objects":[{"text":{"value":"HELLO"},"size":"320 120"}]}"#
+        )
+        let view = try SceneWallpaperView(
+            url: packageURL,
+            previewURL: nil,
+            frame: CGRect(x: 0, y: 0, width: 640, height: 360),
+            displayMode: .fit,
+            sceneTickSource: tickSource
+        )
+
+        // When
+        view.prepareForClose()
+
+        // Then
+        XCTAssertTrue(tickSource.didInvalidate)
+        XCTAssertFalse(tickSource.isRunning)
+    }
+
+    func testSceneShaderEffectClockDoesNotAdvanceWhileSuspended() throws {
+        // When
+        var clock = SceneTickClock()
+        _ = clock.advance(by: 4.5)
+        clock.suspend()
+        let suspendedTick = clock.advance(by: 60)
+        let suspendedTime = clock.elapsedTime
+        clock.resume()
+        let runningTick = clock.advance(by: 3.25)
+
+        // Then
+        XCTAssertNil(suspendedTick)
+        XCTAssertEqual(suspendedTime, 4.5, accuracy: 0.000_001)
+        XCTAssertEqual(try XCTUnwrap(runningTick).elapsedTime, 7.75, accuracy: 0.000_001)
     }
 
     private static func makeTempDirectory() throws -> URL {
@@ -467,6 +575,61 @@ final class WallpaperPlayerSuspensionTests: XCTestCase {
         data.appendInt32(Data(sceneJSON.utf8).count)
         data.append(Data(sceneJSON.utf8))
         try data.write(to: url, options: [.atomic])
+    }
+}
+
+@MainActor
+private final class TestSceneTickSource: SceneTickSource {
+    private var clock = SceneTickClock()
+    private(set) var isRunning = false
+    private(set) var didInvalidate = false
+    var onTick: ((SceneTick) -> Void)?
+
+    var elapsedTime: TimeInterval {
+        clock.elapsedTime
+    }
+
+    var frameTime: TimeInterval {
+        clock.frameTime
+    }
+
+    func start() {
+        guard !didInvalidate else {
+            return
+        }
+        isRunning = true
+    }
+
+    func stop() {
+        isRunning = false
+    }
+
+    func suspend() {
+        clock.suspend()
+        isRunning = false
+    }
+
+    func resume() {
+        clock.resume()
+    }
+
+    func reset() {
+        clock.reset()
+        isRunning = false
+    }
+
+    func invalidate() {
+        clock.invalidate()
+        isRunning = false
+        didInvalidate = true
+        onTick = nil
+    }
+
+    func advance(by delta: TimeInterval) {
+        guard isRunning, let tick = clock.advance(by: delta) else {
+            return
+        }
+        onTick?(tick)
     }
 }
 

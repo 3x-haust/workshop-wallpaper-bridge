@@ -155,7 +155,8 @@ struct WWBCtl {
                     scale: $0.scale,
                     perspective: $0.perspective,
                     direction: $0.direction.map(SceneRenderVectorInfo.init),
-                    usesMask: $0.usesMask
+                    usesMask: $0.usesMask,
+                    maskReference: $0.maskReference.map(SceneRenderMaskReferenceInfo.init)
                 )
             }
         )
@@ -237,7 +238,8 @@ struct WWBCtl {
                     scale: $0.scale,
                     perspective: $0.perspective,
                     direction: $0.direction.map(SceneRenderVectorInfo.init),
-                    usesMask: $0.usesMask
+                    usesMask: $0.usesMask,
+                    maskReference: $0.maskReference.map(SceneRenderMaskReferenceInfo.init)
                 )
             }
         }
@@ -319,6 +321,17 @@ struct WWBCtl {
         let perspective: Double?
         let direction: SceneRenderVectorInfo?
         let usesMask: Bool
+        let maskReference: SceneRenderMaskReferenceInfo?
+    }
+
+    private struct SceneRenderMaskReferenceInfo: Codable {
+        let source: String
+        let texturePath: String?
+
+        init(_ reference: SceneEffectMaskReference) {
+            source = reference.source
+            texturePath = reference.texturePath
+        }
     }
 
     private static func doctor() throws {
