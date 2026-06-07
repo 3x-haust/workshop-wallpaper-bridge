@@ -354,6 +354,20 @@ final class SceneRenderPlanTests: XCTestCase {
                     { "constantshadervalues": { "speed": 0.45, "strength": 0.47, "direction": "0.2 1 0" } }
                   ],
                   "visible": true
+                },
+                {
+                  "file": "effects/bloom/effect.json",
+                  "passes": [
+                    { "constantshadervalues": { "strength": 0.18, "scale": 24 } }
+                  ],
+                  "visible": true
+                },
+                {
+                  "file": "effects/chromaticaberration/effect.json",
+                  "passes": [
+                    { "constantshadervalues": { "strength": 0.03, "animationspeed": 0.5 } }
+                  ],
+                  "visible": true
                 }
               ]
             },
@@ -417,10 +431,13 @@ final class SceneRenderPlanTests: XCTestCase {
         XCTAssertEqual(plan.layers.count, 3)
         let foam = try XCTUnwrap(plan.layers.first { $0.name == "Espuma" })
         XCTAssertTrue(foam.effects.contains(.waterFlow))
+        XCTAssertTrue(foam.effects.contains(.bloom))
+        XCTAssertTrue(foam.effects.contains(.chromaticAberration))
         XCTAssertEqual(foam.effectSettings.first?.effect, .waterFlow)
         XCTAssertEqual(foam.effectSettings.first?.speed, 0.45)
         XCTAssertEqual(foam.effectSettings.first?.strength, 0.47)
         XCTAssertEqual(foam.effectSettings.first?.direction, SceneVector3(x: 0.2, y: 1, z: 0))
+        XCTAssertEqual(foam.effectSettings.map(\.effect), [.waterFlow, .bloom, .chromaticAberration])
         let compose = try XCTUnwrap(plan.layers.first { $0.name == "Compose" })
         XCTAssertTrue(compose.isEffectOnly)
         XCTAssertTrue(compose.effects.contains(.waterRipple))
@@ -555,6 +572,96 @@ final class SceneRenderPlanTests: XCTestCase {
         XCTAssertEqual(plan.layers.map(\.name), ["Title shadow", "Title fill"])
         XCTAssertEqual(plan.layers.filter { $0.text != nil }.count, 2)
         XCTAssertFalse(plan.layers[0].effectSettings.first?.usesMask ?? true)
+    }
+
+    func testRenderPlanPreservesMaskReferencesForEffectSettings() throws {
+        // Given
+        let root = try Fixture.makeTempDirectory()
+        let packageURL = root.appending(path: "masked-effect.pkg")
+        let sceneJSON = """
+        {
+          "objects": [
+            {
+              "id": 1,
+              "name": "Masked fish",
+              "image": "models/fish.json",
+              "effects": [
+                {
+                  "file": "effects/opacity/effect.json",
+                  "passes": [
+                    {
+                      "constantshadervalues": { "alpha": 0.75 },
+                      "textures": [null, "masks/fish-mask"]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+        """
+        try Fixture.writeScenePackage(
+            to: packageURL,
+            sceneJSON: sceneJSON,
+            extraEntries: [
+                (path: "models/fish.json", data: Data(#"{"material":"materials/fish.json"}"#.utf8)),
+                (path: "materials/fish.json", data: Data(#"{"passes":[{"textures":["fish"]}]}"#.utf8)),
+                (path: "materials/fish.tex", data: Fixture.texData(width: 1, height: 1, imageData: png)),
+                (path: "masks/fish-mask.tex", data: Fixture.texData(width: 1, height: 1, imageData: png))
+            ]
+        )
+
+        // When
+        let plan = try SceneRenderPlanBuilder().build(url: packageURL)
+
+        // Then
+        let setting = try XCTUnwrap(plan.layers.first?.effectSettings.first)
+        XCTAssertEqual(setting.effect, .opacity)
+        XCTAssertTrue(setting.usesMask)
+        XCTAssertEqual(setting.maskReference?.source, "masks/fish-mask")
+        XCTAssertEqual(setting.maskReference?.texturePath, "masks/fish-mask.tex")
+    }
+
+    func testRenderPlanResolvesOpacityMaskTexture() throws {
+        // Given
+        let root = try Fixture.makeTempDirectory()
+        let packageURL = root.appending(path: "opacity-mask-texture.pkg")
+        let sceneJSON = """
+        {
+          "objects": [
+            {
+              "id": 1,
+              "name": "Masked fish",
+              "image": "models/fish.json",
+              "effects": [
+                {
+                  "file": "effects/opacity/effect.json",
+                  "passes": [
+                    { "textures": [null, "masks/fish-mask"] }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+        """
+        try Fixture.writeScenePackage(
+            to: packageURL,
+            sceneJSON: sceneJSON,
+            extraEntries: [
+                (path: "models/fish.json", data: Data(#"{"material":"materials/fish.json"}"#.utf8)),
+                (path: "materials/fish.json", data: Data(#"{"passes":[{"textures":["fish"]}]}"#.utf8)),
+                (path: "materials/fish.tex", data: Fixture.texData(width: 1, height: 1, imageData: png)),
+                (path: "masks/fish-mask.tex", data: Fixture.texData(width: 1, height: 1, imageData: png))
+            ]
+        )
+
+        // When
+        let plan = try SceneRenderPlanBuilder().build(url: packageURL)
+
+        // Then
+        XCTAssertNotNil(plan.textures["materials/fish.tex"])
+        XCTAssertNotNil(plan.textures["masks/fish-mask.tex"])
     }
 
     func testRenderPlanPreservesScrollAxisSpeedsForEffectMotionFallbacks() throws {

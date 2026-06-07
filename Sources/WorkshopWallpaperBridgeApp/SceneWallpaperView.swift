@@ -15,9 +15,7 @@ final class SceneWallpaperView: NSView,
     private var shaderEffectLayers: [ShaderEffectLayer] = []
     private var dynamicTextLayers: [DynamicTextLayer] = []
     private var textRefreshTimer: Timer?
-    private var shaderEffectTimer: Timer?
-    private var shaderEffectElapsedTime: TimeInterval = 0
-    private var shaderEffectResumeTime = CACurrentMediaTime()
+    private let sceneTickSource: SceneTickSource
     private var decodeTask: Task<Void, Never>?
     private var isSuspended = false
     private var isClosed = false
@@ -81,10 +79,20 @@ final class SceneWallpaperView: NSView,
     }
     """)
 
-    init(url: URL, previewURL: URL?, frame: CGRect, displayMode: WallpaperDisplayMode) throws {
+    init(
+        url: URL,
+        previewURL: URL?,
+        frame: CGRect,
+        displayMode: WallpaperDisplayMode,
+        sceneTickSource: SceneTickSource = CADisplayLinkSceneTickSource()
+    ) throws {
         plan = try SceneRenderPlanBuilder().buildLayout(url: url)
         self.displayMode = displayMode
+        self.sceneTickSource = sceneTickSource
         super.init(frame: frame)
+        self.sceneTickSource.onTick = { [weak self] tick in
+            self?.refreshSceneTickDrivenLayers(tick)
+        }
         wantsLayer = true
         layer = CALayer()
         layer?.backgroundColor = NSColor.black.cgColor
@@ -110,17 +118,13 @@ final class SceneWallpaperView: NSView,
         guard suspended != isSuspended else {
             return
         }
-        if suspended {
-            shaderEffectElapsedTime = currentShaderEffectTime()
-        }
         isSuspended = suspended
         setLayerTreePaused(suspended)
         if suspended {
-            shaderEffectTimer?.invalidate()
-            shaderEffectTimer = nil
+            sceneTickSource.suspend()
         } else {
-            shaderEffectResumeTime = CACurrentMediaTime()
-            startShaderEffectTimerIfNeeded()
+            sceneTickSource.resume()
+            startSceneTickSourceIfNeeded()
         }
     }
 
@@ -143,8 +147,7 @@ final class SceneWallpaperView: NSView,
         dynamicTextLayers = []
         textRefreshTimer?.invalidate()
         textRefreshTimer = nil
-        shaderEffectTimer?.invalidate()
-        shaderEffectTimer = nil
+        sceneTickSource.invalidate()
     }
 
     private func configureSceneLayer() {
@@ -200,8 +203,7 @@ final class SceneWallpaperView: NSView,
         dynamicTextLayers = []
         textRefreshTimer?.invalidate()
         textRefreshTimer = nil
-        shaderEffectTimer?.invalidate()
-        shaderEffectTimer = nil
+        sceneTickSource.stop()
         buildLayers()
         layoutScene()
         if isSuspended {
@@ -259,11 +261,12 @@ final class SceneWallpaperView: NSView,
             contentLayer.name = layerPlan.name
             contentLayer.opacity = Float(max(0, min(layerPlan.alpha * opacityMultiplier(for: layerPlan), 1)))
             configure(contentLayer, with: layerPlan)
+            applyOpacityMaskIfAvailable(to: contentLayer, for: layerPlan)
             sceneLayer.addSublayer(contentLayer)
             contentLayers.append(contentLayer)
         }
         configureTextRefreshTimer()
-        startShaderEffectTimerIfNeeded()
+        startSceneTickSourceIfNeeded()
     }
 
     private func buildEffectOnlyShaderLayer(for layerPlan: SceneLayer) -> CALayer? {
@@ -311,25 +314,27 @@ final class SceneWallpaperView: NSView,
     private func configureTextRefreshTimer() {
         textRefreshTimer?.invalidate()
         textRefreshTimer = nil
-        guard !dynamicTextLayers.isEmpty else {
+        guard dynamicTextLayers.contains(where: { $0.scriptEvaluator == nil }) else {
             return
         }
-        let interval = dynamicTextLayers.contains { $0.scriptEvaluator != nil }
-            ? 1.0 / 24.0
-            : 1
-        refreshDynamicTextLayers(frameTime: interval)
+        let interval: TimeInterval = 1
+        refreshDynamicTextLayers(frameTime: interval, includeScripted: false)
         textRefreshTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                self?.refreshDynamicTextLayers(frameTime: interval)
+                self?.refreshDynamicTextLayers(frameTime: interval, includeScripted: false)
             }
         }
     }
 
-    private func refreshDynamicTextLayers(date: Date = Date(), frameTime: TimeInterval = 1) {
+    private func refreshDynamicTextLayers(
+        date: Date = Date(),
+        frameTime: TimeInterval = 1,
+        includeScripted: Bool = true
+    ) {
         guard !isClosed else {
             return
         }
-        for item in dynamicTextLayers {
+        for item in dynamicTextLayers where includeScripted || item.scriptEvaluator == nil {
             item.layer.string = string(
                 for: item.text,
                 scriptEvaluator: item.scriptEvaluator,
@@ -343,7 +348,7 @@ final class SceneWallpaperView: NSView,
         for text: SceneTextLayer,
         scriptEvaluator: SceneScriptTextEvaluator? = nil,
         date: Date = Date(),
-        frameTime: TimeInterval = 1.0 / 24.0
+        frameTime: TimeInterval = 1.0 / 60.0
     ) -> String {
         let fallback: String
         switch text.dynamicText {
@@ -358,7 +363,7 @@ final class SceneWallpaperView: NSView,
         return scriptEvaluator.string(
             currentValue: fallback,
             date: date,
-            runtime: SceneScriptRuntime(time: currentShaderEffectTime(), frameTime: frameTime)
+            runtime: SceneScriptRuntime(time: currentSceneTime(), frameTime: sceneFrameTime(fallback: frameTime))
         )
     }
 
@@ -464,7 +469,11 @@ final class SceneWallpaperView: NSView,
                 addSpinEffectAnimation(to: layer, effect: effect)
             case .shine:
                 addShineEffectAnimation(to: layer, effect: effect)
-            case .waterFlow, .waterWaves, .waterRipple, .scroll, .opacity:
+            case .pulse:
+                addPulseEffectAnimation(to: layer, effect: effect)
+            case .waterFlow, .waterWaves, .waterRipple, .scroll, .opacity,
+                    .bloom, .blur, .chromaticAberration, .clouds, .godRays,
+                    .localContrast, .materialColor:
                 continue
             }
         }
@@ -507,11 +516,65 @@ final class SceneWallpaperView: NSView,
         layer.add(keyframe, forKey: "scene-effect-shine")
     }
 
+    private func addPulseEffectAnimation(to layer: CALayer, effect: SceneLayerEffectSetting) {
+        let baseOpacity = Double(layer.opacity)
+        guard baseOpacity > 0 else {
+            return
+        }
+        let strength = max(0, min(effect.strength ?? 0.35, 1))
+        let low = max(0, min(baseOpacity * (1 - (strength * 0.45)), 1))
+        let high = max(0, min(baseOpacity * (1 + (strength * 0.25)), 1))
+        let keyframe = CAKeyframeAnimation(keyPath: "opacity")
+        configure(keyframe, duration: Self.layerEffectDuration(for: effect, defaultDuration: 1.8))
+        keyframe.values = [baseOpacity, high, low, high, baseOpacity]
+        keyframe.keyTimes = [0, 0.25, 0.5, 0.75, 1]
+        layer.add(keyframe, forKey: "scene-effect-pulse")
+    }
+
     private func opacityMultiplier(for plan: SceneLayer) -> Double {
         guard let opacity = plan.effectSettings.last(where: { $0.effect == .opacity }) else {
             return 1
         }
         return max(0, min(opacity.strength ?? 1, 1))
+    }
+
+    private func applyOpacityMaskIfAvailable(to contentLayer: CALayer, for layerPlan: SceneLayer) {
+        guard let texturePath = Self.opacityMaskTexturePath(for: layerPlan),
+              let texture = plan.textures[texturePath],
+              let maskLayer = Self.opacityMaskLayer(
+                from: texture,
+                bounds: contentLayer.bounds,
+                contentsScale: contentLayer.contentsScale
+              ) else {
+            return
+        }
+        contentLayer.mask = maskLayer
+    }
+
+    static func opacityMaskTexturePath(for layer: SceneLayer) -> String? {
+        guard !layer.isEffectOnly else {
+            return nil
+        }
+        return layer.effectSettings.first {
+            $0.effect == .opacity && $0.maskReference?.texturePath != nil
+        }?.maskReference?.texturePath
+    }
+
+    static func opacityMaskLayer(
+        from texture: SceneTexture,
+        bounds: CGRect,
+        contentsScale: CGFloat
+    ) -> CALayer? {
+        guard let image = cgImage(from: texture) else {
+            return nil
+        }
+        let maskLayer = CALayer()
+        maskLayer.contents = image
+        maskLayer.contentsGravity = .resize
+        maskLayer.contentsScale = contentsScale
+        maskLayer.bounds = bounds
+        maskLayer.position = CGPoint(x: bounds.midX, y: bounds.midY)
+        return maskLayer
     }
 
     private func configure(_ animation: CAKeyframeAnimation, duration: Double) {
@@ -540,23 +603,30 @@ final class SceneWallpaperView: NSView,
         ))
     }
 
-    private func startShaderEffectTimerIfNeeded() {
-        guard !isClosed, !isSuspended, !shaderEffectLayers.isEmpty, shaderEffectTimer == nil else {
+    private func startSceneTickSourceIfNeeded() {
+        guard !isClosed, !isSuspended, !sceneTickSource.isRunning, needsSceneTickSource else {
             return
         }
-        refreshShaderEffectLayers()
-        shaderEffectTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 24.0, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                self?.refreshShaderEffectLayers()
-            }
-        }
+        refreshSceneTickDrivenLayers(SceneTick(
+            elapsedTime: currentSceneTime(),
+            frameTime: sceneFrameTime(fallback: 1.0 / 60.0)
+        ))
+        sceneTickSource.start()
     }
 
-    private func refreshShaderEffectLayers() {
+    private var needsSceneTickSource: Bool {
+        !shaderEffectLayers.isEmpty || dynamicTextLayers.contains { $0.scriptEvaluator != nil }
+    }
+
+    private func refreshSceneTickDrivenLayers(_ tick: SceneTick) {
+        refreshShaderEffectLayers(time: tick.elapsedTime)
+        refreshDynamicTextLayers(frameTime: tick.frameTime)
+    }
+
+    private func refreshShaderEffectLayers(time: TimeInterval) {
         guard !isClosed, !isSuspended else {
             return
         }
-        let time = currentShaderEffectTime()
         for item in shaderEffectLayers {
             guard let image = Self.renderShaderEffects(
                 baseImage: item.baseImage,
@@ -571,29 +641,19 @@ final class SceneWallpaperView: NSView,
     }
 
     private func resetShaderEffectClock() {
-        shaderEffectElapsedTime = 0
-        shaderEffectResumeTime = CACurrentMediaTime()
+        sceneTickSource.reset()
     }
 
-    private func currentShaderEffectTime() -> TimeInterval {
-        Self.shaderEffectTime(
-            elapsedTime: shaderEffectElapsedTime,
-            resumeTime: shaderEffectResumeTime,
-            now: CACurrentMediaTime(),
-            isSuspended: isSuspended
-        )
+    private func currentSceneTime() -> TimeInterval {
+        sceneTickSource.elapsedTime
     }
 
-    nonisolated static func shaderEffectTime(
-        elapsedTime: TimeInterval,
-        resumeTime: TimeInterval,
-        now: TimeInterval,
-        isSuspended: Bool
-    ) -> TimeInterval {
-        if isSuspended {
-            return elapsedTime
+    private func sceneFrameTime(fallback: TimeInterval) -> TimeInterval {
+        let frameTime = sceneTickSource.frameTime
+        guard frameTime > 0 else {
+            return fallback
         }
-        return elapsedTime + max(0, now - resumeTime)
+        return frameTime
     }
 
     private static func renderShaderEffects(
@@ -609,7 +669,19 @@ final class SceneWallpaperView: NSView,
                 image = applyWaterWaves(to: image, effect: effect, time: time) ?? image
             case .scroll:
                 image = applyScroll(to: image, effect: effect, time: time) ?? image
-            case .shake, .spin, .shine, .opacity:
+            case .bloom:
+                image = applyBloom(to: image, effect: effect) ?? image
+            case .blur:
+                image = applyBlur(to: image, effect: effect) ?? image
+            case .chromaticAberration:
+                image = applyChromaticAberration(to: image, effect: effect, time: time) ?? image
+            case .godRays:
+                image = applyGodRays(to: image, effect: effect) ?? image
+            case .localContrast:
+                image = applyLocalContrast(to: image, effect: effect) ?? image
+            case .materialColor:
+                image = applyMaterialColor(to: image, effect: effect) ?? image
+            case .shake, .spin, .shine, .opacity, .pulse, .clouds:
                 continue
             }
         }
@@ -621,9 +693,11 @@ final class SceneWallpaperView: NSView,
     ) -> [SceneLayerEffectSetting] {
         effects.filter { setting in
             switch setting.effect {
-            case .waterFlow, .waterWaves, .waterRipple, .scroll:
+            case .waterFlow, .waterWaves, .waterRipple, .scroll,
+                    .bloom, .blur, .chromaticAberration, .godRays,
+                    .localContrast, .materialColor:
                 return true
-            case .shake, .spin, .shine, .opacity:
+            case .shake, .spin, .shine, .opacity, .pulse, .clouds:
                 return false
             }
         }
@@ -650,9 +724,32 @@ final class SceneWallpaperView: NSView,
         return context.makeImage()
     }
 
+    nonisolated private static let maximumBitmapDimension = 16_384
+    nonisolated private static let maximumBitmapPixels = 18_000_000
+
+    nonisolated static func isSafeBitmapSize(_ size: CGSize) -> Bool {
+        guard size.width.isFinite, size.height.isFinite else {
+            return false
+        }
+        let widthValue = ceil(abs(size.width))
+        let heightValue = ceil(abs(size.height))
+        guard widthValue >= 1,
+              heightValue >= 1,
+              widthValue <= CGFloat(maximumBitmapDimension),
+              heightValue <= CGFloat(maximumBitmapDimension) else {
+            return false
+        }
+        let width = Int(widthValue)
+        let height = Int(heightValue)
+        return width <= maximumBitmapPixels / height
+    }
+
     private static func bitmapContext(size: CGSize) -> CGContext? {
-        let width = Int(max(1, ceil(size.width)))
-        let height = Int(max(1, ceil(size.height)))
+        guard isSafeBitmapSize(size) else {
+            return nil
+        }
+        let width = Int(max(1, ceil(abs(size.width))))
+        let height = Int(max(1, ceil(abs(size.height))))
         return CGContext(
             data: nil,
             width: width,
@@ -666,9 +763,11 @@ final class SceneWallpaperView: NSView,
 
     nonisolated static func isLayerAnimatedEffect(_ effect: SceneLayerEffect) -> Bool {
         switch effect {
-        case .shake, .spin, .shine:
+        case .shake, .spin, .shine, .pulse:
             return true
-        case .waterFlow, .waterWaves, .waterRipple, .scroll, .opacity:
+        case .waterFlow, .waterWaves, .waterRipple, .scroll, .opacity,
+                .bloom, .blur, .chromaticAberration, .clouds, .godRays,
+                .localContrast, .materialColor:
             return false
         }
     }
@@ -688,7 +787,11 @@ final class SceneWallpaperView: NSView,
             return !hasAlphaAnimation
         case .shake:
             return true
-        case .waterFlow, .waterWaves, .waterRipple, .scroll, .opacity:
+        case .pulse:
+            return !hasAlphaAnimation
+        case .waterFlow, .waterWaves, .waterRipple, .scroll, .opacity,
+                .bloom, .blur, .chromaticAberration, .clouds, .godRays,
+                .localContrast, .materialColor:
             return false
         }
     }
@@ -770,6 +873,70 @@ final class SceneWallpaperView: NSView,
                 CIVector(x: extent.origin.x, y: extent.origin.y, z: extent.width, w: extent.height)
             ]
         )
+    }
+
+    private static func applyBloom(to image: CIImage, effect: SceneLayerEffectSetting) -> CIImage? {
+        image.applyingFilter("CIBloom", parameters: [
+            kCIInputRadiusKey: max(1, min((effect.scale ?? 12) * 0.35, 24)),
+            kCIInputIntensityKey: max(0.05, min(effect.strength ?? 0.35, 1.2))
+        ]).cropped(to: image.extent)
+    }
+
+    private static func applyBlur(to image: CIImage, effect: SceneLayerEffectSetting) -> CIImage? {
+        image.applyingFilter("CIGaussianBlur", parameters: [
+            kCIInputRadiusKey: max(0.2, min(effect.strength ?? effect.scale ?? 2, 12))
+        ]).cropped(to: image.extent)
+    }
+
+    private static func applyChromaticAberration(
+        to image: CIImage,
+        effect: SceneLayerEffectSetting,
+        time: Double
+    ) -> CIImage? {
+        let strength = max(0.5, min((effect.strength ?? 0.025) * 64, 8))
+        let phase = sin(time * max(0.25, abs(effect.speed ?? 0.6)))
+        let red = image
+            .transformed(by: CGAffineTransform(translationX: strength, y: phase * strength * 0.25))
+            .applyingFilter("CIColorMatrix", parameters: [
+                "inputRVector": CIVector(x: 1, y: 0, z: 0, w: 0),
+                "inputGVector": CIVector(x: 0, y: 0, z: 0, w: 0),
+                "inputBVector": CIVector(x: 0, y: 0, z: 0, w: 0),
+                "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 1)
+            ])
+        let cyan = image
+            .transformed(by: CGAffineTransform(translationX: -strength, y: -phase * strength * 0.25))
+            .applyingFilter("CIColorMatrix", parameters: [
+                "inputRVector": CIVector(x: 0, y: 0, z: 0, w: 0),
+                "inputGVector": CIVector(x: 0, y: 1, z: 0, w: 0),
+                "inputBVector": CIVector(x: 0, y: 0, z: 1, w: 0),
+                "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 1)
+            ])
+        return red.composited(over: cyan).cropped(to: image.extent)
+    }
+
+    private static func applyGodRays(to image: CIImage, effect: SceneLayerEffectSetting) -> CIImage? {
+        let rays = image.applyingFilter("CIRadialGradient", parameters: [
+            "inputCenter": CIVector(x: image.extent.midX, y: image.extent.maxY),
+            "inputRadius0": max(20, min(image.extent.width, image.extent.height) * 0.06),
+            "inputRadius1": max(image.extent.width, image.extent.height) * 0.75,
+            "inputColor0": CIColor(red: 1, green: 0.96, blue: 0.72, alpha: max(0.04, min(effect.strength ?? 0.16, 0.45))),
+            "inputColor1": CIColor(red: 1, green: 0.96, blue: 0.72, alpha: 0)
+        ]).cropped(to: image.extent)
+        return rays.composited(over: image).cropped(to: image.extent)
+    }
+
+    private static func applyLocalContrast(to image: CIImage, effect: SceneLayerEffectSetting) -> CIImage? {
+        image.applyingFilter("CIColorControls", parameters: [
+            kCIInputSaturationKey: 1 + max(0, min(effect.strength ?? 0.08, 0.35)),
+            kCIInputContrastKey: 1 + max(0, min(effect.strength ?? 0.12, 0.45))
+        ])
+    }
+
+    private static func applyMaterialColor(to image: CIImage, effect: SceneLayerEffectSetting) -> CIImage? {
+        image.applyingFilter("CIColorControls", parameters: [
+            kCIInputSaturationKey: max(0.75, min(1 + (effect.strength ?? 0.08), 1.35)),
+            kCIInputBrightnessKey: max(-0.08, min((effect.strength ?? 0.04) * 0.12, 0.08))
+        ])
     }
 
     nonisolated static func scrollAxisSpeeds(for effect: SceneLayerEffectSetting) -> (x: Double, y: Double) {

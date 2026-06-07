@@ -146,6 +146,14 @@ final class DocumentationTests: XCTestCase {
         XCTAssertTrue(script.contains("BUNDLE_VERSION=\"${BUNDLE_VERSION:-10}\""))
     }
 
+    func testFrameDiffScriptBoundsImageAllocationBeforeDecodingPixels() throws {
+        let script = try String(contentsOfFile: "Scripts/scene-frame-diff.swift")
+
+        XCTAssertTrue(script.contains("maximumImagePixels"))
+        XCTAssertTrue(script.contains("checkedPixelCount"))
+        XCTAssertTrue(script.contains("imageTooLarge"))
+    }
+
     private func assertHeadings(_ headings: [String], appearInOrderIn readme: String) {
         var searchStart = readme.startIndex
         for heading in headings {

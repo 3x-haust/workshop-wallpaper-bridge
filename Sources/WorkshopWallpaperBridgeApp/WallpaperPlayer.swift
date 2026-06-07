@@ -256,21 +256,8 @@ enum WallpaperScreenFrames {
         screens.map { wallpaperFrame(screenFrame: $0.frame, visibleFrame: $0.visibleFrame) }
     }
 
-    static func wallpaperFrame(screenFrame: CGRect, visibleFrame: CGRect) -> CGRect {
-        guard screenFrame.width > 0, screenFrame.height > 0,
-              visibleFrame.width > 0, visibleFrame.height > 0 else {
-            return screenFrame
-        }
-        let menuBarBottom = min(screenFrame.maxY, max(screenFrame.minY, visibleFrame.maxY))
-        guard menuBarBottom > screenFrame.minY else {
-            return screenFrame
-        }
-        return CGRect(
-            x: screenFrame.minX,
-            y: screenFrame.minY,
-            width: screenFrame.width,
-            height: menuBarBottom - screenFrame.minY
-        )
+    static func wallpaperFrame(screenFrame: CGRect, visibleFrame _: CGRect) -> CGRect {
+        screenFrame
     }
 
     static func shouldReopenWindows(previous: [CGRect], current: [CGRect]) -> Bool {
@@ -313,7 +300,8 @@ private final class WallpaperWindow {
         window.isReleasedWhenClosed = false
         window.animationBehavior = .none
         window.isExcludedFromWindowsMenu = true
-        window.backgroundColor = .black
+        window.isOpaque = false
+        window.backgroundColor = .clear
         window.contentView = content
     }
 
