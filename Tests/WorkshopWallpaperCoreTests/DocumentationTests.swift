@@ -115,19 +115,24 @@ final class DocumentationTests: XCTestCase {
         XCTAssertTrue(workflow.contains("contents: write"))
     }
 
-    func testReleaseWorkflowRequiresSignedNotarizedGatekeeperCheckedDmg() throws {
+    func testReleaseWorkflowSupportsSigningWhenSecretsExistAndUnsignedFallbackOtherwise() throws {
         let workflow = try String(contentsOfFile: ".github/workflows/release.yml")
 
+        XCTAssertTrue(workflow.contains("Resolve release signing mode"))
+        XCTAssertTrue(workflow.contains("available=false"))
+        XCTAssertTrue(workflow.contains("Release signing secrets are absent; publishing an unsigned DMG"))
         XCTAssertTrue(workflow.contains("MACOS_DEVELOPER_ID_APPLICATION_CERTIFICATE_BASE64"))
         XCTAssertTrue(workflow.contains("MACOS_DEVELOPER_ID_APPLICATION_CERTIFICATE_PASSWORD"))
         XCTAssertTrue(workflow.contains("MACOS_NOTARY_APPLE_ID"))
         XCTAssertTrue(workflow.contains("MACOS_NOTARY_TEAM_ID"))
         XCTAssertTrue(workflow.contains("MACOS_NOTARY_PASSWORD"))
+        XCTAssertTrue(workflow.contains("is required when any release signing secret is configured"))
         XCTAssertTrue(workflow.contains("xcrun notarytool store-credentials"))
-        XCTAssertTrue(workflow.contains("SIGN_IDENTITY: Developer ID Application"))
-        XCTAssertTrue(workflow.contains("NOTARY_PROFILE: workshop-wallpaper-bridge-notary"))
-        XCTAssertTrue(workflow.contains("REQUIRE_SIGNING: \"1\""))
-        XCTAssertTrue(workflow.contains("REQUIRE_NOTARIZATION: \"1\""))
+        XCTAssertTrue(workflow.contains("if: steps.signing.outputs.available == 'true'"))
+        XCTAssertTrue(workflow.contains("SIGN_IDENTITY: ${{ steps.signing.outputs.available == 'true' && 'Developer ID Application' || '' }}"))
+        XCTAssertTrue(workflow.contains("NOTARY_PROFILE: ${{ steps.signing.outputs.available == 'true' && 'workshop-wallpaper-bridge-notary' || '' }}"))
+        XCTAssertTrue(workflow.contains("REQUIRE_SIGNING: ${{ steps.signing.outputs.available == 'true' && '1' || '0' }}"))
+        XCTAssertTrue(workflow.contains("REQUIRE_NOTARIZATION: ${{ steps.signing.outputs.available == 'true' && '1' || '0' }}"))
     }
 
     func testPackagingScriptVerifiesNotarizedQuarantinedApp() throws {
