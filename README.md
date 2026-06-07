@@ -60,7 +60,8 @@ Playback notes:
 - **Auto-pause behind apps** is optional.
 - Closing the settings window does not stop playback.
 - **Open at Login** restores the last played wallpaper after login.
-- **Play on Desktop** also updates a static macOS desktop fallback image so Dock and Space transitions do not reveal the previous wallpaper behind video playback.
+- **Play on Desktop** does not change the macOS desktop picture, so the translucent menu bar keeps using your current system wallpaper tint.
+- Use **Set Still Wallpaper** only when you explicitly want to replace the macOS desktop and Lock Screen still image.
 - **Remove** deletes the imported Mac-library copy only. It does not touch the original copied folder or video.
 
 Imported files are stored in:
@@ -77,9 +78,9 @@ Imported files are stored in:
 | `.webm`, `.mkv`, `.avi` video | Converts locally with `ffmpeg`, then plays |
 | `index.html` web wallpaper | Plays in a restricted local WebView |
 | `.jpg`, `.png`, `.gif`, `.heic` image | Displays as a static desktop layer |
-| `scene.pkg` scene wallpaper | Renders packed 2D image layers, text-only scenes, selected clock text scripts, basic keyframed motion, selected image-layer `waterFlow` / `waterWaves` / `waterRipple` / `scroll` shader motion, and simple `shake` / `spin` / `shine` layer effects from package constants; preserves shader/effect/script/audio requirements for engine-renderer work |
+| `scene.pkg` scene wallpaper | Renders packed 2D image layers, text-only scenes, selected text SceneScript `update(value)` snippets, basic keyframed motion, selected image-layer `waterFlow` / `waterWaves` / `waterRipple` / `scroll` shader motion, and simple `shake` / `spin` / `shine` layer effects from package constants; preserves shader/effect/script/audio requirements for engine-renderer work |
 
-Scene support is conservative. Basic image-layer and text-only scenes work, including packed `.tex` textures, LZ4 blocks, common DXT formats, text layers, selected clock text scripts, keyframed position, scale, rotation, and opacity. Supported image-layer `waterFlow`, `waterWaves`, `waterRipple`, and `scroll` effects are driven from package shader constants such as speed, axis speed, direction, scale, strength, and perspective instead of generic layer drift; simple `shake`, `spin`, and `shine` layer effects are mapped to Core Animation. The package analyzer preserves scene runtime requirements such as effect files, shader files, shader uniforms, SceneScript, particles, sound layers, audio-analysis inputs, and video textures so renderer-engine parity work can be targeted. Full-scene effect-only passes, masked effect composition, particles, audio-reactive scripts, full custom shader pipelines, media integration, and video/GIF texture animation may still be skipped or look different from Wallpaper Engine until the Metal scene engine implements those runtime features.
+Scene support is conservative. Basic image-layer and text-only scenes work, including packed `.tex` textures, LZ4 blocks, common DXT formats, text layers, selected text SceneScript `update(value)` snippets, keyframed position, scale, rotation, and opacity. Supported text scripts run through a restricted JavaScriptCore context with `Date`, `Math`, `engine.runtime`, `engine.frametime`, `engine.timeOfDay`, and parsed `scriptProperties`; loops, timers, eval/dynamic functions, unsupported APIs, and throwing scripts fail closed and keep the existing text. Supported image-layer `waterFlow`, `waterWaves`, `waterRipple`, and `scroll` effects are driven from package shader constants such as speed, axis speed, direction, scale, strength, and perspective instead of generic layer drift; simple `shake`, `spin`, and `shine` layer effects are mapped to Core Animation. The package analyzer preserves scene runtime requirements such as effect files, shader files, shader uniforms, SceneScript, particles, sound layers, audio-analysis inputs, and video textures so renderer-engine parity work can be targeted. Full-scene effect-only passes, masked effect composition, particles, audio-reactive or object/scene API scripts, full custom shader pipelines, media integration, and video/GIF texture animation may still be skipped or look different from Wallpaper Engine until the Metal scene engine implements those runtime features.
 
 Workshop preview files such as `preview.jpg`, `thumbnail.jpg`, and `cover.png` are treated as thumbnails. If a project contains `scene.pkg`, the app reads the packed scene data instead of stretching a low-resolution preview across the screen.
 
@@ -100,7 +101,7 @@ What uses a still fallback:
 
 macOS still controls when the screen saver starts. Configure the start time and password timing in System Settings > Lock Screen. Until macOS starts the selected screen saver, the normal static Lock Screen wallpaper is shown.
 
-The app can also set a still desktop wallpaper explicitly with **Set Still Wallpaper**. For MP4, MOV, and M4V files, it extracts a frame from the video instead of using a small Workshop preview. **Play on Desktop** uses the same still-image path as a transition fallback, but it does not write the Lock Screen cache unless you use **Set Still Wallpaper** or enable the screen saver integration.
+The app can also set a still desktop wallpaper explicitly with **Set Still Wallpaper**. For MP4, MOV, and M4V files, it extracts a frame from the video instead of using a small Workshop preview. **Play on Desktop** intentionally leaves the macOS desktop picture alone; this avoids surprising menu bar tint changes while animated playback is running.
 
 ## Build From Source
 
@@ -167,7 +168,7 @@ The wallpaper looks blurry or cropped:
 
 - Use **Fit** to keep the full image or video visible.
 - Use **Fill** to cover the screen and accept edge cropping.
-- For `scene.pkg` items, check whether the scene uses unsupported particles, scripts, shaders, or animated textures.
+- For `scene.pkg` items, check whether the scene uses unsupported particles, advanced scripts, shaders, or animated textures.
 
 WebM, MKV, or AVI conversion fails:
 

@@ -531,7 +531,6 @@ extension AppViewModel {
             autoPauseWhenCovered: autoPauseWhenCovered,
             displayMode: displayMode
         )
-        let desktopFallbackError = setDesktopTransitionFallback(asset: asset)
         if remember {
             userDefaults.set(asset.id, forKey: PreferenceKey.lastPlayedAssetId)
         }
@@ -539,21 +538,9 @@ extension AppViewModel {
         let playbackStatus = autoPauseWhenCovered
             ? "Playing on the desktop layer. You can minimize this app; playback pauses only behind other apps."
             : "Playing continuously on the desktop layer. You can minimize this app."
-        let fallbackStatus = desktopFallbackError.map {
-            " Desktop transition fallback failed: \($0)"
-        } ?? ""
         status = lockScreenError.map {
-            "\(playbackStatus)\(fallbackStatus) Screen Saver update failed: \($0)"
-        } ?? "\(playbackStatus)\(fallbackStatus)"
-    }
-
-    private func setDesktopTransitionFallback(asset: WallpaperAsset) -> String? {
-        do {
-            _ = try systemWallpaperSetter.setDesktopStillWallpaper(from: asset)
-            return nil
-        } catch {
-            return error.localizedDescription
-        }
+            "\(playbackStatus) Screen Saver update failed: \($0)"
+        } ?? playbackStatus
     }
 
     private func refreshLockScreenAnimationConfiguration(asset: WallpaperAsset) -> String? {

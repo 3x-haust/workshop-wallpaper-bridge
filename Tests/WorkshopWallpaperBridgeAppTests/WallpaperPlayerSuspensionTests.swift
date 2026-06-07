@@ -136,6 +136,18 @@ final class WallpaperPlayerSuspensionTests: XCTestCase {
         XCTAssertTrue(WallpaperScreenFrames.shouldReopenWindows(previous: previous, current: current))
     }
 
+    func testWallpaperWindowFrameAvoidsMenuBarButKeepsDockArea() {
+        // Given
+        let screenFrame = CGRect(x: 0, y: 0, width: 1470, height: 956)
+        let visibleFrame = CGRect(x: 0, y: 80, width: 1470, height: 846)
+
+        // When
+        let frame = WallpaperScreenFrames.wallpaperFrame(screenFrame: screenFrame, visibleFrame: visibleFrame)
+
+        // Then
+        XCTAssertEqual(frame, CGRect(x: 0, y: 0, width: 1470, height: 926))
+    }
+
     func testAutoPauseDoesNotHideWallpaperWindow() throws {
         // Given
         let source = try String(contentsOfFile: "Sources/WorkshopWallpaperBridgeApp/WallpaperPlayer.swift")
@@ -318,6 +330,17 @@ final class WallpaperPlayerSuspensionTests: XCTestCase {
         XCTAssertEqual(rendered, [.waterFlow, .waterWaves, .waterRipple, .scroll])
     }
 
+    func testSceneWallpaperRefreshesSceneScriptTextLayers() throws {
+        // Given
+        let source = try String(contentsOfFile: "Sources/WorkshopWallpaperBridgeApp/SceneWallpaperView.swift")
+
+        // Then
+        XCTAssertTrue(source.contains("SceneScriptTextEvaluator(script:"))
+        XCTAssertTrue(source.contains("text.script != nil"))
+        XCTAssertTrue(source.contains("SceneScriptRuntime("))
+        XCTAssertTrue(source.contains("1.0 / 24.0"))
+    }
+
     func testSceneWallpaperAnimatesParsedLayerEffects() {
         // Given
         let effects = [
@@ -334,6 +357,15 @@ final class WallpaperPlayerSuspensionTests: XCTestCase {
 
         // Then
         XCTAssertEqual(animated, [true, true, true, false, false, false])
+    }
+
+    func testSceneWallpaperSkipsEffectAnimationsThatConflictWithSceneKeyframes() {
+        // Then
+        XCTAssertFalse(SceneWallpaperView.shouldAnimateLayerEffect(.spin, hasAngleAnimation: true, hasAlphaAnimation: false))
+        XCTAssertFalse(SceneWallpaperView.shouldAnimateLayerEffect(.shine, hasAngleAnimation: false, hasAlphaAnimation: true))
+        XCTAssertTrue(SceneWallpaperView.shouldAnimateLayerEffect(.shake, hasAngleAnimation: true, hasAlphaAnimation: true))
+        XCTAssertTrue(SceneWallpaperView.shouldAnimateLayerEffect(.spin, hasAngleAnimation: false, hasAlphaAnimation: false))
+        XCTAssertTrue(SceneWallpaperView.shouldAnimateLayerEffect(.shine, hasAngleAnimation: false, hasAlphaAnimation: false))
     }
 
     func testSceneWallpaperDerivesEffectAnimationTimingFromShaderSpeed() {

@@ -60,7 +60,8 @@ Wallpaper Engine 프로젝트를 쓰는 경우:
 - **Auto-pause behind apps**는 선택 옵션입니다.
 - 설정창을 닫아도 재생은 멈추지 않습니다.
 - **Open at Login**을 켜면 로그인 후 마지막 월페이퍼를 복구합니다.
-- **Play on Desktop**은 동영상 재생 뒤에 보이는 정적 macOS 데스크톱 fallback 이미지도 갱신합니다. 그래서 Dock/Space 전환 중 이전 배경화면이 드러나지 않습니다.
+- **Play on Desktop**은 macOS 데스크톱 사진을 바꾸지 않습니다. 그래서 투명 메뉴 바 색은 현재 시스템 배경화면 기준으로 유지됩니다.
+- macOS 데스크톱 및 Lock Screen 정적 이미지를 실제로 바꾸고 싶을 때만 **Set Still Wallpaper**를 사용합니다.
 - **Remove**는 Mac 라이브러리에 복사된 항목만 삭제합니다. 원본 복사 폴더나 원본 영상은 건드리지 않습니다.
 
 가져온 파일은 아래 위치에 저장됩니다.
@@ -77,9 +78,9 @@ Wallpaper Engine 프로젝트를 쓰는 경우:
 | `.webm`, `.mkv`, `.avi` 동영상 | 로컬 `ffmpeg`로 변환 후 재생 |
 | `index.html` 웹 월페이퍼 | 제한된 로컬 WebView에서 재생 |
 | `.jpg`, `.png`, `.gif`, `.heic` 이미지 | 정적 데스크톱 레이어로 표시 |
-| `scene.pkg` 씬 월페이퍼 | 패키지 안의 2D image layer, text-only scene, 일부 clock text script, 기본 keyframe 움직임, image-layer의 `waterFlow` / `waterWaves` / `waterRipple` / `scroll` shader 움직임, 단순 `shake` / `spin` / `shine` layer effect를 package constant 기반으로 렌더링; 엔진 렌더러 작업에 필요한 shader/effect/script/audio 요구사항 보존 |
+| `scene.pkg` 씬 월페이퍼 | 패키지 안의 2D image layer, text-only scene, 일부 text SceneScript `update(value)` snippet, 기본 keyframe 움직임, image-layer의 `waterFlow` / `waterWaves` / `waterRipple` / `scroll` shader 움직임, 단순 `shake` / `spin` / `shine` layer effect를 package constant 기반으로 렌더링; 엔진 렌더러 작업에 필요한 shader/effect/script/audio 요구사항 보존 |
 
-scene 지원은 보수적입니다. 기본 image-layer와 text-only scene은 동작하며, packed `.tex` texture, LZ4 block, 주요 DXT 형식, text layer, 일부 clock text script, position/scale/rotation/opacity keyframe을 처리합니다. 지원되는 image-layer `waterFlow`, `waterWaves`, `waterRipple`, `scroll` effect는 임의의 layer drift가 아니라 package shader constant의 speed, axis speed, direction, scale, strength, perspective 값을 사용해 움직이고, 단순 `shake`, `spin`, `shine` layer effect는 Core Animation으로 매핑합니다. 이제 package analyzer가 effect file, shader file, shader uniform, SceneScript, particle, sound layer, audio-analysis input, video texture 같은 scene runtime 요구사항을 보존하므로 renderer-engine parity 작업을 정확히 겨냥할 수 있습니다. Metal scene engine이 해당 runtime 기능을 구현하기 전까지 full-scene effect-only pass, masked effect composition, particle, audio-reactive script, 전체 custom shader pipeline, media integration, video/GIF texture animation은 여전히 생략되거나 Wallpaper Engine과 다르게 보일 수 있습니다.
+scene 지원은 보수적입니다. 기본 image-layer와 text-only scene은 동작하며, packed `.tex` texture, LZ4 block, 주요 DXT 형식, text layer, 일부 text SceneScript `update(value)` snippet, position/scale/rotation/opacity keyframe을 처리합니다. 지원되는 text script는 제한된 JavaScriptCore context에서 `Date`, `Math`, `engine.runtime`, `engine.frametime`, `engine.timeOfDay`, 파싱된 `scriptProperties`를 사용할 수 있고, loop, timer, eval/dynamic function, 지원하지 않는 API, 오류를 던지는 script는 기존 text를 유지하는 fail-closed 방식으로 처리합니다. 지원되는 image-layer `waterFlow`, `waterWaves`, `waterRipple`, `scroll` effect는 임의의 layer drift가 아니라 package shader constant의 speed, axis speed, direction, scale, strength, perspective 값을 사용해 움직이고, 단순 `shake`, `spin`, `shine` layer effect는 Core Animation으로 매핑합니다. 이제 package analyzer가 effect file, shader file, shader uniform, SceneScript, particle, sound layer, audio-analysis input, video texture 같은 scene runtime 요구사항을 보존하므로 renderer-engine parity 작업을 정확히 겨냥할 수 있습니다. Metal scene engine이 해당 runtime 기능을 구현하기 전까지 full-scene effect-only pass, masked effect composition, particle, audio-reactive 또는 object/scene API script, 전체 custom shader pipeline, media integration, video/GIF texture animation은 여전히 생략되거나 Wallpaper Engine과 다르게 보일 수 있습니다.
 
 `preview.jpg`, `thumbnail.jpg`, `cover.png` 같은 Workshop 미리보기 파일은 썸네일로 취급합니다. 프로젝트에 `scene.pkg`가 있으면 낮은 해상도 미리보기를 늘려 쓰지 않고 패키지 내부 scene 데이터를 읽습니다.
 
@@ -100,7 +101,7 @@ scene 지원은 보수적입니다. 기본 image-layer와 text-only scene은 동
 
 화면 보호기가 언제 시작되는지는 macOS가 제어합니다. 시작 시간과 암호 요구 시간은 System Settings > Lock Screen에서 정합니다. macOS가 선택된 화면 보호기를 시작하기 전까지는 일반 정적 잠금화면 배경이 보입니다.
 
-**Set Still Wallpaper**로 정적 데스크톱 배경화면도 명시적으로 설정할 수 있습니다. MP4, MOV, M4V 파일은 작은 Workshop preview 대신 동영상에서 한 프레임을 추출해 사용합니다. **Play on Desktop**도 전환 fallback을 위해 같은 정적 이미지 경로를 사용하지만, **Set Still Wallpaper**를 누르거나 화면 보호기 연동을 켜지 않는 한 Lock Screen cache는 쓰지 않습니다.
+**Set Still Wallpaper**로 정적 데스크톱 배경화면도 명시적으로 설정할 수 있습니다. MP4, MOV, M4V 파일은 작은 Workshop preview 대신 동영상에서 한 프레임을 추출해 사용합니다. **Play on Desktop**은 의도적으로 macOS 데스크톱 사진을 그대로 둡니다. 그래서 애니메이션 재생 중 메뉴 바 색이 갑자기 바뀌는 일을 피합니다.
 
 ## 소스에서 빌드
 
@@ -167,7 +168,7 @@ swift run wwbctl doctor
 
 - 전체 이미지나 영상을 보려면 **Fit**을 사용합니다.
 - 화면을 꽉 채우고 가장자리 잘림을 허용하려면 **Fill**을 사용합니다.
-- `scene.pkg` 항목이라면 unsupported particle, script, shader, animated texture를 쓰는지 확인합니다.
+- `scene.pkg` 항목이라면 unsupported particle, advanced script, shader, animated texture를 쓰는지 확인합니다.
 
 WebM, MKV, AVI 변환이 실패하는 경우:
 

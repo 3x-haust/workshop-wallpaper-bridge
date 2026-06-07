@@ -71,6 +71,7 @@ final class SceneRenderPlanTests: XCTestCase {
         XCTAssertTrue(plan.textures.isEmpty)
         XCTAssertEqual(plan.layers.count, 1)
         XCTAssertEqual(plan.layers.first?.text?.value, "HELLO")
+        XCTAssertNil(plan.layers.first?.text?.script)
     }
 
     func testCanBuildAllowsTextSceneWhenImageTextureFailsDecode() throws {
@@ -376,6 +377,7 @@ final class SceneRenderPlanTests: XCTestCase {
                 "script": "export function update(value) { let time = new Date(); var hours = time.getHours(); let minutes = time.getMinutes(); return hours + ':' + minutes; }",
                 "scriptproperties": {
                   "delimiter": ":",
+                  "offset": { "value": 2.5 },
                   "showSeconds": false,
                   "use24hFormat": { "value": false }
                 }
@@ -430,6 +432,14 @@ final class SceneRenderPlanTests: XCTestCase {
             showsSeconds: false,
             delimiter: ":"
         )))
+        XCTAssertEqual(
+            clock.text?.script?.source,
+            "export function update(value) { let time = new Date(); var hours = time.getHours(); let minutes = time.getMinutes(); return hours + ':' + minutes; }"
+        )
+        XCTAssertEqual(clock.text?.script?.properties["delimiter"], .string(":"))
+        XCTAssertEqual(clock.text?.script?.properties["offset"], .number(2.5))
+        XCTAssertEqual(clock.text?.script?.properties["showSeconds"], .bool(false))
+        XCTAssertEqual(clock.text?.script?.properties["use24hFormat"], .bool(false))
         let date = try XCTUnwrap(Calendar(identifier: .gregorian).date(from: DateComponents(
             timeZone: TimeZone(secondsFromGMT: 0),
             hour: 22,

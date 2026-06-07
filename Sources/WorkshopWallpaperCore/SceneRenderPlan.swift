@@ -140,6 +140,7 @@ public struct SceneTextLayer: Equatable, Sendable {
     public let horizontalAlignment: SceneTextHorizontalAlignment
     public let verticalAlignment: SceneTextVerticalAlignment
     public let dynamicText: SceneDynamicText?
+    public let script: SceneTextScript?
 
     public init(
         value: String,
@@ -148,7 +149,8 @@ public struct SceneTextLayer: Equatable, Sendable {
         color: SceneColor,
         horizontalAlignment: SceneTextHorizontalAlignment,
         verticalAlignment: SceneTextVerticalAlignment,
-        dynamicText: SceneDynamicText? = nil
+        dynamicText: SceneDynamicText? = nil,
+        script: SceneTextScript? = nil
     ) {
         self.value = value
         self.fontPath = fontPath
@@ -157,6 +159,23 @@ public struct SceneTextLayer: Equatable, Sendable {
         self.horizontalAlignment = horizontalAlignment
         self.verticalAlignment = verticalAlignment
         self.dynamicText = dynamicText
+        self.script = script
+    }
+}
+
+public enum SceneScriptPropertyValue: Equatable, Sendable {
+    case bool(Bool)
+    case number(Double)
+    case string(String)
+}
+
+public struct SceneTextScript: Equatable, Sendable {
+    public let source: String
+    public let properties: [String: SceneScriptPropertyValue]
+
+    public init(source: String, properties: [String: SceneScriptPropertyValue] = [:]) {
+        self.source = source
+        self.properties = properties
     }
 }
 
@@ -541,8 +560,47 @@ public struct SceneRenderPlanBuilder: Sendable {
             color: colorValue(object["color"]) ?? SceneColor(red: 1, green: 1, blue: 1),
             horizontalAlignment: horizontalAlignment(from: stringValue(object["horizontalalign"])),
             verticalAlignment: verticalAlignment(from: stringValue(object["verticalalign"])),
-            dynamicText: dynamicText(from: textObject)
+            dynamicText: dynamicText(from: textObject),
+            script: textScript(from: textObject)
         )
+    }
+
+    private static func textScript(from value: Any?) -> SceneTextScript? {
+        guard let text = value as? [String: Any],
+              let script = stringValue(text["script"]),
+              !script.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+        return SceneTextScript(
+            source: script,
+            properties: scriptProperties(from: text["scriptproperties"])
+        )
+    }
+
+    private static func scriptProperties(from value: Any?) -> [String: SceneScriptPropertyValue] {
+        guard let dictionary = value as? [String: Any] else {
+            return [:]
+        }
+        var properties: [String: SceneScriptPropertyValue] = [:]
+        for (key, rawValue) in dictionary {
+            if let value = scriptPropertyValue(from: unwrappedValue(rawValue)) {
+                properties[key] = value
+            }
+        }
+        return properties
+    }
+
+    private static func scriptPropertyValue(from value: Any?) -> SceneScriptPropertyValue? {
+        if let bool = value as? Bool {
+            return .bool(bool)
+        }
+        if let number = value as? NSNumber {
+            return .number(number.doubleValue)
+        }
+        if let string = value as? String {
+            return .string(string)
+        }
+        return nil
     }
 
     private static func dynamicText(from value: Any?) -> SceneDynamicText? {

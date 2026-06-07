@@ -33,9 +33,9 @@ final class WallpaperPlayer {
         }
         let url = URL(filePath: entrypoint)
         let screens = NSScreen.screens
-        let screenFrames = screens.map(\.frame)
-        windows = try screens.map { screen in
-            try WallpaperWindow(asset: asset, url: url, frame: screen.frame, displayMode: displayMode)
+        let screenFrames = WallpaperScreenFrames.wallpaperFrames(for: screens)
+        windows = try screenFrames.map { frame in
+            try WallpaperWindow(asset: asset, url: url, frame: frame, displayMode: displayMode)
         }
         lastScreenFrames = screenFrames
         windows.forEach { $0.show() }
@@ -89,9 +89,9 @@ final class WallpaperPlayer {
         closeWindows()
         let url = URL(filePath: entrypoint)
         let screens = NSScreen.screens
-        let screenFrames = screens.map(\.frame)
-        windows = try screens.map { screen in
-            try WallpaperWindow(asset: asset, url: url, frame: screen.frame, displayMode: displayMode)
+        let screenFrames = WallpaperScreenFrames.wallpaperFrames(for: screens)
+        windows = try screenFrames.map { frame in
+            try WallpaperWindow(asset: asset, url: url, frame: frame, displayMode: displayMode)
         }
         lastScreenFrames = screenFrames
         windows.forEach { $0.show() }
@@ -215,7 +215,7 @@ final class WallpaperPlayer {
         guard activeAsset != nil else {
             return
         }
-        let currentScreenFrames = NSScreen.screens.map(\.frame)
+        let currentScreenFrames = WallpaperScreenFrames.wallpaperFrames(for: NSScreen.screens)
         guard WallpaperScreenFrames.shouldReopenWindows(
             previous: lastScreenFrames,
             current: currentScreenFrames
@@ -252,6 +252,27 @@ final class WallpaperPlayer {
 }
 
 enum WallpaperScreenFrames {
+    static func wallpaperFrames(for screens: [NSScreen]) -> [CGRect] {
+        screens.map { wallpaperFrame(screenFrame: $0.frame, visibleFrame: $0.visibleFrame) }
+    }
+
+    static func wallpaperFrame(screenFrame: CGRect, visibleFrame: CGRect) -> CGRect {
+        guard screenFrame.width > 0, screenFrame.height > 0,
+              visibleFrame.width > 0, visibleFrame.height > 0 else {
+            return screenFrame
+        }
+        let menuBarBottom = min(screenFrame.maxY, max(screenFrame.minY, visibleFrame.maxY))
+        guard menuBarBottom > screenFrame.minY else {
+            return screenFrame
+        }
+        return CGRect(
+            x: screenFrame.minX,
+            y: screenFrame.minY,
+            width: screenFrame.width,
+            height: menuBarBottom - screenFrame.minY
+        )
+    }
+
     static func shouldReopenWindows(previous: [CGRect], current: [CGRect]) -> Bool {
         normalized(previous) != normalized(current)
     }

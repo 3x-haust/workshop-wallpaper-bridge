@@ -188,8 +188,8 @@ public struct WallpaperScanner: Sendable {
                 ScanIssue(code: "scene_package_detected", message: analysis.userFacingSummary),
                 ScanIssue(
                     code: "scene_renderer_limited",
-                    message: "Scene playback supports 2D image layers, text layers, selected clock text, "
-                        + "keyframed motion, and selected effect motion; advanced shaders, particles, scripts, audio, "
+                    message: "Scene playback supports 2D image layers, text layers, selected text SceneScript, "
+                        + "keyframed motion, and selected effect motion; advanced shaders, particles, advanced scripts, audio, "
                         + "and video textures may differ."
                 )
             ]
