@@ -136,6 +136,18 @@ final class WallpaperPlayerSuspensionTests: XCTestCase {
         XCTAssertTrue(WallpaperScreenFrames.shouldReopenWindows(previous: previous, current: current))
     }
 
+    func testWallpaperWindowFrameAvoidsMenuBarButKeepsDockArea() {
+        // Given
+        let screenFrame = CGRect(x: 0, y: 0, width: 1470, height: 956)
+        let visibleFrame = CGRect(x: 0, y: 80, width: 1470, height: 846)
+
+        // When
+        let frame = WallpaperScreenFrames.wallpaperFrame(screenFrame: screenFrame, visibleFrame: visibleFrame)
+
+        // Then
+        XCTAssertEqual(frame, CGRect(x: 0, y: 0, width: 1470, height: 926))
+    }
+
     func testAutoPauseDoesNotHideWallpaperWindow() throws {
         // Given
         let source = try String(contentsOfFile: "Sources/WorkshopWallpaperBridgeApp/WallpaperPlayer.swift")

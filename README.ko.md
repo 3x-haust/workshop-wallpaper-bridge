@@ -60,7 +60,8 @@ Wallpaper Engine 프로젝트를 쓰는 경우:
 - **Auto-pause behind apps**는 선택 옵션입니다.
 - 설정창을 닫아도 재생은 멈추지 않습니다.
 - **Open at Login**을 켜면 로그인 후 마지막 월페이퍼를 복구합니다.
-- **Play on Desktop**은 동영상 재생 뒤에 보이는 정적 macOS 데스크톱 fallback 이미지도 갱신합니다. 그래서 Dock/Space 전환 중 이전 배경화면이 드러나지 않습니다.
+- **Play on Desktop**은 macOS 데스크톱 사진을 바꾸지 않습니다. 그래서 투명 메뉴 바 색은 현재 시스템 배경화면 기준으로 유지됩니다.
+- macOS 데스크톱 및 Lock Screen 정적 이미지를 실제로 바꾸고 싶을 때만 **Set Still Wallpaper**를 사용합니다.
 - **Remove**는 Mac 라이브러리에 복사된 항목만 삭제합니다. 원본 복사 폴더나 원본 영상은 건드리지 않습니다.
 
 가져온 파일은 아래 위치에 저장됩니다.
@@ -100,7 +101,7 @@ scene 지원은 보수적입니다. 기본 image-layer와 text-only scene은 동
 
 화면 보호기가 언제 시작되는지는 macOS가 제어합니다. 시작 시간과 암호 요구 시간은 System Settings > Lock Screen에서 정합니다. macOS가 선택된 화면 보호기를 시작하기 전까지는 일반 정적 잠금화면 배경이 보입니다.
 
-**Set Still Wallpaper**로 정적 데스크톱 배경화면도 명시적으로 설정할 수 있습니다. MP4, MOV, M4V 파일은 작은 Workshop preview 대신 동영상에서 한 프레임을 추출해 사용합니다. **Play on Desktop**도 전환 fallback을 위해 같은 정적 이미지 경로를 사용하지만, **Set Still Wallpaper**를 누르거나 화면 보호기 연동을 켜지 않는 한 Lock Screen cache는 쓰지 않습니다.
+**Set Still Wallpaper**로 정적 데스크톱 배경화면도 명시적으로 설정할 수 있습니다. MP4, MOV, M4V 파일은 작은 Workshop preview 대신 동영상에서 한 프레임을 추출해 사용합니다. **Play on Desktop**은 의도적으로 macOS 데스크톱 사진을 그대로 둡니다. 그래서 애니메이션 재생 중 메뉴 바 색이 갑자기 바뀌는 일을 피합니다.
 
 ## 소스에서 빌드
 
