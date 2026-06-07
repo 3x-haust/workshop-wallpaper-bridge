@@ -103,6 +103,213 @@ final class LibraryStoreTests: XCTestCase {
         XCTAssertEqual(imported.supportStatus, .needsConversion)
     }
 
+    func testInstallSceneRenderCacheCopiesVideoInsideImportedSceneDirectory() throws {
+        // Given
+        let store = LibraryStore(root: try Fixture.makeTempDirectory())
+        let project = try makeImportedProjectDirectory(in: store.root, id: "scene-cache")
+        let scenePackage = project.appending(path: "scene.pkg")
+        try Fixture.writeScenePackage(
+            to: scenePackage,
+            sceneJSON: #"{"objects":[{"text":{"value":"HELLO"},"size":"320 120"}]}"#
+        )
+        let asset = WallpaperAsset(
+            id: "scene-cache",
+            title: "Scene Cache",
+            kind: .scene,
+            supportStatus: .playable,
+            source: .manualFolder,
+            projectDirectory: project.path,
+            entrypoint: scenePackage.path,
+            thumbnail: nil,
+            workshopId: "scene-cache",
+            redistributionAllowed: false,
+            issues: []
+        )
+        try store.replaceAsset(asset)
+        let sourceVideo = try Fixture.makeTempDirectory().appending(path: "windows-reference.mp4")
+        FileManager.default.createFile(atPath: sourceVideo.path, contents: Data([1, 2, 3]))
+
+        // When
+        let updated = try store.installSceneRenderCache(assetID: asset.id, videoURL: sourceVideo)
+
+        // Then
+        let cacheURL = SceneRenderCache.videoURL(in: project)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: cacheURL.path))
+        XCTAssertEqual(try Data(contentsOf: cacheURL), Data([1, 2, 3]))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: sourceVideo.path))
+        XCTAssertEqual(updated.supportStatus, .playable)
+        XCTAssertTrue(updated.issues.contains { $0.code == SceneRenderCache.issueCode })
+        XCTAssertEqual(SceneRenderCache.existingVideoURL(in: project)?.path, cacheURL.path)
+    }
+
+    func testInstallSceneRenderCacheReplacesStaleCacheCandidates() throws {
+        // Given
+        let store = LibraryStore(root: try Fixture.makeTempDirectory())
+        let project = try makeImportedProjectDirectory(in: store.root, id: "scene-cache-replace")
+        let scenePackage = project.appending(path: "scene.pkg")
+        try Fixture.writeScenePackage(
+            to: scenePackage,
+            sceneJSON: #"{"objects":[{"text":{"value":"HELLO"},"size":"320 120"}]}"#
+        )
+        let asset = WallpaperAsset(
+            id: "scene-cache-replace",
+            title: "Scene Cache Replace",
+            kind: .scene,
+            supportStatus: .playable,
+            source: .manualFolder,
+            projectDirectory: project.path,
+            entrypoint: scenePackage.path,
+            thumbnail: nil,
+            workshopId: "scene-cache-replace",
+            redistributionAllowed: false,
+            issues: []
+        )
+        try store.replaceAsset(asset)
+        let cacheDirectory = SceneRenderCache.cacheDirectory(in: project)
+        try FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
+        let stalePreferred = SceneRenderCache.videoURL(in: project, fileExtension: "mp4")
+        let staleLegacy = project.appending(path: "render-cache.mov")
+        let staleRendered = project.appending(path: "rendered.mp4")
+        FileManager.default.createFile(atPath: stalePreferred.path, contents: Data([0]))
+        FileManager.default.createFile(atPath: staleLegacy.path, contents: Data([1]))
+        FileManager.default.createFile(atPath: staleRendered.path, contents: Data([2]))
+        let sourceVideo = try Fixture.makeTempDirectory().appending(path: "windows-reference.mov")
+        FileManager.default.createFile(atPath: sourceVideo.path, contents: Data([3, 4, 5]))
+
+        // When
+        _ = try store.installSceneRenderCache(assetID: asset.id, videoURL: sourceVideo)
+
+        // Then
+        let cacheURL = SceneRenderCache.videoURL(in: project, fileExtension: "mov")
+        XCTAssertEqual(try Data(contentsOf: cacheURL), Data([3, 4, 5]))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: stalePreferred.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: staleLegacy.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: staleRendered.path))
+        XCTAssertEqual(SceneRenderCache.existingVideoURL(in: project)?.path, cacheURL.path)
+    }
+
+    func testInstallSceneRenderCacheRejectsNonSceneAsset() throws {
+        // Given
+        let sourceRoot = try Fixture.makeTempDirectory()
+        let video = sourceRoot.appending(path: "loop.mp4")
+        FileManager.default.createFile(atPath: video.path, contents: Data([1]))
+        let store = LibraryStore(root: try Fixture.makeTempDirectory())
+        let imported = try store.importVideoFile(video)
+
+        // When / Then
+        XCTAssertThrowsError(try store.installSceneRenderCache(assetID: imported.id, videoURL: video)) { error in
+            XCTAssertEqual(error as? LibraryStoreError, .assetIsNotScene(imported.id))
+        }
+    }
+
+    func testInstallSceneRenderCacheRejectsSymlinkedCacheDirectory() throws {
+        // Given
+        let store = LibraryStore(root: try Fixture.makeTempDirectory())
+        let project = try makeImportedProjectDirectory(in: store.root, id: "scene-cache-symlink-dir")
+        let scenePackage = project.appending(path: "scene.pkg")
+        try Fixture.writeScenePackage(
+            to: scenePackage,
+            sceneJSON: #"{"objects":[{"text":{"value":"HELLO"},"size":"320 120"}]}"#
+        )
+        let asset = WallpaperAsset(
+            id: "scene-cache-symlink-dir",
+            title: "Scene Cache Symlink Dir",
+            kind: .scene,
+            supportStatus: .playable,
+            source: .manualFolder,
+            projectDirectory: project.path,
+            entrypoint: scenePackage.path,
+            thumbnail: nil,
+            workshopId: "scene-cache-symlink-dir",
+            redistributionAllowed: false,
+            issues: []
+        )
+        try store.replaceAsset(asset)
+        let outsideDirectory = try Fixture.makeTempDirectory()
+        try FileManager.default.createSymbolicLink(
+            at: SceneRenderCache.cacheDirectory(in: project),
+            withDestinationURL: outsideDirectory
+        )
+        let sourceVideo = try Fixture.makeTempDirectory().appending(path: "windows-reference.mp4")
+        FileManager.default.createFile(atPath: sourceVideo.path, contents: Data([1]))
+
+        // When / Then
+        XCTAssertThrowsError(try store.installSceneRenderCache(assetID: asset.id, videoURL: sourceVideo)) { error in
+            XCTAssertEqual(error as? LibraryStoreError, .unsafeSceneRenderCacheDirectory(asset.id))
+        }
+    }
+
+    func testSceneRenderCacheKeepsUnsupportedScenePlayableAfterLoadRepair() throws {
+        // Given
+        let store = LibraryStore(root: try Fixture.makeTempDirectory())
+        let project = try makeImportedProjectDirectory(in: store.root, id: "scene-cache-unsupported")
+        let scenePackage = project.appending(path: "scene.pkg")
+        try Fixture.writeScenePackage(
+            to: scenePackage,
+            sceneJSON: #"{"objects":[{"image":"models/background.json"}]}"#,
+            extraEntries: [
+                (path: "models/background.json", data: Data(#"{"material":"materials/background.json"}"#.utf8)),
+                (path: "materials/background.json", data: Data(#"{"passes":[{"textures":["background"]}]}"#.utf8)),
+                (path: "materials/background.tex", data: Data([1, 2, 3]))
+            ]
+        )
+        let asset = WallpaperAsset(
+            id: "scene-cache-unsupported",
+            title: "Scene Cache Unsupported",
+            kind: .scene,
+            supportStatus: .unsupported,
+            source: .manualFolder,
+            projectDirectory: project.path,
+            entrypoint: scenePackage.path,
+            thumbnail: nil,
+            workshopId: "scene-cache-unsupported",
+            redistributionAllowed: false,
+            issues: []
+        )
+        try store.replaceAsset(asset)
+        let sourceVideo = try Fixture.makeTempDirectory().appending(path: "windows-reference.mp4")
+        FileManager.default.createFile(atPath: sourceVideo.path, contents: Data([1, 2, 3]))
+
+        // When
+        _ = try store.installSceneRenderCache(assetID: asset.id, videoURL: sourceVideo)
+        let repaired = try XCTUnwrap(store.load().assets.first)
+
+        // Then
+        XCTAssertEqual(repaired.supportStatus, .playable)
+        XCTAssertEqual(repaired.redistributionAllowed, false)
+        XCTAssertTrue(repaired.issues.contains { $0.code == SceneRenderCache.issueCode })
+        XCTAssertTrue(repaired.issues.contains { $0.code == "scene_renderer_limited" })
+    }
+
+    func testSceneRenderCacheRejectsSymlinkedVideoCache() throws {
+        // Given
+        let project = try Fixture.makeTempDirectory()
+        let cacheDirectory = SceneRenderCache.cacheDirectory(in: project)
+        try FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
+        let outsideVideo = try Fixture.makeTempDirectory().appending(path: "outside.mp4")
+        FileManager.default.createFile(atPath: outsideVideo.path, contents: Data([1]))
+        let symlink = SceneRenderCache.videoURL(in: project)
+        try FileManager.default.createSymbolicLink(at: symlink, withDestinationURL: outsideVideo)
+
+        // Then
+        XCTAssertNil(SceneRenderCache.existingVideoURL(in: project))
+    }
+
+    func testSceneRenderCacheRejectsVideoThroughSymlinkedCacheDirectory() throws {
+        // Given
+        let project = try Fixture.makeTempDirectory()
+        let outsideDirectory = try Fixture.makeTempDirectory()
+        let outsideVideo = SceneRenderCache.videoURL(in: outsideDirectory)
+        FileManager.default.createFile(atPath: outsideVideo.path, contents: Data([1]))
+        try FileManager.default.createSymbolicLink(
+            at: SceneRenderCache.cacheDirectory(in: project),
+            withDestinationURL: outsideDirectory
+        )
+
+        // Then
+        XCTAssertNil(SceneRenderCache.existingVideoURL(in: project))
+    }
+
     func testRemoveAssetDeletesLibraryDirectoryAndManifestEntry() throws {
         // Given
         let sourceRoot = try Fixture.makeTempDirectory()

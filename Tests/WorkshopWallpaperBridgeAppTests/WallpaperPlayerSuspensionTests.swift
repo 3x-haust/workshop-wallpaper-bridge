@@ -226,6 +226,16 @@ final class WallpaperPlayerSuspensionTests: XCTestCase {
         XCTAssertTrue(sceneSource.contains("sceneLayer.backgroundColor = nil"))
     }
 
+    func testSceneRenderCacheUsesVideoPlaybackBeforeNativeSceneRenderer() throws {
+        // Given
+        let source = try String(contentsOfFile: "Sources/WorkshopWallpaperBridgeApp/WallpaperPlayer.swift")
+
+        // Then
+        XCTAssertTrue(source.contains("SceneRenderCache.existingVideoURL"))
+        XCTAssertTrue(source.contains("return VideoWallpaperView("))
+        XCTAssertTrue(source.contains("return try SceneWallpaperView("))
+    }
+
     @MainActor
     func testSceneWallpaperInitializesTextOnlySceneWithoutPreviewOrTextures() throws {
         // Given

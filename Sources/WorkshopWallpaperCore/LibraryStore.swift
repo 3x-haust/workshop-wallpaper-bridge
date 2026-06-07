@@ -102,6 +102,81 @@ public struct LibraryStore: Sendable {
         try save(manifest)
     }
 
+    public func installSceneRenderCache(assetID: WallpaperAsset.ID, videoURL: URL) throws -> WallpaperAsset {
+        let source = videoURL.standardizedFileURL
+        guard SceneRenderCache.isPlayableVideoFile(source) else {
+            if isRegularFile(source) {
+                throw LibraryStoreError.unsupportedVideoExtension(source.pathExtension.lowercased())
+            }
+            throw LibraryStoreError.notRegularFile(source.path)
+        }
+
+        let manifest = try load()
+        guard let asset = manifest.assets.first(where: { $0.id == assetID }) else {
+            throw LibraryStoreError.missingAsset(assetID)
+        }
+        guard asset.kind == .scene else {
+            throw LibraryStoreError.assetIsNotScene(assetID)
+        }
+
+        let projectDirectory = URL(filePath: asset.projectDirectory).standardizedFileURL
+        guard isInsideAssetsRoot(projectDirectory) else {
+            throw LibraryStoreError.assetOutsideLibrary(assetID)
+        }
+
+        let cacheDirectory = SceneRenderCache.cacheDirectory(in: projectDirectory)
+        guard !isSymbolicLink(cacheDirectory) else {
+            throw LibraryStoreError.unsafeSceneRenderCacheDirectory(assetID)
+        }
+        try FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
+        guard isInside(cacheDirectory, parent: projectDirectory) else {
+            throw LibraryStoreError.unsafeSceneRenderCacheDirectory(assetID)
+        }
+        let destination = SceneRenderCache.videoURL(
+            in: projectDirectory,
+            fileExtension: source.pathExtension
+        )
+        if source.resolvingSymlinksInPath().path != destination.resolvingSymlinksInPath().path {
+            let temporary = cacheDirectory.appending(
+                path: ".\(SceneRenderCache.baseFileName)-\(UUID().uuidString).\(source.pathExtension)"
+            )
+            try FileManager.default.copyItem(at: source, to: temporary)
+            for cached in SceneRenderCache.cacheCandidates(in: projectDirectory)
+                where cached.path != destination.path && FileManager.default.fileExists(atPath: cached.path) {
+                try FileManager.default.removeItem(at: cached)
+            }
+            if FileManager.default.fileExists(atPath: destination.path) {
+                try FileManager.default.removeItem(at: destination)
+            }
+            try FileManager.default.moveItem(at: temporary, to: destination)
+        }
+
+        let cacheIssue = ScanIssue(
+            code: SceneRenderCache.issueCode,
+            message: "Scene playback uses a local rendered video cache for advanced engine features."
+        )
+        let updated = WallpaperAsset(
+            id: asset.id,
+            title: asset.title,
+            kind: asset.kind,
+            supportStatus: .playable,
+            source: asset.source,
+            projectDirectory: asset.projectDirectory,
+            entrypoint: asset.entrypoint,
+            thumbnail: asset.thumbnail,
+            workshopId: asset.workshopId,
+            redistributionAllowed: false,
+            issues: mergedIssues(asset.issues + [cacheIssue])
+        )
+        let updatedManifest = LibraryManifest(
+            generatedAt: Date(),
+            assets: (manifest.assets.filter { $0.id != assetID } + [updated])
+                .sorted { $0.id.localizedStandardCompare($1.id) == .orderedAscending }
+        )
+        try save(updatedManifest)
+        return updated
+    }
+
     public func removeAsset(id: WallpaperAsset.ID) throws {
         let manifest = try load()
         guard let removed = manifest.assets.first(where: { $0.id == id }) else {
@@ -149,6 +224,19 @@ public struct LibraryStore: Sendable {
             return false
         }
         return zip(rootComponents, urlComponents).allSatisfy { $0 == $1 }
+    }
+
+    private func isInside(_ url: URL, parent: URL) -> Bool {
+        let parentComponents = parent.standardizedFileURL.resolvingSymlinksInPath().pathComponents
+        let urlComponents = url.standardizedFileURL.resolvingSymlinksInPath().pathComponents
+        guard urlComponents.count > parentComponents.count else {
+            return false
+        }
+        return zip(parentComponents, urlComponents).allSatisfy { $0 == $1 }
+    }
+
+    private func isSymbolicLink(_ url: URL) -> Bool {
+        (try? FileManager.default.destinationOfSymbolicLink(atPath: url.path)) != nil
     }
 
     private func replaceDirectory(target: URL, replacement: URL, backup: URL) throws {
@@ -248,14 +336,26 @@ public struct LibraryStore: Sendable {
         guard !refreshed.isEmpty else {
             return asset
         }
-        let supportStatus: SupportStatus = SceneRenderPlanBuilder().canBuild(url: entrypointURL)
+        let hasRenderCache = SceneRenderCache.existingVideoURL(
+            in: URL(filePath: asset.projectDirectory)
+        ) != nil
+        let supportStatus: SupportStatus = hasRenderCache || SceneRenderPlanBuilder().canBuild(url: entrypointURL)
             ? .playable
             : .unsupported
         let preserved = asset.issues.filter { issue in
             issue.code != "scene_package_detected"
                 && issue.code != "scene_renderer_limited"
                 && issue.code != "scene_package_unreadable"
+                && issue.code != SceneRenderCache.issueCode
         }
+        let cacheIssues = hasRenderCache
+            ? [
+                ScanIssue(
+                    code: SceneRenderCache.issueCode,
+                    message: "Scene playback uses a local rendered video cache for advanced engine features."
+                )
+            ]
+            : []
         return WallpaperAsset(
             id: asset.id,
             title: asset.title,
@@ -266,8 +366,8 @@ public struct LibraryStore: Sendable {
             entrypoint: asset.entrypoint,
             thumbnail: asset.thumbnail,
             workshopId: asset.workshopId,
-            redistributionAllowed: asset.redistributionAllowed,
-            issues: mergedIssues(preserved + refreshed)
+            redistributionAllowed: hasRenderCache ? false : asset.redistributionAllowed,
+            issues: mergedIssues(preserved + refreshed + cacheIssues)
         )
     }
 
@@ -297,6 +397,10 @@ public struct LibraryStore: Sendable {
 public enum LibraryStoreError: Error, LocalizedError, Equatable {
     case notRegularFile(String)
     case unsupportedVideoExtension(String)
+    case missingAsset(String)
+    case assetIsNotScene(String)
+    case assetOutsideLibrary(String)
+    case unsafeSceneRenderCacheDirectory(String)
 
     public var errorDescription: String? {
         switch self {
@@ -306,6 +410,14 @@ public enum LibraryStoreError: Error, LocalizedError, Equatable {
             return ext.isEmpty
                 ? "This file has no supported video extension."
                 : ".\(ext) is not supported for manual video import."
+        case .missingAsset(let id):
+            return "No library asset exists for id \(id)."
+        case .assetIsNotScene(let id):
+            return "Asset \(id) is not a scene wallpaper."
+        case .assetOutsideLibrary(let id):
+            return "Asset \(id) is outside the managed library."
+        case .unsafeSceneRenderCacheDirectory(let id):
+            return "Scene render cache directory for asset \(id) is unsafe."
         }
     }
 }

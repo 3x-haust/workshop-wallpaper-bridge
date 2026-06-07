@@ -24,6 +24,8 @@ struct WWBCtl {
             try importAssets(arguments: Array(arguments.dropFirst()))
         case "import-video":
             try importVideo(arguments: Array(arguments.dropFirst()))
+        case "attach-scene-video":
+            try attachSceneVideo(arguments: Array(arguments.dropFirst()))
         case "remove":
             try remove(arguments: Array(arguments.dropFirst()))
         case "convert":
@@ -74,6 +76,20 @@ struct WWBCtl {
         let store = try store(from: arguments)
         let imported = try store.importVideoFile(URL(filePath: path))
         print("imported \(imported.title) into \(store.root.path)")
+    }
+
+    private static func attachSceneVideo(arguments: [String]) throws {
+        guard arguments.count >= 2 else {
+            throw CLIError.invalidAttachSceneVideoUsage
+        }
+        let store = try store(from: arguments)
+        let updated = try store.installSceneRenderCache(
+            assetID: arguments[0],
+            videoURL: URL(filePath: arguments[1])
+        )
+        let projectDirectory = URL(filePath: updated.projectDirectory)
+        let cache = SceneRenderCache.existingVideoURL(in: projectDirectory)?.path ?? projectDirectory.path
+        print("attached scene render cache for \(updated.title) at \(cache)")
     }
 
     private static func remove(arguments: [String]) throws {
@@ -336,6 +352,7 @@ struct WWBCtl {
         wwbctl scan <folder> [--out <index.json>]
         wwbctl import <folder> [--library <folder>]
         wwbctl import-video <video-file> [--library <folder>]
+        wwbctl attach-scene-video <asset-id> <video-file> [--library <folder>]
         wwbctl remove <asset-id> [--library <folder>]
         wwbctl convert <input-video> --out <output.mp4>
         wwbctl scene-info <scene.pkg>
@@ -351,6 +368,7 @@ private enum CLIError: Error, LocalizedError {
     case missingPath
     case missingAssetId
     case invalidConvertUsage
+    case invalidAttachSceneVideoUsage
 
     var errorDescription: String? {
         switch self {
@@ -362,6 +380,8 @@ private enum CLIError: Error, LocalizedError {
             return "missing asset id"
         case .invalidConvertUsage:
             return "usage: wwbctl convert <input-video> --out <output.mp4>"
+        case .invalidAttachSceneVideoUsage:
+            return "usage: wwbctl attach-scene-video <asset-id> <video-file> [--library <folder>]"
         }
     }
 }
