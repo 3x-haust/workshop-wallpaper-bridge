@@ -118,8 +118,8 @@ final class DocumentationTests: XCTestCase {
     func testPackagedAppDefaultsToCurrentReleaseVersion() throws {
         let script = try String(contentsOfFile: "Scripts/package-app.sh")
 
-        XCTAssertTrue(script.contains("APP_VERSION=\"${APP_VERSION:-1.1.1}\""))
-        XCTAssertTrue(script.contains("BUNDLE_VERSION=\"${BUNDLE_VERSION:-9}\""))
+        XCTAssertTrue(script.contains("APP_VERSION=\"${APP_VERSION:-1.1.2}\""))
+        XCTAssertTrue(script.contains("BUNDLE_VERSION=\"${BUNDLE_VERSION:-10}\""))
     }
 
     private func assertHeadings(_ headings: [String], appearInOrderIn readme: String) {
