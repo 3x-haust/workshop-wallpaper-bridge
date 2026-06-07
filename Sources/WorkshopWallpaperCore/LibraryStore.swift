@@ -153,13 +153,18 @@ public struct LibraryStore: Sendable {
 
         let cacheIssue = ScanIssue(
             code: SceneRenderCache.issueCode,
-            message: "Scene playback uses a local rendered video cache for advanced engine features."
+            message: "A local rendered scene video cache is attached for reference only; desktop scene playback uses the native renderer."
         )
+        let nativeStatus = asset.entrypoint.map { entrypoint in
+            SceneRenderPlanBuilder().canBuild(url: URL(filePath: entrypoint))
+        } == true
+            ? SupportStatus.playable
+            : asset.supportStatus
         let updated = WallpaperAsset(
             id: asset.id,
             title: asset.title,
             kind: asset.kind,
-            supportStatus: .playable,
+            supportStatus: nativeStatus,
             source: asset.source,
             projectDirectory: asset.projectDirectory,
             entrypoint: asset.entrypoint,
@@ -339,7 +344,7 @@ public struct LibraryStore: Sendable {
         let hasRenderCache = SceneRenderCache.existingVideoURL(
             in: URL(filePath: asset.projectDirectory)
         ) != nil
-        let supportStatus: SupportStatus = hasRenderCache || SceneRenderPlanBuilder().canBuild(url: entrypointURL)
+        let supportStatus: SupportStatus = SceneRenderPlanBuilder().canBuild(url: entrypointURL)
             ? .playable
             : .unsupported
         let preserved = asset.issues.filter { issue in
@@ -352,7 +357,7 @@ public struct LibraryStore: Sendable {
             ? [
                 ScanIssue(
                     code: SceneRenderCache.issueCode,
-                    message: "Scene playback uses a local rendered video cache for advanced engine features."
+                    message: "A local rendered scene video cache is attached for reference only; desktop scene playback uses the native renderer."
                 )
             ]
             : []
