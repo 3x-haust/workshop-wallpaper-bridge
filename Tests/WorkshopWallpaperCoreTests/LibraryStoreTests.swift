@@ -139,6 +139,10 @@ final class LibraryStoreTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: sourceVideo.path))
         XCTAssertEqual(updated.supportStatus, .playable)
         XCTAssertTrue(updated.issues.contains { $0.code == SceneRenderCache.issueCode })
+        XCTAssertTrue(updated.issues.contains {
+            $0.message.contains("reference only")
+                && $0.message.contains("native renderer")
+        })
         XCTAssertEqual(SceneRenderCache.existingVideoURL(in: project)?.path, cacheURL.path)
     }
 
@@ -239,7 +243,7 @@ final class LibraryStoreTests: XCTestCase {
         }
     }
 
-    func testSceneRenderCacheKeepsUnsupportedScenePlayableAfterLoadRepair() throws {
+    func testSceneRenderCacheDoesNotMakeUnsupportedScenePlayableAfterLoadRepair() throws {
         // Given
         let store = LibraryStore(root: try Fixture.makeTempDirectory())
         let project = try makeImportedProjectDirectory(in: store.root, id: "scene-cache-unsupported")
@@ -275,7 +279,7 @@ final class LibraryStoreTests: XCTestCase {
         let repaired = try XCTUnwrap(store.load().assets.first)
 
         // Then
-        XCTAssertEqual(repaired.supportStatus, .playable)
+        XCTAssertEqual(repaired.supportStatus, .unsupported)
         XCTAssertEqual(repaired.redistributionAllowed, false)
         XCTAssertTrue(repaired.issues.contains { $0.code == SceneRenderCache.issueCode })
         XCTAssertTrue(repaired.issues.contains { $0.code == "scene_renderer_limited" })

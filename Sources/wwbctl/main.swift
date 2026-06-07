@@ -89,7 +89,7 @@ struct WWBCtl {
         )
         let projectDirectory = URL(filePath: updated.projectDirectory)
         let cache = SceneRenderCache.existingVideoURL(in: projectDirectory)?.path ?? projectDirectory.path
-        print("attached scene render cache for \(updated.title) at \(cache)")
+        print("attached scene reference cache for \(updated.title) at \(cache); desktop scene playback uses the native renderer")
     }
 
     private static func remove(arguments: [String]) throws {
@@ -352,7 +352,7 @@ struct WWBCtl {
         wwbctl scan <folder> [--out <index.json>]
         wwbctl import <folder> [--library <folder>]
         wwbctl import-video <video-file> [--library <folder>]
-        wwbctl attach-scene-video <asset-id> <video-file> [--library <folder>]
+        wwbctl attach-scene-video <asset-id> <video-file> [--library <folder>]  # reference cache only
         wwbctl remove <asset-id> [--library <folder>]
         wwbctl convert <input-video> --out <output.mp4>
         wwbctl scene-info <scene.pkg>
@@ -381,7 +381,7 @@ private enum CLIError: Error, LocalizedError {
         case .invalidConvertUsage:
             return "usage: wwbctl convert <input-video> --out <output.mp4>"
         case .invalidAttachSceneVideoUsage:
-            return "usage: wwbctl attach-scene-video <asset-id> <video-file> [--library <folder>]"
+            return "usage: wwbctl attach-scene-video <asset-id> <video-file> [--library <folder>] (stores a reference cache only; desktop scene playback uses the native renderer)"
         }
     }
 }

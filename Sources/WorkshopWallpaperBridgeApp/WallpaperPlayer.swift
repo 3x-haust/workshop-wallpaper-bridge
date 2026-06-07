@@ -371,14 +371,6 @@ private final class WallpaperWindow {
             return ImageWallpaperView(image: image, frame: contentFrame, displayMode: displayMode)
         case .scene:
             let previewURL = asset.thumbnail.map { URL(filePath: $0) }
-            if let renderCacheURL = SceneRenderCache.existingVideoURL(in: URL(filePath: asset.projectDirectory)) {
-                return VideoWallpaperView(
-                    url: renderCacheURL,
-                    fallbackImageURL: previewURL,
-                    frame: contentFrame,
-                    displayMode: displayMode
-                )
-            }
             return try SceneWallpaperView(
                 url: url,
                 previewURL: previewURL,

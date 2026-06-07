@@ -213,6 +213,14 @@ final class SceneWallpaperView: NSView,
         resetShaderEffectClock()
         for layerPlan in plan.layers {
             if layerPlan.isEffectOnly {
+                guard let contentLayer = buildEffectOnlyShaderLayer(for: layerPlan) else {
+                    continue
+                }
+                contentLayer.name = layerPlan.name
+                contentLayer.opacity = Float(max(0, min(layerPlan.alpha * opacityMultiplier(for: layerPlan), 1)))
+                configure(contentLayer, with: layerPlan)
+                sceneLayer.addSublayer(contentLayer)
+                contentLayers.append(contentLayer)
                 continue
             }
             let contentLayer: CALayer
@@ -256,6 +264,48 @@ final class SceneWallpaperView: NSView,
         }
         configureTextRefreshTimer()
         startShaderEffectTimerIfNeeded()
+    }
+
+    private func buildEffectOnlyShaderLayer(for layerPlan: SceneLayer) -> CALayer? {
+        let effects = Self.effectOnlyShaderEffects(for: layerPlan)
+        guard !effects.isEmpty,
+              let image = effectOnlyBaseImage(for: layerPlan) else {
+            return nil
+        }
+        let effectLayer = CALayer()
+        effectLayer.contents = image
+        effectLayer.contentsGravity = .resize
+        effectLayer.contentsScale = NSScreen.main?.backingScaleFactor ?? 2
+        effectLayer.minificationFilter = .linear
+        effectLayer.magnificationFilter = .linear
+        registerShaderEffects(for: effectLayer, image: image, effects: effects)
+        return effectLayer
+    }
+
+    private func effectOnlyBaseImage(for layerPlan: SceneLayer) -> CGImage? {
+        let size = CGSize(
+            width: max(1, abs(layerPlan.size.width)),
+            height: max(1, abs(layerPlan.size.height))
+        )
+        let sceneRect = CGRect(
+            x: layerPlan.origin.x - (size.width / 2),
+            y: layerPlan.origin.y - (size.height / 2),
+            width: size.width,
+            height: size.height
+        )
+        return snapshotSceneLayer(in: sceneRect, outputSize: size)
+            ?? Self.transparentImage(size: size)
+    }
+
+    private func snapshotSceneLayer(in sceneRect: CGRect, outputSize: CGSize) -> CGImage? {
+        guard !contentLayers.isEmpty,
+              let context = Self.bitmapContext(size: outputSize) else {
+            return nil
+        }
+        context.clear(CGRect(origin: .zero, size: outputSize))
+        context.translateBy(x: -sceneRect.minX, y: -sceneRect.minY)
+        sceneLayer.render(in: context)
+        return context.makeImage()
     }
 
     private func configureTextRefreshTimer() {
@@ -475,6 +525,14 @@ final class SceneWallpaperView: NSView,
         guard !effects.isEmpty else {
             return
         }
+        registerShaderEffects(for: layer, image: image, effects: effects)
+    }
+
+    private func registerShaderEffects(
+        for layer: CALayer,
+        image: CGImage,
+        effects: [SceneLayerEffectSetting]
+    ) {
         shaderEffectLayers.append(ShaderEffectLayer(
             layer: layer,
             baseImage: CIImage(cgImage: image),
@@ -569,6 +627,41 @@ final class SceneWallpaperView: NSView,
                 return false
             }
         }
+    }
+
+    nonisolated static func effectOnlyShaderEffects(
+        for layer: SceneLayer
+    ) -> [SceneLayerEffectSetting] {
+        guard layer.isEffectOnly else {
+            return []
+        }
+        return shaderRenderableEffects(from: layer.effectSettings)
+    }
+
+    nonisolated static func shouldBuildEffectOnlyShaderLayer(for layer: SceneLayer) -> Bool {
+        !effectOnlyShaderEffects(for: layer).isEmpty
+    }
+
+    private static func transparentImage(size: CGSize) -> CGImage? {
+        guard let context = bitmapContext(size: size) else {
+            return nil
+        }
+        context.clear(CGRect(origin: .zero, size: size))
+        return context.makeImage()
+    }
+
+    private static func bitmapContext(size: CGSize) -> CGContext? {
+        let width = Int(max(1, ceil(size.width)))
+        let height = Int(max(1, ceil(size.height)))
+        return CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )
     }
 
     nonisolated static func isLayerAnimatedEffect(_ effect: SceneLayerEffect) -> Bool {
