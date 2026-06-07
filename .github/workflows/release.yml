@@ -53,7 +53,8 @@ jobs:
       - name: Run tests
         run: swift test
 
-      - name: Validate release signing secrets
+      - name: Resolve release signing mode
+        id: signing
         env:
           MACOS_DEVELOPER_ID_APPLICATION_CERTIFICATE_BASE64: ${{ secrets.MACOS_DEVELOPER_ID_APPLICATION_CERTIFICATE_BASE64 }}
           MACOS_DEVELOPER_ID_APPLICATION_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_DEVELOPER_ID_APPLICATION_CERTIFICATE_PASSWORD }}
@@ -62,7 +63,15 @@ jobs:
           MACOS_NOTARY_PASSWORD: ${{ secrets.MACOS_NOTARY_PASSWORD }}
         run: |
           set -euo pipefail
-          missing=0
+          required=(
+            MACOS_DEVELOPER_ID_APPLICATION_CERTIFICATE_BASE64
+            MACOS_DEVELOPER_ID_APPLICATION_CERTIFICATE_PASSWORD
+            MACOS_NOTARY_APPLE_ID
+            MACOS_NOTARY_TEAM_ID
+            MACOS_NOTARY_PASSWORD
+          )
+          present=0
+          missing=()
           for name in \
             MACOS_DEVELOPER_ID_APPLICATION_CERTIFICATE_BASE64 \
             MACOS_DEVELOPER_ID_APPLICATION_CERTIFICATE_PASSWORD \
@@ -71,13 +80,35 @@ jobs:
             MACOS_NOTARY_PASSWORD
           do
             if [ -z "${!name:-}" ]; then
-              echo "::error::$name is required for a signed and notarized public release."
-              missing=1
+              missing+=("$name")
+            else
+              present=$((present + 1))
             fi
           done
-          exit "$missing"
+
+          if [ "$present" -eq 0 ]; then
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Release signing secrets are absent; publishing an unsigned DMG. Configure ${required[*]} for signed and notarized releases."
+            {
+              echo "### Release signing"
+              echo
+              echo "Signing secrets are absent, so this run will publish an unsigned DMG."
+              echo "Configure all required macOS signing and notarization secrets to publish a Developer ID signed and notarized DMG."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          if [ "${#missing[@]}" -gt 0 ]; then
+            for name in "${missing[@]}"; do
+              echo "::error::$name is required when any release signing secret is configured."
+            done
+            exit 1
+          fi
+
+          echo "available=true" >> "$GITHUB_OUTPUT"
 
       - name: Import Developer ID certificate
+        if: steps.signing.outputs.available == 'true'
         env:
           MACOS_DEVELOPER_ID_APPLICATION_CERTIFICATE_BASE64: ${{ secrets.MACOS_DEVELOPER_ID_APPLICATION_CERTIFICATE_BASE64 }}
           MACOS_DEVELOPER_ID_APPLICATION_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_DEVELOPER_ID_APPLICATION_CERTIFICATE_PASSWORD }}
@@ -122,10 +153,10 @@ jobs:
         env:
           APP_VERSION: ${{ steps.version.outputs.version }}
           BUNDLE_VERSION: ${{ github.run_number }}
-          SIGN_IDENTITY: Developer ID Application
-          NOTARY_PROFILE: workshop-wallpaper-bridge-notary
-          REQUIRE_SIGNING: "1"
-          REQUIRE_NOTARIZATION: "1"
+          SIGN_IDENTITY: ${{ steps.signing.outputs.available == 'true' && 'Developer ID Application' || '' }}
+          NOTARY_PROFILE: ${{ steps.signing.outputs.available == 'true' && 'workshop-wallpaper-bridge-notary' || '' }}
+          REQUIRE_SIGNING: ${{ steps.signing.outputs.available == 'true' && '1' || '0' }}
+          REQUIRE_NOTARIZATION: ${{ steps.signing.outputs.available == 'true' && '1' || '0' }}
         run: bash Scripts/package-app.sh
 
       - name: Create checksum
