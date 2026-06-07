@@ -15,15 +15,37 @@ APP_VERSION="${APP_VERSION:-1.1.3}"
 BUNDLE_VERSION="${BUNDLE_VERSION:-10}"
 SIGN_IDENTITY="${SIGN_IDENTITY:-}"
 NOTARY_PROFILE="${NOTARY_PROFILE:-}"
+NOTARY_KEYCHAIN="${NOTARY_KEYCHAIN:-}"
 REQUIRE_SIGNING="${REQUIRE_SIGNING:-0}"
+REQUIRE_NOTARIZATION="${REQUIRE_NOTARIZATION:-0}"
 DMG_STAGING=""
+DMG_VERIFY_DIR=""
+DMG_VERIFY_MOUNT=""
 
 cleanup() {
+  if [ -n "$DMG_VERIFY_MOUNT" ] && mount | grep -q "on $DMG_VERIFY_MOUNT "; then
+    hdiutil detach "$DMG_VERIFY_MOUNT" >/dev/null 2>&1 || true
+  fi
+  if [ -n "$DMG_VERIFY_DIR" ] && [ -d "$DMG_VERIFY_DIR" ]; then
+    rm -rf "$DMG_VERIFY_DIR"
+  fi
   if [ -n "$DMG_STAGING" ] && [ -d "$DMG_STAGING" ]; then
     rm -rf "$DMG_STAGING"
   fi
 }
 trap cleanup EXIT
+
+require_notarization_inputs() {
+  if [ "$REQUIRE_NOTARIZATION" = "1" ] && [ -z "$NOTARY_PROFILE" ]; then
+    printf '%s\n' "NOTARY_PROFILE is required when REQUIRE_NOTARIZATION=1." >&2
+    exit 1
+  fi
+
+  if [ -n "$NOTARY_PROFILE" ] && [ -z "$SIGN_IDENTITY" ]; then
+    printf '%s\n' "NOTARY_PROFILE requires SIGN_IDENTITY because Apple notarization needs a signed app." >&2
+    exit 1
+  fi
+}
 
 strip_quarantine_metadata() {
   local path
@@ -56,6 +78,38 @@ assert_no_quarantine_metadata() {
   fi
 }
 
+verify_gatekeeper_accepts_quarantined_app_from_dmg() {
+  local mounted_app
+  local copied_app
+  local quarantine_stamp
+
+  DMG_VERIFY_DIR="$(mktemp -d)"
+  DMG_VERIFY_MOUNT="$DMG_VERIFY_DIR/mount"
+  mkdir -p "$DMG_VERIFY_MOUNT"
+
+  hdiutil attach \
+    -nobrowse \
+    -readonly \
+    -mountpoint "$DMG_VERIFY_MOUNT" \
+    "$DMG_PATH" >/dev/null
+
+  mounted_app="$DMG_VERIFY_MOUNT/$APP_NAME.app"
+  copied_app="$DMG_VERIFY_DIR/$APP_NAME.app"
+  if [ ! -d "$mounted_app" ]; then
+    printf '%s\n' "notarized DMG does not contain $APP_NAME.app." >&2
+    exit 1
+  fi
+
+  cp -R "$mounted_app" "$copied_app"
+  hdiutil detach "$DMG_VERIFY_MOUNT" >/dev/null
+  DMG_VERIFY_MOUNT=""
+
+  quarantine_stamp="$(printf '%x' "$(date +%s)")"
+  xattr -w com.apple.quarantine "0081;${quarantine_stamp};WorkshopWallpaperBridge;https://github.com/3x-haust/workshop-wallpaper-bridge" "$copied_app"
+  spctl --assess --type execute --verbose=4 "$copied_app"
+}
+
+require_notarization_inputs
 cd "$ROOT"
 swift build -c release
 rm -rf "$ROOT/dist"
@@ -162,12 +216,13 @@ if [ -n "$SIGN_IDENTITY" ]; then
   codesign --verify --verbose=2 "$DMG_PATH"
 fi
 if [ -n "$NOTARY_PROFILE" ]; then
-  if [ -z "$SIGN_IDENTITY" ]; then
-    printf '%s\n' "NOTARY_PROFILE requires SIGN_IDENTITY because Apple notarization needs a signed app." >&2
-    exit 1
+  notary_args=(--keychain-profile "$NOTARY_PROFILE")
+  if [ -n "$NOTARY_KEYCHAIN" ]; then
+    notary_args+=(--keychain "$NOTARY_KEYCHAIN")
   fi
-  xcrun notarytool submit "$DMG_PATH" --keychain-profile "$NOTARY_PROFILE" --wait
+  xcrun notarytool submit "$DMG_PATH" "${notary_args[@]}" --wait
   xcrun stapler staple "$DMG_PATH"
   spctl -a -vv --type open "$DMG_PATH"
+  verify_gatekeeper_accepts_quarantined_app_from_dmg
 fi
 printf '%s\n' "$DMG_PATH"

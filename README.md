@@ -26,7 +26,7 @@ Download the latest `WorkshopWallpaperBridge-macOS-arm64.dmg` from [Releases](ht
 2. Drag **Workshop Wallpaper Bridge.app** to **Applications**.
 3. Open the app. It runs as a menu bar utility, not a Dock app.
 
-macOS may warn that the app is from an unidentified developer if the release is not notarized yet. You can still build from source with Swift.
+Public releases are Developer ID signed, notarized, and Gatekeeper-checked with download quarantine applied before upload. If macOS reports that a downloaded release is damaged, use the next release and file an issue with the macOS version and release tag.
 
 The app checks GitHub Releases for updates automatically when **Auto-check Updates** is enabled. Use **Check Updates** from the settings window, or **Check for Updates** from the menu bar menu, to check manually. When a newer release exists, **Download Update** downloads the latest DMG.
 
@@ -154,7 +154,7 @@ swift run wwbctl scene-engine-info "/path/to/scene.pkg"
 swift run wwbctl doctor
 ```
 
-For signed public releases, set `SIGN_IDENTITY`, `NOTARY_PROFILE`, and `REQUIRE_SIGNING=1` before running `Scripts/package-app.sh`.
+For signed public releases, set `SIGN_IDENTITY`, `NOTARY_PROFILE`, `REQUIRE_SIGNING=1`, and `REQUIRE_NOTARIZATION=1` before running `Scripts/package-app.sh`. The release workflow also requires the `MACOS_DEVELOPER_ID_APPLICATION_CERTIFICATE_BASE64`, `MACOS_DEVELOPER_ID_APPLICATION_CERTIFICATE_PASSWORD`, `MACOS_NOTARY_APPLE_ID`, `MACOS_NOTARY_TEAM_ID`, and `MACOS_NOTARY_PASSWORD` GitHub Secrets.
 
 ## Troubleshooting
 

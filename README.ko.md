@@ -26,7 +26,7 @@ Workshop Wallpaper Bridge가 도움이 되었다면 [Patreon](https://www.patreo
 2. **Workshop Wallpaper Bridge.app**을 **Applications**로 드래그합니다.
 3. 앱을 엽니다. Dock 앱이 아니라 메뉴바 유틸리티로 실행됩니다.
 
-릴리즈가 아직 공증되지 않은 경우 macOS가 확인되지 않은 개발자 경고를 띄울 수 있습니다. 원하면 Swift로 직접 빌드해서 실행할 수 있습니다.
+공개 릴리즈는 Developer ID로 서명하고 공증한 뒤, 다운로드 quarantine이 붙은 상태의 Gatekeeper 검증까지 통과한 DMG만 업로드합니다. 다운로드한 릴리즈가 손상되었다고 표시되면 다음 릴리즈를 받고, macOS 버전과 릴리즈 태그를 이슈에 남겨 주세요.
 
 **Auto-check Updates**가 켜져 있으면 앱이 GitHub Releases에서 업데이트를 자동 확인합니다. 설정 창의 **Check Updates** 또는 메뉴바 메뉴의 **Check for Updates**로 수동 확인할 수 있습니다. 새 릴리즈가 있으면 **Download Update**가 최신 DMG를 다운로드합니다.
 
@@ -154,7 +154,7 @@ swift run wwbctl scene-engine-info "/path/to/scene.pkg"
 swift run wwbctl doctor
 ```
 
-공개 릴리즈를 서명/공증하려면 `Scripts/package-app.sh` 실행 전에 `SIGN_IDENTITY`, `NOTARY_PROFILE`, `REQUIRE_SIGNING=1`을 설정합니다.
+공개 릴리즈를 서명/공증하려면 `Scripts/package-app.sh` 실행 전에 `SIGN_IDENTITY`, `NOTARY_PROFILE`, `REQUIRE_SIGNING=1`, `REQUIRE_NOTARIZATION=1`을 설정합니다. 릴리즈 workflow에는 `MACOS_DEVELOPER_ID_APPLICATION_CERTIFICATE_BASE64`, `MACOS_DEVELOPER_ID_APPLICATION_CERTIFICATE_PASSWORD`, `MACOS_NOTARY_APPLE_ID`, `MACOS_NOTARY_TEAM_ID`, `MACOS_NOTARY_PASSWORD` GitHub Secrets가 필요합니다.
 
 ## 문제 해결
 

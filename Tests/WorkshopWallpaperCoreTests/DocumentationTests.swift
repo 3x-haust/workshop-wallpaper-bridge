@@ -115,6 +115,30 @@ final class DocumentationTests: XCTestCase {
         XCTAssertTrue(workflow.contains("contents: write"))
     }
 
+    func testReleaseWorkflowRequiresSignedNotarizedGatekeeperCheckedDmg() throws {
+        let workflow = try String(contentsOfFile: ".github/workflows/release.yml")
+
+        XCTAssertTrue(workflow.contains("MACOS_DEVELOPER_ID_APPLICATION_CERTIFICATE_BASE64"))
+        XCTAssertTrue(workflow.contains("MACOS_DEVELOPER_ID_APPLICATION_CERTIFICATE_PASSWORD"))
+        XCTAssertTrue(workflow.contains("MACOS_NOTARY_APPLE_ID"))
+        XCTAssertTrue(workflow.contains("MACOS_NOTARY_TEAM_ID"))
+        XCTAssertTrue(workflow.contains("MACOS_NOTARY_PASSWORD"))
+        XCTAssertTrue(workflow.contains("xcrun notarytool store-credentials"))
+        XCTAssertTrue(workflow.contains("SIGN_IDENTITY: Developer ID Application"))
+        XCTAssertTrue(workflow.contains("NOTARY_PROFILE: workshop-wallpaper-bridge-notary"))
+        XCTAssertTrue(workflow.contains("REQUIRE_SIGNING: \"1\""))
+        XCTAssertTrue(workflow.contains("REQUIRE_NOTARIZATION: \"1\""))
+    }
+
+    func testPackagingScriptVerifiesNotarizedQuarantinedApp() throws {
+        let script = try String(contentsOfFile: "Scripts/package-app.sh")
+
+        XCTAssertTrue(script.contains("REQUIRE_NOTARIZATION=\"${REQUIRE_NOTARIZATION:-0}\""))
+        XCTAssertTrue(script.contains("verify_gatekeeper_accepts_quarantined_app_from_dmg"))
+        XCTAssertTrue(script.contains("spctl --assess --type execute"))
+        XCTAssertTrue(script.contains("com.apple.quarantine"))
+    }
+
     func testPackagedAppDefaultsToCurrentReleaseVersion() throws {
         let script = try String(contentsOfFile: "Scripts/package-app.sh")
 
