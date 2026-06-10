@@ -112,6 +112,189 @@ final class SceneTextureDecoderTests: XCTestCase {
         XCTAssertEqual(texture.height, 1024)
     }
 
+    func testDecoderParsesAnimatedSpriteSheetFrames() throws {
+        // Given: a 4x2 sheet with a red 2x2 frame on the left and a green 2x2 frame on the right.
+        let red: [UInt8] = [255, 0, 0, 255]
+        let green: [UInt8] = [0, 255, 0, 255]
+        let row: [UInt8] = red + red + green + green
+        let sheet = Data(row + row)
+        let data = Fixture.animatedTexData(
+            textureWidth: 4,
+            textureHeight: 2,
+            mipmaps: [(width: 4, height: 2, data: sheet)],
+            frames: [
+                Fixture.TexFrame(frametime: 0.1, x: 0, y: 0, width: 2, height: 2),
+                Fixture.TexFrame(frametime: 0.2, x: 2, y: 0, width: 2, height: 2)
+            ]
+        )
+
+        // When
+        let texture = try SceneTextureDecoder().decode(data: data)
+
+        // Then
+        XCTAssertEqual(texture.width, 2)
+        XCTAssertEqual(texture.height, 2)
+        XCTAssertEqual(texture.storage, .rgba(width: 4, height: 2, data: sheet))
+        XCTAssertEqual(texture.animationSheets, [texture.storage])
+        let animation = try XCTUnwrap(texture.animation)
+        XCTAssertEqual(animation.width, 2)
+        XCTAssertEqual(animation.height, 2)
+        XCTAssertEqual(animation.frames.count, 2)
+        XCTAssertEqual(animation.frames[0].duration, 0.1, accuracy: 0.0001)
+        XCTAssertEqual(animation.frames[1].duration, 0.2, accuracy: 0.0001)
+        XCTAssertEqual(animation.frames[1].x, 2, accuracy: 0.0001)
+        XCTAssertEqual(animation.frames[1].width, 2, accuracy: 0.0001)
+        XCTAssertEqual(animation.frames[1].height, 2, accuracy: 0.0001)
+    }
+
+    func testDecoderParsesIntegerFrameContainer() throws {
+        // Given
+        let sheet = Data(repeating: 200, count: 4 * 2 * 4)
+        let data = Fixture.animatedTexData(
+            textureWidth: 4,
+            textureHeight: 2,
+            mipmaps: [(width: 4, height: 2, data: sheet)],
+            frameContainer: "TEXS0001",
+            frames: [
+                Fixture.TexFrame(frametime: 0.05, x: 0, y: 0, width: 2, height: 2),
+                Fixture.TexFrame(frametime: 0.05, x: 2, y: 0, width: 2, height: 2)
+            ]
+        )
+
+        // When
+        let texture = try SceneTextureDecoder().decode(data: data)
+
+        // Then
+        let animation = try XCTUnwrap(texture.animation)
+        XCTAssertEqual(animation.frames.count, 2)
+        XCTAssertEqual(animation.frames[1].x, 2, accuracy: 0.0001)
+        XCTAssertEqual(texture.width, 2)
+        XCTAssertEqual(texture.height, 2)
+    }
+
+    func testDecoderReadsGifSizeFromTEXS0003() throws {
+        // Given: a sheet whose frame geometry differs from the declared gif size.
+        let sheet = Data(repeating: 90, count: 4 * 2 * 4)
+        let data = Fixture.animatedTexData(
+            textureWidth: 4,
+            textureHeight: 2,
+            mipmaps: [(width: 4, height: 2, data: sheet)],
+            frameContainer: "TEXS0003",
+            gifSize: (width: 1, height: 2),
+            frames: [
+                Fixture.TexFrame(frametime: 0.1, x: 0, y: 0, width: 2, height: 2)
+            ]
+        )
+
+        // When
+        let texture = try SceneTextureDecoder().decode(data: data)
+
+        // Then
+        XCTAssertEqual(texture.width, 1)
+        XCTAssertEqual(texture.height, 2)
+        XCTAssertEqual(texture.animation?.frames.count, 1)
+    }
+
+    func testDecoderScalesFrameGeometryToSelectedMipmap() throws {
+        // Given: a 4x4 texture whose 2x2 mipmap is selected for display.
+        let fullSheet = Data(repeating: 255, count: 4 * 4 * 4)
+        let smallSheet = Data(repeating: 128, count: 2 * 2 * 4)
+        let data = Fixture.animatedTexData(
+            textureWidth: 4,
+            textureHeight: 4,
+            mipmaps: [
+                (width: 4, height: 4, data: fullSheet),
+                (width: 2, height: 2, data: smallSheet)
+            ],
+            frames: [
+                Fixture.TexFrame(frametime: 0.1, x: 2, y: 0, width: 2, height: 4)
+            ]
+        )
+
+        // When
+        let texture = try SceneTextureDecoder(maximumDisplayDimension: 2).decode(data: data)
+
+        // Then
+        let animation = try XCTUnwrap(texture.animation)
+        XCTAssertEqual(animation.frames[0].x, 1, accuracy: 0.0001)
+        XCTAssertEqual(animation.frames[0].width, 1, accuracy: 0.0001)
+        XCTAssertEqual(animation.frames[0].height, 2, accuracy: 0.0001)
+        XCTAssertEqual(texture.storage, .rgba(width: 2, height: 2, data: smallSheet))
+    }
+
+    func testDecoderFallsBackToStaticSheetWhenFrameContainerIsMissing() throws {
+        // Given: the gif flag is set but no TEXS container follows the image data.
+        let sheet = Data(repeating: 40, count: 4 * 2 * 4)
+        let data = Fixture.animatedTexData(
+            textureWidth: 4,
+            textureHeight: 2,
+            mipmaps: [(width: 4, height: 2, data: sheet)],
+            frameContainer: nil
+        )
+
+        // When
+        let texture = try SceneTextureDecoder().decode(data: data)
+
+        // Then
+        XCTAssertNil(texture.animation)
+        XCTAssertEqual(texture.width, 4)
+        XCTAssertEqual(texture.height, 2)
+    }
+
+    func testDecoderRejectsVideoTextureFlag() throws {
+        // Given
+        let sheet = Data(repeating: 10, count: 4 * 2 * 4)
+        let data = Fixture.animatedTexData(
+            textureWidth: 4,
+            textureHeight: 2,
+            flags: 0x20,
+            mipmaps: [(width: 4, height: 2, data: sheet)],
+            frameContainer: nil
+        )
+
+        // Then
+        XCTAssertThrowsError(try SceneTextureDecoder().decode(data: data)) { error in
+            XCTAssertEqual(error as? SceneTextureError, .unsupportedTextureFlags(0x20))
+        }
+    }
+
+    func testDecoderRejectsEmbeddedMP4VideoContainer() throws {
+        // Given
+        let sheet = Data(repeating: 10, count: 4 * 2 * 4)
+        let data = Fixture.animatedTexData(
+            textureWidth: 4,
+            textureHeight: 2,
+            container: "TEXB0004",
+            isVideoMP4: true,
+            mipmaps: [(width: 4, height: 2, data: sheet)],
+            frameContainer: nil
+        )
+
+        // Then
+        XCTAssertThrowsError(try SceneTextureDecoder().decode(data: data)) { error in
+            XCTAssertEqual(error as? SceneTextureError, .unsupportedVideoTexture)
+        }
+    }
+
+    func testDecoderReadsNonVideoTEXB0004Container() throws {
+        // Given
+        let sheet = Data(repeating: 30, count: 2 * 2 * 4)
+        let data = Fixture.animatedTexData(
+            textureWidth: 2,
+            textureHeight: 2,
+            flags: 0,
+            container: "TEXB0004",
+            mipmaps: [(width: 2, height: 2, data: sheet)],
+            frameContainer: nil
+        )
+
+        // When
+        let texture = try SceneTextureDecoder().decode(data: data)
+
+        // Then
+        XCTAssertEqual(texture.storage, .rgba(width: 2, height: 2, data: sheet))
+    }
+
     private static func rawRGBATexture(
         width: Int,
         height: Int,
