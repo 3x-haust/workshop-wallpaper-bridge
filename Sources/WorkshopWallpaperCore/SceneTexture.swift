@@ -4,11 +4,71 @@ public struct SceneTexture: Equatable, Sendable {
     public let width: Int
     public let height: Int
     public let storage: SceneTextureStorage
+    public let animation: SceneTextureAnimation?
+    public let animationSheets: [SceneTextureStorage]
 
-    public init(width: Int, height: Int, storage: SceneTextureStorage) {
+    public init(
+        width: Int,
+        height: Int,
+        storage: SceneTextureStorage,
+        animation: SceneTextureAnimation? = nil,
+        animationSheets: [SceneTextureStorage] = []
+    ) {
         self.width = width
         self.height = height
         self.storage = storage
+        self.animation = animation
+        self.animationSheets = animationSheets
+    }
+}
+
+/// One sprite-sheet frame of an animated `.tex` texture.
+///
+/// Geometry follows the RePKG/RePKG.Neo TEXS layout: `(x, y)` is the frame
+/// anchor and `(width, widthY)` / `(heightX, height)` are the sheet-space
+/// direction vectors for the frame's horizontal and vertical axes, so rotated
+/// or flipped packing is representable. All values are in pixels of the
+/// decoded sheet referenced by `imageIndex`.
+public struct SceneTextureFrame: Equatable, Sendable {
+    public let imageIndex: Int
+    public let duration: Double
+    public let x: Double
+    public let y: Double
+    public let width: Double
+    public let widthY: Double
+    public let heightX: Double
+    public let height: Double
+
+    public init(
+        imageIndex: Int,
+        duration: Double,
+        x: Double,
+        y: Double,
+        width: Double,
+        widthY: Double,
+        heightX: Double,
+        height: Double
+    ) {
+        self.imageIndex = imageIndex
+        self.duration = duration
+        self.x = x
+        self.y = y
+        self.width = width
+        self.widthY = widthY
+        self.heightX = heightX
+        self.height = height
+    }
+}
+
+public struct SceneTextureAnimation: Equatable, Sendable {
+    public let width: Double
+    public let height: Double
+    public let frames: [SceneTextureFrame]
+
+    public init(width: Double, height: Double, frames: [SceneTextureFrame]) {
+        self.width = width
+        self.height = height
+        self.frames = frames
     }
 }
 
@@ -41,9 +101,10 @@ public struct SceneTextureDecoder: Sendable {
         }
         let format = try reader.readInt()
         let flags = try reader.readInt()
-        guard flags & 0x24 == 0 else {
+        guard flags & 0x20 == 0 else {
             throw SceneTextureError.unsupportedTextureFlags(flags)
         }
+        let isAnimated = flags & 0x04 != 0
         let textureWidth = try reader.readInt()
         let textureHeight = try reader.readInt()
         let imageWidth = try reader.readInt()
@@ -56,17 +117,93 @@ public struct SceneTextureDecoder: Sendable {
             imageHeight: imageHeight
         )
         let container = try reader.readCString(maxLength: 32)
-        let mipmap = try SceneTextureMipmapReader(container: container)
-            .readBestMipmap(from: &reader, maximumDimension: maximumDisplayDimension)
+        let imageCount = try Self.readImageContainerHeader(container: container, reader: &reader)
+        let mipmapReader = SceneTextureMipmapReader(container: container)
+        let sheetCount = isAnimated ? imageCount : 1
+        var sheets: [DecodedSheet] = []
+        sheets.reserveCapacity(sheetCount)
+        for _ in 0..<sheetCount {
+            let mipmap = try mipmapReader.readBestMipmap(from: &reader, maximumDimension: maximumDisplayDimension)
+            sheets.append(try decodeSheet(
+                mipmap,
+                format: format,
+                textureWidth: textureWidth,
+                textureHeight: textureHeight,
+                imageWidth: imageWidth,
+                imageHeight: imageHeight
+            ))
+        }
+        guard let primary = sheets.first else {
+            throw SceneTextureError.truncatedTexture
+        }
+        if isAnimated, let animation = Self.readAnimation(from: &reader, sheets: sheets) {
+            return SceneTexture(
+                width: max(1, Int(animation.width.rounded())),
+                height: max(1, Int(animation.height.rounded())),
+                storage: primary.storage,
+                animation: animation,
+                animationSheets: sheets.map(\.storage)
+            )
+        }
+        return SceneTexture(width: primary.width, height: primary.height, storage: primary.storage)
+    }
+
+    private struct DecodedSheet {
+        let storage: SceneTextureStorage
+        let width: Int
+        let height: Int
+        let frameScaleX: Double
+        let frameScaleY: Double
+    }
+
+    private static func readImageContainerHeader(
+        container: String,
+        reader: inout SceneTextureBinaryReader
+    ) throws -> Int {
+        let imageCount = try reader.readInt()
+        guard imageCount > 0, imageCount <= 64 else {
+            throw SceneTextureError.invalidCount(imageCount)
+        }
+        switch container {
+        case "TEXB0001", "TEXB0002":
+            break
+        case "TEXB0003":
+            _ = try reader.readInt()
+        case "TEXB0004":
+            _ = try reader.readInt()
+            let isVideoMP4 = try reader.readInt()
+            guard isVideoMP4 != 1 else {
+                throw SceneTextureError.unsupportedVideoTexture
+            }
+        default:
+            throw SceneTextureError.unsupportedContainer(container)
+        }
+        return imageCount
+    }
+
+    private func decodeSheet(
+        _ mipmap: SceneTextureMipmap,
+        format: Int,
+        textureWidth: Int,
+        textureHeight: Int,
+        imageWidth: Int,
+        imageHeight: Int
+    ) throws -> DecodedSheet {
         let pixelCount = try Self.checkedProduct(mipmap.width, mipmap.height)
         if mipmap.compressed, pixelCount > maximumSoftwareDecodedPixels {
             throw SceneTextureError.textureTooLargeForSoftwareDecode(mipmap.width, mipmap.height)
         }
         let payload = try decodePayload(mipmap)
+        let frameScaleX = Double(mipmap.width) / Double(textureWidth)
+        let frameScaleY = Double(mipmap.height) / Double(textureHeight)
         if Self.isEncodedImage(payload) {
-            return SceneTexture(width: scaledWidth(imageWidth, textureWidth: textureWidth, mipmapWidth: mipmap.width),
-                                height: scaledHeight(imageHeight, textureHeight: textureHeight, mipmapHeight: mipmap.height),
-                                storage: .encodedImage(payload))
+            return DecodedSheet(
+                storage: .encodedImage(payload),
+                width: scaledWidth(imageWidth, textureWidth: textureWidth, mipmapWidth: mipmap.width),
+                height: scaledHeight(imageHeight, textureHeight: textureHeight, mipmapHeight: mipmap.height),
+                frameScaleX: frameScaleX,
+                frameScaleY: frameScaleY
+            )
         }
         guard pixelCount <= maximumSoftwareDecodedPixels else {
             throw SceneTextureError.textureTooLargeForSoftwareDecode(mipmap.width, mipmap.height)
@@ -81,11 +218,110 @@ public struct SceneTextureDecoder: Sendable {
             imageWidth: targetWidth,
             imageHeight: targetHeight
         )
-        return SceneTexture(width: targetWidth, height: targetHeight, storage: .rgba(
+        return DecodedSheet(
+            storage: .rgba(width: targetWidth, height: targetHeight, data: rgba),
             width: targetWidth,
             height: targetHeight,
-            data: rgba
-        ))
+            frameScaleX: frameScaleX,
+            frameScaleY: frameScaleY
+        )
+    }
+
+    private static let maximumAnimationFrameCount = 4_096
+    private static let defaultAnimationFrameDuration = 1.0 / 30.0
+
+    /// Reads the trailing TEXS frame-info container of an animated texture.
+    /// Returns nil instead of throwing so a malformed or truncated frame
+    /// container degrades to static sheet playback rather than rejecting the
+    /// whole texture.
+    private static func readAnimation(
+        from reader: inout SceneTextureBinaryReader,
+        sheets: [DecodedSheet]
+    ) -> SceneTextureAnimation? {
+        guard let container = try? reader.readCString(maxLength: 32),
+              container == "TEXS0001" || container == "TEXS0002" || container == "TEXS0003" else {
+            return nil
+        }
+        let usesIntegerGeometry = container == "TEXS0001"
+        guard let frameCount = try? reader.readInt(),
+              frameCount > 0,
+              frameCount <= maximumAnimationFrameCount else {
+            return nil
+        }
+        var gifWidth = 0.0
+        var gifHeight = 0.0
+        if container == "TEXS0003" {
+            guard let width = try? reader.readInt(), let height = try? reader.readInt() else {
+                return nil
+            }
+            gifWidth = Double(width)
+            gifHeight = Double(height)
+        }
+        var frames: [SceneTextureFrame] = []
+        frames.reserveCapacity(frameCount)
+        for _ in 0..<frameCount {
+            guard let imageId = try? reader.readInt(),
+                  let frametime = try? reader.readFloat(),
+                  let geometry = try? readFrameGeometry(from: &reader, asIntegers: usesIntegerGeometry) else {
+                return nil
+            }
+            if gifWidth <= 0 || gifHeight <= 0 {
+                gifWidth = abs(geometry.width != 0 ? geometry.width : geometry.heightX)
+                gifHeight = abs(geometry.height != 0 ? geometry.height : geometry.widthY)
+            }
+            guard imageId >= 0, imageId < sheets.count else {
+                continue
+            }
+            let sheet = sheets[imageId]
+            let duration = frametime.isFinite && frametime > 0 ? Double(frametime) : defaultAnimationFrameDuration
+            frames.append(SceneTextureFrame(
+                imageIndex: imageId,
+                duration: duration,
+                x: geometry.x * sheet.frameScaleX,
+                y: geometry.y * sheet.frameScaleY,
+                width: geometry.width * sheet.frameScaleX,
+                widthY: geometry.widthY * sheet.frameScaleY,
+                heightX: geometry.heightX * sheet.frameScaleX,
+                height: geometry.height * sheet.frameScaleY
+            ))
+        }
+        guard !frames.isEmpty, gifWidth > 0, gifHeight > 0 else {
+            return nil
+        }
+        return SceneTextureAnimation(width: gifWidth, height: gifHeight, frames: frames)
+    }
+
+    private struct FrameGeometry {
+        let x: Double
+        let y: Double
+        let width: Double
+        let widthY: Double
+        let heightX: Double
+        let height: Double
+    }
+
+    private static func readFrameGeometry(
+        from reader: inout SceneTextureBinaryReader,
+        asIntegers: Bool
+    ) throws -> FrameGeometry {
+        func value() throws -> Double {
+            if asIntegers {
+                return Double(try reader.readInt())
+            }
+            let float = try reader.readFloat()
+            guard float.isFinite else {
+                throw SceneTextureError.truncatedTexture
+            }
+            return Double(float)
+        }
+        return FrameGeometry(
+            x: try value(),
+            y: try value(),
+            width: try value(),
+            widthY: try value(),
+            heightX: try value(),
+            height: try value()
+        )
     }
 
     private func scaledWidth(_ imageWidth: Int, textureWidth: Int, mipmapWidth: Int) -> Int {
@@ -323,6 +559,7 @@ public enum SceneTextureError: Error, Equatable, LocalizedError {
     case unsupportedContainer(String)
     case unsupportedFormat(Int)
     case unsupportedTextureFlags(Int)
+    case unsupportedVideoTexture
     case textureTooLargeForSoftwareDecode(Int, Int)
     case invalidDimensions
     case invalidCount(Int)
@@ -341,7 +578,9 @@ public enum SceneTextureError: Error, Equatable, LocalizedError {
         case .unsupportedFormat(let format):
             return "Unsupported scene texture format: \(format)."
         case .unsupportedTextureFlags(let flags):
-            return "Unsupported animated or video scene texture flags: \(flags)."
+            return "Unsupported video scene texture flags: \(flags)."
+        case .unsupportedVideoTexture:
+            return "Embedded MP4 video scene textures are not supported."
         case .textureTooLargeForSoftwareDecode(let width, let height):
             return "Scene texture \(width)x\(height) is too large for the current software decoder."
         case .invalidDimensions:
@@ -374,15 +613,6 @@ private struct SceneTextureMipmapReader {
     let container: String
 
     func readBestMipmap(from reader: inout SceneTextureBinaryReader, maximumDimension: Int) throws -> SceneTextureMipmap {
-        let imageCount = try reader.readInt()
-        guard imageCount > 0, imageCount <= 4_096 else {
-            throw SceneTextureError.invalidCount(imageCount)
-        }
-        if container == "TEXB0003" || container == "TEXB0004" {
-            _ = try reader.readInt()
-        } else if container != "TEXB0001" && container != "TEXB0002" {
-            throw SceneTextureError.unsupportedContainer(container)
-        }
         let mipmapCount = try reader.readInt()
         guard mipmapCount > 0, mipmapCount <= 32 else {
             throw SceneTextureError.invalidCount(mipmapCount)
@@ -461,6 +691,10 @@ struct SceneTextureBinaryReader {
         }
         offset += 4
         return UInt32(littleEndian: value)
+    }
+
+    mutating func readFloat() throws -> Float {
+        Float(bitPattern: try readUInt32())
     }
 
     mutating func readData(count: Int) throws -> Data {

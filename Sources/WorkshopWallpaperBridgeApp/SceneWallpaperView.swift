@@ -245,8 +245,11 @@ final class SceneWallpaperView: NSView,
                 }
                 contentLayer = textLayer
             } else {
-                guard let texture = plan.textures[layerPlan.texturePath],
-                      let image = Self.cgImage(from: texture) else {
+                guard let texture = plan.textures[layerPlan.texturePath] else {
+                    continue
+                }
+                let frameContents = Self.animationFrameContents(for: texture)
+                guard let image = frameContents?.images.first ?? Self.cgImage(from: texture) else {
                     continue
                 }
                 let imageLayer = CALayer()
@@ -255,7 +258,17 @@ final class SceneWallpaperView: NSView,
                 imageLayer.contentsScale = NSScreen.main?.backingScaleFactor ?? 2
                 imageLayer.minificationFilter = .linear
                 imageLayer.magnificationFilter = .linear
-                registerShaderEffects(for: imageLayer, image: image, plan: layerPlan)
+                if let frameContents, frameContents.images.count > 1 {
+                    // Shader effect ticks overwrite layer contents every frame,
+                    // which would freeze sprite playback, so animated textures
+                    // keep their frame animation instead.
+                    imageLayer.add(
+                        Self.textureFrameAnimation(for: frameContents),
+                        forKey: "scene-texture-frames"
+                    )
+                } else {
+                    registerShaderEffects(for: imageLayer, image: image, plan: layerPlan)
+                }
                 contentLayer = imageLayer
             }
             contentLayer.name = layerPlan.name
@@ -744,7 +757,7 @@ final class SceneWallpaperView: NSView,
         return width <= maximumBitmapPixels / height
     }
 
-    private static func bitmapContext(size: CGSize) -> CGContext? {
+    nonisolated private static func bitmapContext(size: CGSize) -> CGContext? {
         guard isSafeBitmapSize(size) else {
             return nil
         }
@@ -1020,7 +1033,11 @@ final class SceneWallpaperView: NSView,
     }
 
     private static func cgImage(from texture: SceneTexture) -> CGImage? {
-        switch texture.storage {
+        cgImage(fromStorage: texture.storage)
+    }
+
+    nonisolated static func cgImage(fromStorage storage: SceneTextureStorage) -> CGImage? {
+        switch storage {
         case .encodedImage(let data):
             return NSImage(data: data)?.cgImage(forProposedRect: nil, context: nil, hints: nil)
         case .rgba(let width, let height, let data):
@@ -1042,6 +1059,120 @@ final class SceneWallpaperView: NSView,
                 intent: .defaultIntent
             )
         }
+    }
+
+    struct SceneTextureFrameContents {
+        let images: [CGImage]
+        let keyTimes: [NSNumber]
+        let duration: Double
+    }
+
+    nonisolated private static let maximumAnimationFramePixels = 32_000_000
+
+    /// Cuts per-frame images out of an animated texture's sprite sheets.
+    /// Returns nil when the animation is absent, malformed, or too large, so
+    /// callers fall back to static sheet rendering.
+    nonisolated static func animationFrameContents(for texture: SceneTexture) -> SceneTextureFrameContents? {
+        guard let animation = texture.animation, !animation.frames.isEmpty else {
+            return nil
+        }
+        let sheetStorages = texture.animationSheets.isEmpty ? [texture.storage] : texture.animationSheets
+        var sheets: [CGImage?] = Array(repeating: nil, count: sheetStorages.count)
+        var images: [CGImage] = []
+        images.reserveCapacity(animation.frames.count)
+        var totalPixels = 0
+        for frame in animation.frames {
+            guard frame.imageIndex < sheetStorages.count else {
+                return nil
+            }
+            if sheets[frame.imageIndex] == nil {
+                sheets[frame.imageIndex] = cgImage(fromStorage: sheetStorages[frame.imageIndex])
+            }
+            guard let sheet = sheets[frame.imageIndex],
+                  let image = frameImage(from: sheet, frame: frame) else {
+                return nil
+            }
+            totalPixels += image.width * image.height
+            guard totalPixels <= maximumAnimationFramePixels else {
+                return nil
+            }
+            images.append(image)
+        }
+        let durations = animation.frames.map { max($0.duration, 0.01) }
+        let total = durations.reduce(0, +)
+        guard total > 0 else {
+            return nil
+        }
+        // Discrete keyframe animations need values.count + 1 key times.
+        var keyTimes: [NSNumber] = [0]
+        var elapsed = 0.0
+        for duration in durations {
+            elapsed += duration
+            keyTimes.append(NSNumber(value: min(elapsed / total, 1)))
+        }
+        return SceneTextureFrameContents(images: images, keyTimes: keyTimes, duration: total)
+    }
+
+    nonisolated static func frameDisplaySize(for frame: SceneTextureFrame) -> CGSize {
+        CGSize(
+            width: max(abs(frame.width), abs(frame.widthY)).rounded(),
+            height: max(abs(frame.heightX), abs(frame.height)).rounded()
+        )
+    }
+
+    /// Maps destination frame coordinates (top-left origin) into sprite-sheet
+    /// coordinates (top-left origin) using the frame's axis vectors, which is
+    /// how RePKG reconstructs rotated or flipped sheet packing.
+    nonisolated static func frameSheetTransform(for frame: SceneTextureFrame) -> CGAffineTransform? {
+        let transform = CGAffineTransform(
+            a: CGFloat(sign(frame.width)),
+            b: CGFloat(sign(frame.widthY)),
+            c: CGFloat(sign(frame.heightX)),
+            d: CGFloat(sign(frame.height)),
+            tx: CGFloat(frame.x.rounded()),
+            ty: CGFloat(frame.y.rounded())
+        )
+        let determinant = transform.a * transform.d - transform.b * transform.c
+        guard abs(determinant) > 0.5 else {
+            return nil
+        }
+        return transform
+    }
+
+    nonisolated private static func sign(_ value: Double) -> Double {
+        if value > 0 { return 1 }
+        if value < 0 { return -1 }
+        return 0
+    }
+
+    nonisolated private static func frameImage(from sheet: CGImage, frame: SceneTextureFrame) -> CGImage? {
+        let size = frameDisplaySize(for: frame)
+        guard size.width >= 1, size.height >= 1,
+              isSafeBitmapSize(size),
+              let destinationToSheet = frameSheetTransform(for: frame),
+              let context = bitmapContext(size: size) else {
+            return nil
+        }
+        context.interpolationQuality = .none
+        // Flip into top-left destination space, map into sheet space, then
+        // flip again so CGImage drawing (bottom-left origin) lines up.
+        context.translateBy(x: 0, y: size.height)
+        context.scaleBy(x: 1, y: -1)
+        context.concatenate(destinationToSheet.inverted())
+        context.translateBy(x: 0, y: CGFloat(sheet.height))
+        context.scaleBy(x: 1, y: -1)
+        context.draw(sheet, in: CGRect(x: 0, y: 0, width: sheet.width, height: sheet.height))
+        return context.makeImage()
+    }
+
+    nonisolated static func textureFrameAnimation(for contents: SceneTextureFrameContents) -> CAKeyframeAnimation {
+        let animation = CAKeyframeAnimation(keyPath: "contents")
+        animation.values = contents.images
+        animation.keyTimes = contents.keyTimes
+        animation.duration = contents.duration
+        animation.calculationMode = .discrete
+        animation.repeatCount = .infinity
+        return animation
     }
 
     private static func cgColor(from color: SceneColor) -> CGColor {

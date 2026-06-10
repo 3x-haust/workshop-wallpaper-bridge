@@ -55,6 +55,103 @@ enum Fixture {
         return data
     }
 
+    struct TexFrame {
+        let imageId: Int
+        let frametime: Float
+        let x: Double
+        let y: Double
+        let width: Double
+        let widthY: Double
+        let heightX: Double
+        let height: Double
+
+        init(
+            imageId: Int = 0,
+            frametime: Float,
+            x: Double,
+            y: Double,
+            width: Double,
+            widthY: Double = 0,
+            heightX: Double = 0,
+            height: Double
+        ) {
+            self.imageId = imageId
+            self.frametime = frametime
+            self.x = x
+            self.y = y
+            self.width = width
+            self.widthY = widthY
+            self.heightX = heightX
+            self.height = height
+        }
+    }
+
+    // swiftlint:disable:next function_parameter_count
+    static func animatedTexData(
+        textureWidth: Int,
+        textureHeight: Int,
+        flags: Int = 4,
+        format: Int = 0,
+        container: String = "TEXB0002",
+        isVideoMP4: Bool = false,
+        mipmaps: [(width: Int, height: Int, data: Data)],
+        frameContainer: String? = "TEXS0002",
+        gifSize: (width: Int, height: Int)? = nil,
+        frames: [TexFrame] = []
+    ) -> Data {
+        var data = Data()
+        data.appendNullTerminatedString("TEXV0005")
+        data.appendNullTerminatedString("TEXI0001")
+        data.appendInt32(format)
+        data.appendInt32(flags)
+        data.appendInt32(textureWidth)
+        data.appendInt32(textureHeight)
+        data.appendInt32(textureWidth)
+        data.appendInt32(textureHeight)
+        data.appendUInt32(0)
+        data.appendNullTerminatedString(container)
+        data.appendInt32(1)
+        if container == "TEXB0003" {
+            data.appendInt32(0)
+        } else if container == "TEXB0004" {
+            data.appendInt32(0)
+            data.appendInt32(isVideoMP4 ? 1 : 0)
+        }
+        data.appendInt32(mipmaps.count)
+        for mipmap in mipmaps {
+            data.appendInt32(mipmap.width)
+            data.appendInt32(mipmap.height)
+            if container != "TEXB0001" {
+                data.appendInt32(0)
+                data.appendInt32(0)
+            }
+            data.appendInt32(mipmap.data.count)
+            data.append(mipmap.data)
+        }
+        guard let frameContainer else {
+            return data
+        }
+        data.appendNullTerminatedString(frameContainer)
+        data.appendInt32(frames.count)
+        if frameContainer == "TEXS0003" {
+            data.appendInt32(gifSize?.width ?? 0)
+            data.appendInt32(gifSize?.height ?? 0)
+        }
+        for frame in frames {
+            data.appendInt32(frame.imageId)
+            data.appendFloat(frame.frametime)
+            let geometry = [frame.x, frame.y, frame.width, frame.widthY, frame.heightX, frame.height]
+            for value in geometry {
+                if frameContainer == "TEXS0001" {
+                    data.appendInt32(Int(value))
+                } else {
+                    data.appendFloat(Float(value))
+                }
+            }
+        }
+        return data
+    }
+
     static func texData(
         width: Int,
         height: Int,
@@ -93,6 +190,11 @@ private extension Data {
 
     mutating func appendUInt32(_ value: UInt32) {
         var raw = value.littleEndian
+        Swift.withUnsafeBytes(of: &raw) { append(contentsOf: $0) }
+    }
+
+    mutating func appendFloat(_ value: Float) {
+        var raw = value.bitPattern.littleEndian
         Swift.withUnsafeBytes(of: &raw) { append(contentsOf: $0) }
     }
 

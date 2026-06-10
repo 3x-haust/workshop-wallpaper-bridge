@@ -52,6 +52,58 @@ final class SceneRenderPlanTests: XCTestCase {
         XCTAssertEqual(plan.layers[0].alpha, 0.75)
     }
 
+    func testRenderPlanExposesAnimatedSpriteTexture() throws {
+        // Given: a scene whose only image layer uses an animated sprite-sheet texture.
+        let root = try Fixture.makeTempDirectory()
+        let packageURL = root.appending(path: "animated.pkg")
+        let sceneJSON = """
+        {
+          "general": { "orthogonalprojection": { "width": 1920, "height": 1080 } },
+          "objects": [
+            {
+              "id": 1,
+              "name": "sprite",
+              "visible": true,
+              "image": "models/sprite.json",
+              "origin": "960 540 0",
+              "scale": "1 1 1",
+              "alpha": 1
+            }
+          ]
+        }
+        """
+        let sheet = Data(repeating: 255, count: 4 * 2 * 4)
+        let texData = Fixture.animatedTexData(
+            textureWidth: 4,
+            textureHeight: 2,
+            mipmaps: [(width: 4, height: 2, data: sheet)],
+            frames: [
+                Fixture.TexFrame(frametime: 0.1, x: 0, y: 0, width: 2, height: 2),
+                Fixture.TexFrame(frametime: 0.1, x: 2, y: 0, width: 2, height: 2)
+            ]
+        )
+        try Fixture.writeScenePackage(
+            to: packageURL,
+            sceneJSON: sceneJSON,
+            extraEntries: [
+                (path: "models/sprite.json", data: Data(#"{"material":"materials/sprite.json"}"#.utf8)),
+                (path: "materials/sprite.json", data: Data(#"{"passes":[{"textures":["sprite"]}]}"#.utf8)),
+                (path: "materials/sprite.tex", data: texData)
+            ]
+        )
+
+        // When
+        let plan = try SceneRenderPlanBuilder().build(url: packageURL)
+
+        // Then: the scene is renderable and the texture carries its frames,
+        // with the default layer size taken from the gif frame size.
+        XCTAssertTrue(plan.hasRenderableContent)
+        let texture = try XCTUnwrap(plan.textures["materials/sprite.tex"])
+        XCTAssertEqual(texture.animation?.frames.count, 2)
+        XCTAssertEqual(plan.layers[0].size, SceneSize(width: 2, height: 2))
+        XCTAssertTrue(SceneRenderPlanBuilder().canBuild(url: packageURL))
+    }
+
     func testCanBuildAllowsTextOnlySceneWithoutDecodedTextures() throws {
         // Given
         let root = try Fixture.makeTempDirectory()
