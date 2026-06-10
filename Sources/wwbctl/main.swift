@@ -132,6 +132,7 @@ struct WWBCtl {
             canvasHeight: plan.canvasSize.height,
             layerCount: plan.layers.count,
             textureCount: plan.textures.count,
+            animatedTextureCount: plan.textures.values.filter { $0.animation != nil }.count,
             textLayerCount: plan.layers.filter { $0.text != nil }.count,
             dynamicTextLayerCount: plan.layers.filter { $0.text?.dynamicText != nil }.count,
             effectLayerCount: plan.layers.filter { !$0.effects.isEmpty }.count,
@@ -180,6 +181,7 @@ struct WWBCtl {
         let canvasHeight: Double
         let layerCount: Int
         let textureCount: Int
+        let animatedTextureCount: Int
         let textLayerCount: Int
         let dynamicTextLayerCount: Int
         let effectLayerCount: Int
