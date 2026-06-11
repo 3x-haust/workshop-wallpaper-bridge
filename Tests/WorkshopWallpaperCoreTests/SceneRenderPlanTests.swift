@@ -104,6 +104,284 @@ final class SceneRenderPlanTests: XCTestCase {
         XCTAssertTrue(SceneRenderPlanBuilder().canBuild(url: packageURL))
     }
 
+    func testRenderPlanParsesSparkleEffectWithAuxiliaryTexture() throws {
+        // Given: a full-screen compose layer running a workshop nitro effect
+        // that samples a packaged noise texture.
+        let root = try Fixture.makeTempDirectory()
+        let packageURL = root.appending(path: "sparkle.pkg")
+        let sceneJSON = """
+        {
+          "general": { "orthogonalprojection": { "width": 1920, "height": 1080 } },
+          "objects": [
+            {
+              "id": 1,
+              "name": "background",
+              "visible": true,
+              "image": "models/background.json",
+              "origin": "960 540 0",
+              "size": "1920 1080",
+              "scale": "1 1 1",
+              "alpha": 1
+            },
+            {
+              "id": 2,
+              "name": "Sparkles",
+              "visible": true,
+              "image": "models/util/composelayer.json",
+              "origin": "960 540 0",
+              "size": "1920 1080",
+              "scale": "1 1 1",
+              "alpha": 1,
+              "effects": [
+                {
+                  "file": "effects/workshop/123/nitro/effect.json",
+                  "visible": true,
+                  "passes": [
+                    {
+                      "constantshadervalues": {
+                        "bounds": "0.6 0.6",
+                        "multiply": { "user": "waterglare", "value": 10 },
+                        "scale": "2 2",
+                        "speed": "0.05 0 -0.05 0"
+                      },
+                      "textures": [null, "workshop/123/fluid noise"]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+        """
+        try Fixture.writeScenePackage(
+            to: packageURL,
+            sceneJSON: sceneJSON,
+            extraEntries: [
+                (path: "models/background.json", data: Data(#"{"material":"materials/background.json"}"#.utf8)),
+                (path: "materials/background.json", data: Data(#"{"passes":[{"textures":["background"]}]}"#.utf8)),
+                (path: "materials/background.tex", data: Fixture.texData(width: 1, height: 1, imageData: png)),
+                (path: "materials/workshop/123/fluid noise.tex", data: Fixture.texData(width: 1, height: 1, imageData: png))
+            ]
+        )
+
+        // When
+        let plan = try SceneRenderPlanBuilder().build(url: packageURL)
+
+        // Then
+        let sparkles = try XCTUnwrap(plan.layers.first { $0.name == "Sparkles" })
+        XCTAssertTrue(sparkles.isEffectOnly)
+        let setting = try XCTUnwrap(sparkles.effectSettings.first)
+        XCTAssertEqual(setting.effect, .sparkle)
+        XCTAssertEqual(setting.strength, 10)
+        XCTAssertEqual(setting.bounds, SceneSize(width: 0.6, height: 0.6))
+        XCTAssertEqual(setting.speedVector, [0.05, 0, -0.05, 0])
+        XCTAssertEqual(setting.auxiliaryTexturePath, "materials/workshop/123/fluid noise.tex")
+        XCTAssertNotNil(plan.textures["materials/workshop/123/fluid noise.tex"])
+    }
+
+    func testRenderPlanDistributesFullCanvasWarpEffectsToUnderlyingLayers() throws {
+        // Given: a full-canvas compose layer with a waterripple warp above an
+        // image layer and a text layer.
+        let root = try Fixture.makeTempDirectory()
+        let packageURL = root.appending(path: "compose.pkg")
+        let sceneJSON = """
+        {
+          "general": { "orthogonalprojection": { "width": 1920, "height": 1080 } },
+          "objects": [
+            {
+              "id": 1,
+              "name": "background",
+              "visible": true,
+              "image": "models/background.json",
+              "origin": "960 540 0",
+              "size": "1920 1080",
+              "scale": "1 1 1",
+              "alpha": 1
+            },
+            {
+              "id": 2,
+              "name": "clock",
+              "visible": true,
+              "text": { "value": "12:00" },
+              "origin": "1700 900 0",
+              "size": "200 100",
+              "scale": "1 1 1",
+              "alpha": 1
+            },
+            {
+              "id": 3,
+              "name": "Compose",
+              "visible": true,
+              "image": "models/util/composelayer.json",
+              "origin": "960 540 0",
+              "size": "1920 1080",
+              "scale": "1 1 1",
+              "alpha": 1,
+              "effects": [
+                {
+                  "file": "effects/waterripple/effect.json",
+                  "visible": true,
+                  "passes": [
+                    {
+                      "constantshadervalues": { "animationspeed": 0.24, "ripplestrength": 0.1 }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+        """
+        try Fixture.writeScenePackage(
+            to: packageURL,
+            sceneJSON: sceneJSON,
+            extraEntries: [
+                (path: "models/background.json", data: Data(#"{"material":"materials/background.json"}"#.utf8)),
+                (path: "materials/background.json", data: Data(#"{"passes":[{"textures":["background"]}]}"#.utf8)),
+                (path: "materials/background.tex", data: Fixture.texData(width: 1, height: 1, imageData: png))
+            ]
+        )
+
+        // When
+        let plan = try SceneRenderPlanBuilder().build(url: packageURL)
+
+        // Then: the warp moved onto the image layer, the text layer stayed
+        // crisp, and the now-empty compose layer is gone.
+        XCTAssertNil(plan.layers.first { $0.name == "Compose" })
+        let background = try XCTUnwrap(plan.layers.first { $0.name == "background" })
+        XCTAssertTrue(background.effects.contains(.waterRipple))
+        let clock = try XCTUnwrap(plan.layers.first { $0.name == "clock" })
+        XCTAssertTrue(clock.effects.isEmpty)
+    }
+
+    func testRenderPlanParsesParticleLayers() throws {
+        // Given: a scene with one image layer and one sprite particle system.
+        let root = try Fixture.makeTempDirectory()
+        let packageURL = root.appending(path: "particles.pkg")
+        let sceneJSON = """
+        {
+          "general": { "orthogonalprojection": { "width": 1920, "height": 1080 } },
+          "objects": [
+            {
+              "id": 1,
+              "name": "background",
+              "visible": true,
+              "image": "models/background.json",
+              "origin": "960 540 0",
+              "size": "1920 1080",
+              "scale": "1 1 1",
+              "alpha": 1
+            },
+            {
+              "id": 2,
+              "name": "dust",
+              "visible": true,
+              "particle": "particles/dust.json",
+              "origin": "960 540 0",
+              "scale": "1 1 1"
+            }
+          ]
+        }
+        """
+        let particleJSON = """
+        {
+          "emitter": [ { "name": "sphererandom", "rate": 15000, "distancemax": 2000 } ],
+          "initializer": [
+            { "name": "lifetimerandom", "min": 0.5, "max": 5 },
+            { "name": "sizerandom", "min": 70, "max": 85 },
+            { "name": "velocityrandom", "min": "-200 -200 0", "max": "200 200 0" }
+          ],
+          "operator": [ { "name": "movement" }, { "name": "alphafade" } ],
+          "renderer": [ { "name": "spritetrail" } ],
+          "material": "materials/particle/dust.json",
+          "maxcount": 500,
+          "starttime": 0
+        }
+        """
+        try Fixture.writeScenePackage(
+            to: packageURL,
+            sceneJSON: sceneJSON,
+            extraEntries: [
+                (path: "models/background.json", data: Data(#"{"material":"materials/background.json"}"#.utf8)),
+                (path: "materials/background.json", data: Data(#"{"passes":[{"textures":["background"]}]}"#.utf8)),
+                (path: "materials/background.tex", data: Fixture.texData(width: 1, height: 1, imageData: png)),
+                (path: "particles/dust.json", data: Data(particleJSON.utf8)),
+                (path: "materials/particle/dust.json", data: Data(#"{"passes":[{"textures":["particle/dust"]}]}"#.utf8)),
+                (path: "materials/particle/dust.tex", data: Fixture.texData(width: 1, height: 1, imageData: png))
+            ]
+        )
+
+        // When
+        let plan = try SceneRenderPlanBuilder().build(url: packageURL)
+
+        // Then
+        XCTAssertEqual(plan.particleLayers.count, 1)
+        let dust = try XCTUnwrap(plan.particleLayers.first)
+        XCTAssertEqual(dust.name, "dust")
+        XCTAssertEqual(dust.maxCount, 500)
+        XCTAssertEqual(dust.rate, 15000)
+        XCTAssertEqual(dust.lifetimeMin, 0.5)
+        XCTAssertEqual(dust.lifetimeMax, 5)
+        XCTAssertEqual(dust.sizeMin, 70)
+        XCTAssertEqual(dust.sizeMax, 85)
+        XCTAssertEqual(dust.velocityMax, SceneVector3(x: 200, y: 200, z: 0))
+        XCTAssertEqual(dust.emitterRadius, 2000)
+        XCTAssertTrue(dust.hasAlphaFade)
+        XCTAssertTrue(dust.isTrail)
+        XCTAssertEqual(dust.insertionIndex, 1)
+        XCTAssertEqual(dust.texturePath, "materials/particle/dust.tex")
+        XCTAssertNotNil(plan.textures["materials/particle/dust.tex"])
+    }
+
+    func testRenderPlanMarksMirrorAnimationsAutoreversing() throws {
+        // Given
+        let root = try Fixture.makeTempDirectory()
+        let packageURL = root.appending(path: "mirror.pkg")
+        let sceneJSON = """
+        {
+          "general": { "orthogonalprojection": { "width": 1920, "height": 1080 } },
+          "objects": [
+            {
+              "id": 1,
+              "name": "fish",
+              "visible": true,
+              "image": "models/background.json",
+              "origin": {
+                "value": "960 540 0",
+                "animation": {
+                  "options": { "fps": 2.9, "length": 29, "mode": "mirror" },
+                  "c0": [
+                    { "frame": 0, "value": -155.1 },
+                    { "frame": 27, "value": 22.0 }
+                  ]
+                }
+              },
+              "size": "1920 1080",
+              "scale": "1 1 1",
+              "alpha": 1
+            }
+          ]
+        }
+        """
+        try Fixture.writeScenePackage(
+            to: packageURL,
+            sceneJSON: sceneJSON,
+            extraEntries: [
+                (path: "models/background.json", data: Data(#"{"material":"materials/background.json"}"#.utf8)),
+                (path: "materials/background.json", data: Data(#"{"passes":[{"textures":["background"]}]}"#.utf8)),
+                (path: "materials/background.tex", data: Fixture.texData(width: 1, height: 1, imageData: png))
+            ]
+        )
+
+        // When
+        let plan = try SceneRenderPlanBuilder().build(url: packageURL)
+
+        // Then
+        let animation = try XCTUnwrap(plan.layers[0].originAnimation)
+        XCTAssertTrue(animation.autoreverses)
+        XCTAssertEqual(animation.duration, 10, accuracy: 0.1)
+    }
+
     func testCanBuildAllowsTextOnlySceneWithoutDecodedTextures() throws {
         // Given
         let root = try Fixture.makeTempDirectory()
@@ -479,8 +757,9 @@ final class SceneRenderPlanTests: XCTestCase {
         // When
         let plan = try SceneRenderPlanBuilder().build(url: packageURL)
 
-        // Then
-        XCTAssertEqual(plan.layers.count, 3)
+        // Then: the full-canvas compose ripple is distributed onto the image
+        // layer beneath it so live layer motion stays visible.
+        XCTAssertEqual(plan.layers.count, 2)
         let foam = try XCTUnwrap(plan.layers.first { $0.name == "Espuma" })
         XCTAssertTrue(foam.effects.contains(.waterFlow))
         XCTAssertTrue(foam.effects.contains(.bloom))
@@ -489,11 +768,8 @@ final class SceneRenderPlanTests: XCTestCase {
         XCTAssertEqual(foam.effectSettings.first?.speed, 0.45)
         XCTAssertEqual(foam.effectSettings.first?.strength, 0.47)
         XCTAssertEqual(foam.effectSettings.first?.direction, SceneVector3(x: 0.2, y: 1, z: 0))
-        XCTAssertEqual(foam.effectSettings.map(\.effect), [.waterFlow, .bloom, .chromaticAberration])
-        let compose = try XCTUnwrap(plan.layers.first { $0.name == "Compose" })
-        XCTAssertTrue(compose.isEffectOnly)
-        XCTAssertTrue(compose.effects.contains(.waterRipple))
-        XCTAssertEqual(compose.size, SceneSize(width: 3840, height: 2160))
+        XCTAssertEqual(foam.effectSettings.map(\.effect), [.waterFlow, .bloom, .chromaticAberration, .waterRipple])
+        XCTAssertNil(plan.layers.first { $0.name == "Compose" })
         let clock = try XCTUnwrap(plan.layers.first { $0.name == "Clock" })
         XCTAssertEqual(clock.text?.value, "12:34")
         XCTAssertEqual(clock.text?.dynamicText, .clock(SceneClockText(
