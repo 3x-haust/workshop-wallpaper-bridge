@@ -102,17 +102,24 @@ final class SceneWallpaperViewEffectParityTests: XCTestCase {
         XCTAssertFalse(SceneWallpaperView.isPulseRingParticle(chaotic))
     }
 
-    func testScrollWarpKernelUsesLinearSpeed() throws {
+    func testEffectKernelsMatchPackagedShaderMath() throws {
         let source = try String(contentsOfFile: "Sources/WorkshopWallpaperBridgeApp/SceneWallpaperView.swift")
 
-        XCTAssertTrue(source.contains("vec2 scroll = vec2(speedX, speedY) * time;"))
-        XCTAssertFalse(source.contains("sign(scroll) * scroll * scroll * time"))
+        // scroll.vert squares the speed with its sign preserved.
+        XCTAssertTrue(source.contains("scroll = sign(scroll) * scroll * scroll * time;"))
+        // waterripple.frag perturbs UVs by the scrolled normal-map normals.
+        XCTAssertTrue(source.contains("vec3 normal = normalize(vec3(n1.xy + n2.xy, n1.z));"))
+        XCTAssertTrue(source.contains("normal.xy * strength * strength * mask"))
+        // nitro.vert rotates the second noise lookup by 90 degrees.
+        XCTAssertTrue(source.contains("vec2 uv2r = vec2(-uv2.y, uv2.x);"))
+        // waterflow.frag blends four phase-offset framebuffer samples.
+        XCTAssertTrue(source.contains("fract(0.25 + time * speed + 0.5)"))
     }
 
     func testSparkleEffectOnlyLayersStartFromTransparentBase() throws {
         let source = try String(contentsOfFile: "Sources/WorkshopWallpaperBridgeApp/SceneWallpaperView.swift")
 
         XCTAssertTrue(source.contains("effects.allSatisfy { $0.effect == .sparkle }"))
-        XCTAssertTrue(source.contains("sparkleBand"))
+        XCTAssertTrue(source.contains("weNitro"))
     }
 }

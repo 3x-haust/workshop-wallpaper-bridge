@@ -224,6 +224,10 @@ public struct SceneLayerEffectSetting: Equatable, Sendable {
     public let direction: SceneVector3?
     public let bounds: SceneSize?
     public let speedVector: [Double]?
+    public let scaleVector: [Double]?
+    public let animationSpeed: Double?
+    public let scrollSpeed: Double?
+    public let ratio: Double?
     public let auxiliaryTexturePath: String?
     public let usesMask: Bool
     public let maskReference: SceneEffectMaskReference?
@@ -239,6 +243,10 @@ public struct SceneLayerEffectSetting: Equatable, Sendable {
         direction: SceneVector3? = nil,
         bounds: SceneSize? = nil,
         speedVector: [Double]? = nil,
+        scaleVector: [Double]? = nil,
+        animationSpeed: Double? = nil,
+        scrollSpeed: Double? = nil,
+        ratio: Double? = nil,
         auxiliaryTexturePath: String? = nil,
         usesMask: Bool = false,
         maskReference: SceneEffectMaskReference? = nil
@@ -253,6 +261,10 @@ public struct SceneLayerEffectSetting: Equatable, Sendable {
         self.direction = direction
         self.bounds = bounds
         self.speedVector = speedVector
+        self.scaleVector = scaleVector
+        self.animationSpeed = animationSpeed
+        self.scrollSpeed = scrollSpeed
+        self.ratio = ratio
         self.auxiliaryTexturePath = auxiliaryTexturePath
         self.usesMask = usesMask || maskReference != nil
         self.maskReference = maskReference
@@ -562,7 +574,14 @@ public struct SceneRenderPlanBuilder: Sendable {
                 continue
             }
             for target in targets {
-                result[target] = Self.appendingEffects(distributable, to: result[target])
+                // The compose layer's mask spans the whole canvas; it only
+                // lines up with targets that also cover the canvas. Smaller
+                // layers receive the warp unmasked.
+                let targetCoverage = abs(result[target].size.width * result[target].size.height) / canvasArea
+                let settings = targetCoverage >= 0.8
+                    ? distributable
+                    : distributable.map(Self.strippingMask)
+                result[target] = Self.appendingEffects(settings, to: result[target])
             }
             let remaining = layer.effectSettings.filter { !warpEffects.contains($0.effect) }
             if remaining.isEmpty {
@@ -580,6 +599,28 @@ public struct SceneRenderPlanBuilder: Sendable {
         to layer: SceneLayer
     ) -> SceneLayer {
         Self.replacingEffects(layer.effectSettings + settings, in: layer)
+    }
+
+    private static func strippingMask(_ setting: SceneLayerEffectSetting) -> SceneLayerEffectSetting {
+        SceneLayerEffectSetting(
+            effect: setting.effect,
+            speed: setting.speed,
+            speedX: setting.speedX,
+            speedY: setting.speedY,
+            strength: setting.strength,
+            scale: setting.scale,
+            perspective: setting.perspective,
+            direction: setting.direction,
+            bounds: setting.bounds,
+            speedVector: setting.speedVector,
+            scaleVector: setting.scaleVector,
+            animationSpeed: setting.animationSpeed,
+            scrollSpeed: setting.scrollSpeed,
+            ratio: setting.ratio,
+            auxiliaryTexturePath: setting.auxiliaryTexturePath,
+            usesMask: false,
+            maskReference: nil
+        )
     }
 
     private static func replacingEffects(
@@ -1037,6 +1078,13 @@ public struct SceneRenderPlanBuilder: Sendable {
                         ?? directionVector(fromAngle: doubleValue(constants["scrolldirection"])),
                     bounds: sizeValue(constants["bounds"]),
                     speedVector: speedComponents.count >= 4 ? Array(speedComponents.prefix(4)) : nil,
+                    scaleVector: {
+                        let scaleComponents = numericList(constants["scale"])
+                        return scaleComponents.count >= 2 ? Array(scaleComponents.prefix(2)) : nil
+                    }(),
+                    animationSpeed: doubleValue(constants["animationspeed"]),
+                    scrollSpeed: doubleValue(constants["scrollspeed"]),
+                    ratio: doubleValue(constants["ratio"]),
                     auxiliaryTexturePath: auxiliaryTexturePath(in: rawEffect, package: package),
                     usesMask: containsMaskReference(rawEffect, depth: 0),
                     maskReference: maskReference

@@ -332,8 +332,8 @@ final class WallpaperPlayerSuspensionTests: XCTestCase {
         let source = try String(contentsOfFile: "Sources/WorkshopWallpaperBridgeApp/SceneWallpaperView.swift")
 
         // Then
-        XCTAssertTrue(source.contains("CIWarpKernel"))
-        XCTAssertTrue(source.contains("waterWavesWarp"))
+        XCTAssertTrue(source.contains("CIKernel"))
+        XCTAssertTrue(source.contains("weWaterWaves"))
         XCTAssertTrue(source.contains("shaderEffectLayers.append"))
         XCTAssertTrue(source.contains("startSceneTickSourceIfNeeded"))
         XCTAssertFalse(source.contains(#"CAKeyframeAnimation(keyPath: "transform.translation.y")"#))

@@ -26,6 +26,7 @@ final class SceneWallpaperView: NSView,
         let baseImage: CIImage
         let effects: [SceneLayerEffectSetting]
         let auxiliaryImages: [String: CIImage]
+        let maskImages: [String: CIImage]
     }
 
     private struct DynamicTextLayer {
@@ -34,36 +35,155 @@ final class SceneWallpaperView: NSView,
         let scriptEvaluator: SceneScriptTextEvaluator?
     }
 
-    private static let waterWavesWarpKernel = CIWarpKernel(source: """
-    kernel vec2 waterWavesWarp(
-        float time,
-        float speed,
-        float scale,
-        float strength,
-        float perspective,
-        vec2 direction,
-        vec4 extent
+    // The effect kernels below are direct ports of the GLSL effect shaders
+    // that ship inside scene.pkg (shaders/effects/*.frag|vert), evaluated in
+    // Wallpaper Engine's top-left UV space and converted at the edges.
+
+    /// shaders/effects/waterwaves.frag
+    private static let waterWavesKernel = CIKernel(source: """
+    kernel vec4 weWaterWaves(
+        sampler image, sampler maskMap,
+        vec4 extent, vec4 maskExtent,
+        float time, float speed, float scaleFactor, float strength,
+        float perspective, float directionX, float directionY, float useMask
     ) {
-        vec2 coord = destCoord();
-        vec2 texCoord = (coord - extent.xy) / extent.zw;
-        vec2 safeDirection = direction;
-        float directionLength = length(safeDirection);
-        if (directionLength < 0.0001) {
-            safeDirection = vec2(0.0, 1.0);
+        vec2 uv = (destCoord() - extent.xy) / extent.zw;
+        vec2 uvWE = vec2(uv.x, 1.0 - uv.y);
+        vec2 dir = vec2(directionX, directionY);
+        float len = length(dir);
+        if (len < 0.0001) {
+            dir = vec2(0.0, 1.0);
         } else {
-            safeDirection = safeDirection / directionLength;
+            dir = dir / len;
         }
-
-        float pos = abs(dot((texCoord - vec2(0.5, 0.5)), safeDirection));
-        float distance = time * speed + dot(texCoord, safeDirection) * (scale + perspective * pos);
-        vec2 offset = vec2(safeDirection.y, -safeDirection.x);
-        float waveStrength = strength * strength + perspective * pos;
-        texCoord -= sin(distance) * offset * waveStrength;
-
-        return extent.xy + texCoord * extent.zw;
+        float pos = abs(dot(uvWE - vec2(0.5, 0.5), dir));
+        float dist = time * speed + dot(uvWE, dir) * (scaleFactor + perspective * pos);
+        vec2 offset = vec2(dir.y, -dir.x);
+        float str = strength * strength + perspective * pos;
+        float mask = 1.0;
+        if (useMask > 0.5) {
+            mask = sample(maskMap, samplerTransform(maskMap, maskExtent.xy + uv * maskExtent.zw)).r;
+        }
+        vec2 shifted = clamp(uvWE + sin(dist) * offset * str * mask, vec2(0.0, 0.0), vec2(1.0, 1.0));
+        return sample(image, samplerTransform(image, extent.xy + vec2(shifted.x, 1.0 - shifted.y) * extent.zw));
     }
     """)
 
+    /// shaders/effects/waterripple.vert + .frag
+    private static let waterRippleKernel = CIKernel(source: """
+    kernel vec4 weWaterRipple(
+        sampler image, sampler normalMap, sampler maskMap,
+        vec4 extent, vec4 normalExtent, vec4 maskExtent,
+        float time, float animationSpeed, float scrollSpeed,
+        float directionX, float directionY,
+        float scaleFactor, float ratio, float aspect, float strength, float useMask
+    ) {
+        vec2 uv = (destCoord() - extent.xy) / extent.zw;
+        vec2 uvWE = vec2(uv.x, 1.0 - uv.y);
+        vec2 scroll = vec2(directionX, directionY) * scrollSpeed * scrollSpeed * time;
+        float drift = time * animationSpeed * animationSpeed;
+        vec2 r1 = (uvWE + vec2(drift, drift) + scroll) * scaleFactor;
+        vec2 r2 = (uvWE * 1.333 - vec2(drift, drift) + scroll) * scaleFactor;
+        r1 = vec2(r1.x * aspect, r1.y * ratio);
+        r2 = vec2(r2.x * aspect, r2.y * ratio);
+        vec2 c1 = fract(r1);
+        vec2 c2 = fract(r2);
+        vec3 n1 = sample(normalMap, samplerTransform(normalMap, normalExtent.xy + vec2(c1.x, 1.0 - c1.y) * normalExtent.zw)).xyz * 2.0 - 1.0;
+        vec3 n2 = sample(normalMap, samplerTransform(normalMap, normalExtent.xy + vec2(c2.x, 1.0 - c2.y) * normalExtent.zw)).xyz * 2.0 - 1.0;
+        vec3 normal = normalize(vec3(n1.xy + n2.xy, n1.z));
+        float mask = 1.0;
+        if (useMask > 0.5) {
+            mask = sample(maskMap, samplerTransform(maskMap, maskExtent.xy + uv * maskExtent.zw)).r;
+        }
+        vec2 shifted = clamp(uvWE + normal.xy * strength * strength * mask, vec2(0.0, 0.0), vec2(1.0, 1.0));
+        return sample(image, samplerTransform(image, extent.xy + vec2(shifted.x, 1.0 - shifted.y) * extent.zw));
+    }
+    """)
+
+    /// shaders/effects/waterflow.frag
+    private static let waterFlowKernel = CIKernel(source: """
+    kernel vec4 weWaterFlow(
+        sampler image, sampler flowMap, sampler phaseMap,
+        vec4 extent, vec4 flowExtent, vec4 phaseExtent,
+        float time, float speed, float strength, float phaseScale
+    ) {
+        vec2 uv = (destCoord() - extent.xy) / extent.zw;
+        vec2 uvWE = vec2(uv.x, 1.0 - uv.y);
+        vec2 pc = fract(uvWE * phaseScale);
+        float flowPhase = sample(phaseMap, samplerTransform(phaseMap, phaseExtent.xy + vec2(pc.x, 1.0 - pc.y) * phaseExtent.zw)).r;
+        vec2 flowColors = sample(flowMap, samplerTransform(flowMap, flowExtent.xy + uv * flowExtent.zw)).rg;
+        vec2 flowMask = (flowColors - vec2(0.498, 0.498)) * 2.0;
+        float flowAmount = length(flowMask);
+        vec4 cycles = vec4(
+            fract(time * speed),
+            fract(time * speed + 0.5),
+            fract(0.25 + time * speed),
+            fract(0.25 + time * speed + 0.5)
+        );
+        float blendA = 2.0 * abs(cycles.x - 0.5);
+        float blendB = 2.0 * abs(cycles.z - 0.5);
+        cycles = cycles - vec4(0.5, 0.5, 0.5, 0.5);
+        vec2 amp = flowMask * strength * 0.1;
+        vec2 p1 = clamp(uvWE + amp * cycles.x, vec2(0.0, 0.0), vec2(1.0, 1.0));
+        vec2 p2 = clamp(uvWE + amp * cycles.y, vec2(0.0, 0.0), vec2(1.0, 1.0));
+        vec2 p3 = clamp(uvWE + amp * cycles.z, vec2(0.0, 0.0), vec2(1.0, 1.0));
+        vec2 p4 = clamp(uvWE + amp * cycles.w, vec2(0.0, 0.0), vec2(1.0, 1.0));
+        vec4 albedo = sample(image, samplerTransform(image, destCoord()));
+        vec4 s1 = sample(image, samplerTransform(image, extent.xy + vec2(p1.x, 1.0 - p1.y) * extent.zw));
+        vec4 s2 = sample(image, samplerTransform(image, extent.xy + vec2(p2.x, 1.0 - p2.y) * extent.zw));
+        vec4 s3 = sample(image, samplerTransform(image, extent.xy + vec2(p3.x, 1.0 - p3.y) * extent.zw));
+        vec4 s4 = sample(image, samplerTransform(image, extent.xy + vec2(p4.x, 1.0 - p4.y) * extent.zw));
+        vec4 flowAlbedo = mix(mix(s1, s2, blendA), mix(s3, s4, blendB), smoothstep(0.2, 0.8, flowPhase));
+        return mix(albedo, flowAlbedo, clamp(flowAmount, 0.0, 1.0));
+    }
+    """)
+
+    /// shaders/workshop/.../nitro.vert + .frag, including the HLSL-style
+    /// step behavior of smoothstep when both edges coincide.
+    private static let nitroKernel = CIKernel(source: """
+    kernel vec4 weNitro(
+        sampler image, sampler noiseMap,
+        vec4 extent, vec4 noiseExtent,
+        float time, vec4 speeds, vec2 scales, vec2 bounds, float multiply, float aspect
+    ) {
+        vec2 uv = (destCoord() - extent.xy) / extent.zw;
+        vec2 uvWE = vec2(uv.x, 1.0 - uv.y);
+        vec2 uv1 = uvWE * scales.x + time * speeds.xy;
+        vec2 uv2 = uvWE * scales.y + time * speeds.zw;
+        uv1.x = uv1.x * aspect;
+        uv2.x = uv2.x * aspect;
+        vec2 uv2r = vec2(-uv2.y, uv2.x);
+        vec2 c1 = fract(uv1);
+        vec2 c2 = fract(uv2r);
+        vec2 c3 = fract(uvWE);
+        float n0 = sample(noiseMap, samplerTransform(noiseMap, noiseExtent.xy + vec2(c1.x, 1.0 - c1.y) * noiseExtent.zw)).r;
+        float n1 = sample(noiseMap, samplerTransform(noiseMap, noiseExtent.xy + vec2(c2.x, 1.0 - c2.y) * noiseExtent.zw)).r;
+        float remap = sample(noiseMap, samplerTransform(noiseMap, noiseExtent.xy + vec2(c3.x, 1.0 - c3.y) * noiseExtent.zw)).r;
+        float product = n0 * n1;
+        float core;
+        float coreX = 0.1 + remap * 0.8;
+        if (abs(n1 - n0) < 0.0001) {
+            core = coreX >= n0 ? 1.0 : 0.0;
+        } else {
+            float t = clamp((coreX - n0) / (n1 - n0), 0.0, 1.0);
+            core = t * t * (3.0 - 2.0 * t);
+        }
+        float band;
+        if (abs(bounds.x - bounds.y) < 0.0001) {
+            band = product >= bounds.x ? 1.0 : 0.0;
+        } else {
+            float t1 = clamp((product - bounds.y) / (bounds.x - bounds.y), 0.0, 1.0);
+            float t2 = clamp((product - bounds.x) / (bounds.y - bounds.x), 0.0, 1.0);
+            band = (t1 * t1 * (3.0 - 2.0 * t1)) * (t2 * t2 * (3.0 - 2.0 * t2));
+        }
+        float blend = clamp(core * band * 4.0 * multiply, 0.0, 1.0);
+        vec4 albedo = sample(image, samplerTransform(image, destCoord()));
+        return vec4(mix(albedo.rgb, vec3(1.0, 1.0, 1.0), blend), max(albedo.a, blend));
+    }
+    """)
+
+    /// shaders/effects/scroll.vert + .frag (speed is squared with its sign
+    /// preserved before scaling by time, exactly like the packaged shader).
     private static let scrollWarpKernel = CIWarpKernel(source: """
     kernel vec2 scrollWarp(
         float time,
@@ -73,18 +193,10 @@ final class SceneWallpaperView: NSView,
     ) {
         vec2 coord = destCoord();
         vec2 texCoord = (coord - extent.xy) / extent.zw;
-        vec2 scroll = vec2(speedX, speedY) * time;
+        vec2 scroll = vec2(speedX, speedY);
+        scroll = sign(scroll) * scroll * scroll * time;
         texCoord = fract(texCoord + scroll);
         return extent.xy + texCoord * extent.zw;
-    }
-    """)
-
-    private static let sparkleBandKernel = CIColorKernel(source: """
-    kernel vec4 sparkleBand(__sample noiseA, __sample noiseB, float lowEdge, float highEdge, float gain) {
-        float product = noiseA.r * noiseB.r;
-        float band = smoothstep(lowEdge, highEdge, product);
-        float value = clamp(band * gain, 0.0, 1.0);
-        return vec4(value, value, value, value);
     }
     """)
 
@@ -835,20 +947,30 @@ final class SceneWallpaperView: NSView,
         effects: [SceneLayerEffectSetting]
     ) {
         var auxiliaryImages: [String: CIImage] = [:]
+        var maskImages: [String: CIImage] = [:]
         for setting in effects {
-            guard let path = setting.auxiliaryTexturePath,
-                  auxiliaryImages[path] == nil,
-                  let texture = plan.textures[path],
-                  let auxImage = Self.cgImage(fromStorage: texture.storage) else {
-                continue
+            if let path = setting.auxiliaryTexturePath,
+               auxiliaryImages[path] == nil,
+               let texture = plan.textures[path],
+               let auxImage = Self.cgImage(fromStorage: texture.storage) {
+                auxiliaryImages[path] = CIImage(cgImage: auxImage)
             }
-            auxiliaryImages[path] = CIImage(cgImage: auxImage)
+            if let path = setting.maskReference?.texturePath,
+               maskImages[path] == nil,
+               let texture = plan.textures[path],
+               let maskImage = Self.cgImage(fromStorage: texture.storage) {
+                maskImages[path] = CIImage(cgImage: maskImage)
+            }
         }
+        // Point glints vanish when rendered at the capped shader size and
+        // upscaled, so generator-only layers keep their native resolution.
+        let keepsNativeResolution = effects.allSatisfy { $0.effect == .sparkle }
         shaderEffectLayers.append(ShaderEffectLayer(
             layer: layer,
-            baseImage: Self.shaderBaseImage(from: image),
+            baseImage: keepsNativeResolution ? CIImage(cgImage: image) : Self.shaderBaseImage(from: image),
             effects: effects,
-            auxiliaryImages: auxiliaryImages
+            auxiliaryImages: auxiliaryImages,
+            maskImages: maskImages
         ))
     }
 
@@ -894,7 +1016,8 @@ final class SceneWallpaperView: NSView,
                 effects: item.effects,
                 time: time,
                 context: ciContext,
-                auxiliaryImages: item.auxiliaryImages
+                auxiliaryImages: item.auxiliaryImages,
+                maskImages: item.maskImages
             ) else {
                 continue
             }
@@ -923,24 +1046,30 @@ final class SceneWallpaperView: NSView,
         effects: [SceneLayerEffectSetting],
         time: Double,
         context: CIContext,
-        auxiliaryImages: [String: CIImage] = [:]
+        auxiliaryImages: [String: CIImage] = [:],
+        maskImages: [String: CIImage] = [:]
     ) -> CGImage? {
         var image = baseImage
         for effect in effects {
+            let mask = effect.maskReference?.texturePath.flatMap { maskImages[$0] }
+            let aux = effect.auxiliaryTexturePath.flatMap { auxiliaryImages[$0] }
             switch effect.effect {
-            case .waterFlow, .waterWaves, .waterRipple:
-                image = applyWaterWaves(to: image, effect: effect, time: time) ?? image
+            case .waterRipple:
+                image = applyWaterRipple(to: image, effect: effect, time: time, normalMap: aux, mask: mask)
+                    ?? applyWaterWaves(to: image, effect: effect, time: time, mask: mask)
+                    ?? image
+            case .waterFlow:
+                image = applyWaterFlow(to: image, effect: effect, time: time, flowMap: mask, phaseMap: aux)
+                    ?? applyWaterWaves(to: image, effect: effect, time: time, mask: nil)
+                    ?? image
+            case .waterWaves:
+                image = applyWaterWaves(to: image, effect: effect, time: time, mask: mask) ?? image
             case .scroll:
                 image = applyScroll(to: image, effect: effect, time: time) ?? image
             case .spin:
                 image = applySpin(to: image, effect: effect, time: time) ?? image
             case .sparkle:
-                image = applySparkle(
-                    to: image,
-                    effect: effect,
-                    time: time,
-                    noise: effect.auxiliaryTexturePath.flatMap { auxiliaryImages[$0] }
-                ) ?? image
+                image = applySparkle(to: image, effect: effect, time: time, noise: aux) ?? image
             case .bloom:
                 image = applyBloom(to: image, effect: effect) ?? image
             case .blur:
@@ -1102,30 +1231,134 @@ final class SceneWallpaperView: NSView,
         ]
     }
 
+    nonisolated private static let whiteMask = CIImage(color: CIColor.white)
+        .cropped(to: CGRect(x: 0, y: 0, width: 4, height: 4))
+
+    private static func extentVector(_ extent: CGRect) -> CIVector {
+        CIVector(x: extent.origin.x, y: extent.origin.y, z: extent.width, w: extent.height)
+    }
+
     private static func applyWaterWaves(
         to image: CIImage,
         effect: SceneLayerEffectSetting,
-        time: Double
+        time: Double,
+        mask: CIImage?
     ) -> CIImage? {
-        guard let kernel = waterWavesWarpKernel else {
+        guard let kernel = waterWavesKernel else {
             return image
         }
         let direction = normalizedDirection(effect.direction)
         let extent = image.extent
+        let maskImage = mask ?? whiteMask
         return kernel.apply(
             extent: extent,
-            roiCallback: { _, rect in rect.insetBy(dx: -48, dy: -48) },
-            image: image,
+            roiCallback: { index, rect in index == 0 ? rect.insetBy(dx: -64, dy: -64) : maskImage.extent },
             arguments: [
+                image,
+                maskImage,
+                extentVector(extent),
+                extentVector(maskImage.extent),
+                CGFloat(time),
+                CGFloat(effect.speed ?? 5),
+                CGFloat(effect.scale ?? 200),
+                CGFloat(max(0, min(effect.strength ?? 0.1, 1))),
+                CGFloat(max(0, min(effect.perspective ?? 0, 0.2))),
+                CGFloat(direction.x),
+                CGFloat(direction.y),
+                CGFloat(mask == nil ? 0 : 1)
+            ]
+        )?.cropped(to: extent)
+    }
+
+    private static func applyWaterRipple(
+        to image: CIImage,
+        effect: SceneLayerEffectSetting,
+        time: Double,
+        normalMap: CIImage?,
+        mask: CIImage?
+    ) -> CIImage? {
+        guard let kernel = waterRippleKernel,
+              let normalMap,
+              normalMap.extent.width > 0,
+              normalMap.extent.height > 0 else {
+            return nil
+        }
+        let direction = normalizedDirection(effect.direction)
+        let extent = image.extent
+        let maskImage = mask ?? whiteMask
+        return kernel.apply(
+            extent: extent,
+            roiCallback: { index, rect in
+                switch index {
+                case 0:
+                    return rect.insetBy(dx: -64, dy: -64)
+                case 1:
+                    return normalMap.extent
+                default:
+                    return maskImage.extent
+                }
+            },
+            arguments: [
+                image,
+                normalMap,
+                maskImage,
+                extentVector(extent),
+                extentVector(normalMap.extent),
+                extentVector(maskImage.extent),
+                CGFloat(time),
+                CGFloat(effect.animationSpeed ?? effect.speed ?? 0.15),
+                CGFloat(effect.scrollSpeed ?? 0),
+                CGFloat(direction.x),
+                CGFloat(direction.y),
+                CGFloat(max(effect.scale ?? 1, 0.01)),
+                CGFloat(max(effect.ratio ?? 1, 0.01)),
+                CGFloat(extent.height > 0 ? extent.width / extent.height : 1),
+                CGFloat(max(0, min(effect.strength ?? 0.1, 1))),
+                CGFloat(mask == nil ? 0 : 1)
+            ]
+        )?.cropped(to: extent)
+    }
+
+    private static func applyWaterFlow(
+        to image: CIImage,
+        effect: SceneLayerEffectSetting,
+        time: Double,
+        flowMap: CIImage?,
+        phaseMap: CIImage?
+    ) -> CIImage? {
+        guard let kernel = waterFlowKernel,
+              let flowMap,
+              let phaseMap,
+              flowMap.extent.width > 0,
+              phaseMap.extent.width > 0 else {
+            return nil
+        }
+        let extent = image.extent
+        return kernel.apply(
+            extent: extent,
+            roiCallback: { index, rect in
+                switch index {
+                case 0:
+                    return rect.insetBy(dx: -96, dy: -96)
+                case 1:
+                    return flowMap.extent
+                default:
+                    return phaseMap.extent
+                }
+            },
+            arguments: [
+                image,
+                flowMap,
+                phaseMap,
+                extentVector(extent),
+                extentVector(flowMap.extent),
+                extentVector(phaseMap.extent),
                 CGFloat(time),
                 CGFloat(effect.speed ?? 1),
-                CGFloat(effect.scale ?? 40),
-                CGFloat(max(0, min(effect.strength ?? 0.05, 1))),
-                CGFloat(max(0, min(effect.perspective ?? 0, 0.2))),
-                CIVector(x: direction.x, y: direction.y),
-                CIVector(x: extent.origin.x, y: extent.origin.y, z: extent.width, w: extent.height)
+                CGFloat(max(0, min(effect.strength ?? 1, 1))),
+                CGFloat(max(effect.scale ?? 2, 0.01))
             ]
-        )
+        )?.cropped(to: extent)
     }
 
     private static func applyScroll(
@@ -1169,57 +1402,46 @@ final class SceneWallpaperView: NSView,
         return image.transformed(by: transform).cropped(to: extent)
     }
 
-    /// Approximates the Wallpaper Engine "nitro" style glint shader: two
-    /// copies of a noise texture scroll against each other and pixels where
-    /// the product crosses the configured band light up as white twinkles.
+    /// Direct port of the workshop "nitro" glint shader: the packaged noise
+    /// texture is sampled at two scrolling scales (one rotated 90°), and the
+    /// banded product lights up as point twinkles, exactly as on Windows.
     private static func applySparkle(
         to image: CIImage,
         effect: SceneLayerEffectSetting,
         time: Double,
         noise: CIImage?
     ) -> CIImage? {
-        guard let kernel = sparkleBandKernel,
+        guard let kernel = nitroKernel,
               let noise,
               noise.extent.width > 0,
               noise.extent.height > 0 else {
             return image
         }
         let extent = image.extent
-        let uvScale = max(effect.scale ?? 2, 0.05)
-        let speeds = effect.speedVector ?? [0.05, 0, -0.05, 0]
-        let tileSize = CGSize(width: extent.width / uvScale, height: extent.height / uvScale)
-        guard tileSize.width >= 1, tileSize.height >= 1 else {
-            return image
-        }
-        func scrolledNoise(speedX: Double, speedY: Double) -> CIImage {
-            let offset = CGPoint(
-                x: CGFloat((speedX * time).truncatingRemainder(dividingBy: 1)) * tileSize.width,
-                y: CGFloat((speedY * time).truncatingRemainder(dividingBy: 1)) * tileSize.height
-            )
-            return noise
-                .transformed(by: CGAffineTransform(
-                    scaleX: tileSize.width / noise.extent.width,
-                    y: tileSize.height / noise.extent.height
-                ))
-                .transformed(by: CGAffineTransform(translationX: offset.x, y: offset.y))
-                .applyingFilter("CIAffineTile", parameters: [:])
-                .cropped(to: extent)
-        }
-        let bandCenter = effect.bounds.map { ($0.width + $0.height) / 2 } ?? 0.6
-        let gain = max(0.2, min((effect.strength ?? 1) * 0.15, 2.5))
-        guard let band = kernel.apply(
+        let speeds = effect.speedVector ?? [-0.1, 0.7, 0.1, -0.5]
+        let scales = effect.scaleVector ?? [1, 2]
+        let bounds = effect.bounds ?? SceneSize(width: 0.3, height: 0.25)
+        return kernel.apply(
             extent: extent,
+            roiCallback: { index, rect in index == 0 ? rect : noise.extent },
             arguments: [
-                scrolledNoise(speedX: speeds[0], speedY: speeds.count > 1 ? speeds[1] : 0),
-                scrolledNoise(speedX: speeds.count > 2 ? speeds[2] : -speeds[0], speedY: speeds.count > 3 ? speeds[3] : 0),
-                max(bandCenter - 0.16, 0),
-                min(bandCenter + 0.08, 1),
-                gain
+                image,
+                noise,
+                extentVector(extent),
+                extentVector(noise.extent),
+                CGFloat(time),
+                CIVector(
+                    x: CGFloat(speeds[0]),
+                    y: CGFloat(speeds.count > 1 ? speeds[1] : 0),
+                    z: CGFloat(speeds.count > 2 ? speeds[2] : 0),
+                    w: CGFloat(speeds.count > 3 ? speeds[3] : 0)
+                ),
+                CIVector(x: CGFloat(scales[0]), y: CGFloat(scales.count > 1 ? scales[1] : scales[0])),
+                CIVector(x: CGFloat(bounds.width), y: CGFloat(bounds.height)),
+                CGFloat(max(effect.strength ?? 1, 0.01)),
+                CGFloat(extent.height > 0 ? extent.width / extent.height : 1)
             ]
-        ) else {
-            return image
-        }
-        return band.composited(over: image).cropped(to: extent)
+        )?.cropped(to: extent)
     }
 
     private static func applyBloom(to image: CIImage, effect: SceneLayerEffectSetting) -> CIImage? {
