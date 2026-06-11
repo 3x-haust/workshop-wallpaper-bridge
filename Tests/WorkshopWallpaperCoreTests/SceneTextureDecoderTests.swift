@@ -90,7 +90,8 @@ final class SceneTextureDecoderTests: XCTestCase {
     }
 
     func testDecoderDefaultsToSharperDisplayMipmap() throws {
-        // Given
+        // Given: the default display dimension keeps the 2048 mipmap so 4K
+        // scenes stay sharp on retina displays.
         let largeRedPixels = Array(repeating: UInt8(255), count: 2048 * 2048 * 4)
         let displaySizedGreenPixels = Array(repeating: UInt8(128), count: 1024 * 1024 * 4)
         let smallBluePixels = Array(repeating: UInt8(64), count: 512 * 512 * 4)
@@ -108,8 +109,8 @@ final class SceneTextureDecoderTests: XCTestCase {
         let texture = try SceneTextureDecoder().decode(data: data)
 
         // Then
-        XCTAssertEqual(texture.width, 1024)
-        XCTAssertEqual(texture.height, 1024)
+        XCTAssertEqual(texture.width, 2048)
+        XCTAssertEqual(texture.height, 2048)
     }
 
     func testDecoderParsesAnimatedSpriteSheetFrames() throws {

@@ -84,7 +84,7 @@ public struct SceneTextureDecoder: Sendable {
     private let maximumSoftwareDecodedPixels: Int
     private let maximumDisplayDimension: Int
 
-    public init(maximumSoftwareDecodedPixels: Int = 18_000_000, maximumDisplayDimension: Int = 1024) {
+    public init(maximumSoftwareDecodedPixels: Int = 18_000_000, maximumDisplayDimension: Int = 2048) {
         self.maximumSoftwareDecodedPixels = maximumSoftwareDecodedPixels
         self.maximumDisplayDimension = maximumDisplayDimension
     }

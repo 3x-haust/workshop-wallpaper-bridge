@@ -25,6 +25,7 @@ final class SceneWallpaperView: NSView,
         let layer: CALayer
         let baseImage: CIImage
         let effects: [SceneLayerEffectSetting]
+        let auxiliaryImages: [String: CIImage]
     }
 
     private struct DynamicTextLayer {
@@ -72,10 +73,18 @@ final class SceneWallpaperView: NSView,
     ) {
         vec2 coord = destCoord();
         vec2 texCoord = (coord - extent.xy) / extent.zw;
-        vec2 scroll = vec2(speedX, speedY);
-        scroll = sign(scroll) * scroll * scroll * time;
+        vec2 scroll = vec2(speedX, speedY) * time;
         texCoord = fract(texCoord + scroll);
         return extent.xy + texCoord * extent.zw;
+    }
+    """)
+
+    private static let sparkleBandKernel = CIColorKernel(source: """
+    kernel vec4 sparkleBand(__sample noiseA, __sample noiseB, float lowEdge, float highEdge, float gain) {
+        float product = noiseA.r * noiseB.r;
+        float band = smoothstep(lowEdge, highEdge, product);
+        float value = clamp(band * gain, 0.0, 1.0);
+        return vec4(value, value, value, value);
     }
     """)
 
@@ -278,14 +287,215 @@ final class SceneWallpaperView: NSView,
             sceneLayer.addSublayer(contentLayer)
             contentLayers.append(contentLayer)
         }
+        buildParticleLayers()
         configureTextRefreshTimer()
         startSceneTickSourceIfNeeded()
     }
 
+    private static let maximumParticleSystems = 4
+
+    private func buildParticleLayers() {
+        for particle in plan.particleLayers.prefix(Self.maximumParticleSystems) {
+            let particleLayer: CALayer?
+            if Self.isPulseRingParticle(particle) {
+                particleLayer = buildPulseRingLayer(for: particle)
+            } else {
+                particleLayer = buildEmitterLayer(for: particle)
+            }
+            guard let particleLayer else {
+                continue
+            }
+            particleLayer.name = particle.name
+            let sublayerCount = sceneLayer.sublayers?.count ?? 0
+            sceneLayer.insertSublayer(particleLayer, at: UInt32(min(particle.insertionIndex, sublayerCount)))
+            contentLayers.append(particleLayer)
+        }
+    }
+
+    struct SceneParticleEmitterConfiguration: Equatable {
+        let birthRate: Float
+        let lifetime: Float
+        let lifetimeRange: Float
+        let velocityRange: CGFloat
+        let scale: CGFloat
+        let scaleRange: CGFloat
+        let alphaSpeed: Float
+        let emitterSize: CGSize
+        let spinRange: CGFloat
+    }
+
+    nonisolated static func isPulseRingParticle(_ particle: SceneParticleLayer) -> Bool {
+        particle.rate <= 2 && particle.sizeChangeEnd != nil
+    }
+
+    /// Wallpaper Engine renders particles with engine-side fade and blending
+    /// that Core Animation emitters cannot reproduce, so the approximation
+    /// keeps fewer, fainter particles to match the on-screen subtlety.
+    nonisolated private static let particleSubtletyFactor = 0.35
+
+    nonisolated static func emitterConfiguration(
+        for particle: SceneParticleLayer,
+        spriteSize: CGSize?,
+        canvasSize: SceneSize
+    ) -> SceneParticleEmitterConfiguration {
+        let averageLifetime = max((particle.lifetimeMin + particle.lifetimeMax) / 2, 0.05)
+        let birthRate = min(particle.rate, Double(particle.maxCount) / averageLifetime) * particleSubtletyFactor
+        let velocityRange = max(
+            abs(particle.velocityMin.x),
+            abs(particle.velocityMax.x),
+            abs(particle.velocityMin.y),
+            abs(particle.velocityMax.y)
+        )
+        let spriteDimension = max(spriteSize.map { max($0.width, $0.height) } ?? 64, 1)
+        let averageSize = (particle.sizeMin + particle.sizeMax) / 2
+        let radius = particle.emitterRadius
+        return SceneParticleEmitterConfiguration(
+            birthRate: Float(max(birthRate, 0.05)),
+            lifetime: Float(averageLifetime),
+            lifetimeRange: Float(max((particle.lifetimeMax - particle.lifetimeMin) / 2, 0)),
+            velocityRange: CGFloat(velocityRange),
+            scale: CGFloat(averageSize / spriteDimension),
+            scaleRange: CGFloat(max((particle.sizeMax - particle.sizeMin) / 2 / spriteDimension, 0)),
+            alphaSpeed: particle.hasAlphaFade ? Float(-1 / max(particle.lifetimeMax, 0.1)) : 0,
+            emitterSize: CGSize(
+                width: radius > 0 ? min(radius * 2, canvasSize.width) : canvasSize.width / 4,
+                height: radius > 0 ? min(radius * 2, canvasSize.height) : canvasSize.height / 4
+            ),
+            spinRange: CGFloat(abs(particle.angularVelocity ?? 0))
+        )
+    }
+
+    private func buildEmitterLayer(for particle: SceneParticleLayer) -> CALayer? {
+        let textureSprite = particle.texturePath
+            .flatMap { plan.textures[$0] }
+            .flatMap { Self.particleSpriteImage(from: $0) }
+        guard let sprite = textureSprite ?? Self.softParticleImage(diameter: 32) else {
+            return nil
+        }
+        let configuration = Self.emitterConfiguration(
+            for: particle,
+            spriteSize: CGSize(width: sprite.width, height: sprite.height),
+            canvasSize: plan.canvasSize
+        )
+        let emitter = CAEmitterLayer()
+        emitter.emitterPosition = CGPoint(x: particle.origin.x, y: particle.origin.y)
+        emitter.emitterShape = .rectangle
+        emitter.emitterSize = configuration.emitterSize
+        emitter.seed = 7
+        emitter.renderMode = .unordered
+        let cell = CAEmitterCell()
+        cell.contents = sprite
+        cell.birthRate = configuration.birthRate
+        cell.lifetime = configuration.lifetime
+        cell.lifetimeRange = configuration.lifetimeRange
+        cell.velocity = 0
+        cell.velocityRange = configuration.velocityRange
+        cell.emissionRange = .pi * 2
+        cell.scale = configuration.scale
+        cell.scaleRange = configuration.scaleRange
+        cell.alphaSpeed = configuration.alphaSpeed
+        cell.spinRange = configuration.spinRange
+        cell.color = NSColor.white.withAlphaComponent(0.35).cgColor
+        emitter.emitterCells = [cell]
+        return emitter
+    }
+
+    private func buildPulseRingLayer(for particle: SceneParticleLayer) -> CALayer? {
+        guard let ring = Self.ringImage(diameter: 256) else {
+            return nil
+        }
+        let diameter = max(particle.sizeMax, 8)
+        let layer = CALayer()
+        layer.bounds = CGRect(x: 0, y: 0, width: diameter, height: diameter)
+        layer.position = CGPoint(x: particle.origin.x, y: particle.origin.y)
+        layer.contents = ring
+        layer.contentsGravity = .resize
+        layer.opacity = 0
+        let scale = CABasicAnimation(keyPath: "transform.scale")
+        scale.fromValue = max(particle.sizeChangeStart ?? 0, 0.001)
+        scale.toValue = max(particle.sizeChangeEnd ?? 1, 0.001)
+        let fade = CAKeyframeAnimation(keyPath: "opacity")
+        fade.values = [0.0, 0.4, 0.0]
+        fade.keyTimes = [0, 0.2, 1]
+        let group = CAAnimationGroup()
+        group.animations = [scale, fade]
+        group.duration = max(particle.lifetimeMax, 0.5)
+        group.repeatCount = .infinity
+        layer.add(group, forKey: "scene-particle-pulse")
+        return layer
+    }
+
+    nonisolated private static func ringImage(diameter: Int) -> CGImage? {
+        let size = CGSize(width: diameter, height: diameter)
+        guard let context = bitmapContext(size: size) else {
+            return nil
+        }
+        let bounds = CGRect(origin: .zero, size: size)
+        context.clear(bounds)
+        let lineWidth = CGFloat(diameter) * 0.05
+        context.setStrokeColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.55))
+        context.setLineWidth(lineWidth)
+        context.strokeEllipse(in: bounds.insetBy(dx: lineWidth, dy: lineWidth))
+        context.setStrokeColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.2))
+        context.setLineWidth(lineWidth * 2)
+        context.strokeEllipse(in: bounds.insetBy(dx: lineWidth * 2.2, dy: lineWidth * 2.2))
+        return context.makeImage()
+    }
+
+    /// Animated particle sprites are packed as multi-frame sheets; an emitter
+    /// cell needs a single frame, not the whole sheet.
+    nonisolated static func particleSpriteImage(from texture: SceneTexture) -> CGImage? {
+        if texture.animation != nil,
+           let firstFrame = animationFrameContents(for: texture)?.images.first {
+            return firstFrame
+        }
+        return cgImage(fromStorage: texture.storage)
+    }
+
+    nonisolated private static func softParticleImage(diameter: Int) -> CGImage? {
+        let size = CGSize(width: diameter, height: diameter)
+        guard let context = bitmapContext(size: size) else {
+            return nil
+        }
+        context.clear(CGRect(origin: .zero, size: size))
+        let colors = [
+            CGColor(red: 1, green: 1, blue: 1, alpha: 0.9),
+            CGColor(red: 1, green: 1, blue: 1, alpha: 0)
+        ] as CFArray
+        guard let gradient = CGGradient(
+            colorsSpace: CGColorSpaceCreateDeviceRGB(),
+            colors: colors,
+            locations: [0, 1]
+        ) else {
+            return nil
+        }
+        let center = CGPoint(x: size.width / 2, y: size.height / 2)
+        context.drawRadialGradient(
+            gradient,
+            startCenter: center,
+            startRadius: 0,
+            endCenter: center,
+            endRadius: size.width / 2,
+            options: []
+        )
+        return context.makeImage()
+    }
+
     private func buildEffectOnlyShaderLayer(for layerPlan: SceneLayer) -> CALayer? {
         let effects = Self.effectOnlyShaderEffects(for: layerPlan)
-        guard !effects.isEmpty,
-              let image = effectOnlyBaseImage(for: layerPlan) else {
+        guard !effects.isEmpty else {
+            return nil
+        }
+        // Generator effects such as sparkle emit their own pixels, so they
+        // start from a transparent base instead of freezing a scene snapshot.
+        let generatesOwnPixels = effects.allSatisfy { $0.effect == .sparkle }
+        let baseImage = generatesOwnPixels
+            ? Self.transparentImage(size: CGSize(
+                width: max(1, abs(layerPlan.size.width)),
+                height: max(1, abs(layerPlan.size.height))
+            ))
+            : effectOnlyBaseImage(for: layerPlan)
+        guard let image = baseImage else {
             return nil
         }
         let effectLayer = CALayer()
@@ -404,7 +614,7 @@ final class SceneWallpaperView: NSView,
             return
         }
         let keyframe = CAKeyframeAnimation(keyPath: "position")
-        configure(keyframe, duration: animation.duration)
+        configure(keyframe, duration: animation.duration, autoreverses: animation.autoreverses)
         keyframe.values = animation.keyframes.map { frame in
             let value = animation.isRelative
                 ? SceneVector3(
@@ -424,7 +634,7 @@ final class SceneWallpaperView: NSView,
             return
         }
         let xAnimation = CAKeyframeAnimation(keyPath: "transform.scale.x")
-        configure(xAnimation, duration: animation.duration)
+        configure(xAnimation, duration: animation.duration, autoreverses: animation.autoreverses)
         xAnimation.values = animation.keyframes.map { frame in
             animation.isRelative ? plan.scale.x + frame.value.x : frame.value.x
         }
@@ -432,7 +642,7 @@ final class SceneWallpaperView: NSView,
         layer.add(xAnimation, forKey: "scene-scale-x")
 
         let yAnimation = CAKeyframeAnimation(keyPath: "transform.scale.y")
-        configure(yAnimation, duration: animation.duration)
+        configure(yAnimation, duration: animation.duration, autoreverses: animation.autoreverses)
         yAnimation.values = animation.keyframes.map { frame in
             animation.isRelative ? plan.scale.y + frame.value.y : frame.value.y
         }
@@ -445,7 +655,7 @@ final class SceneWallpaperView: NSView,
             return
         }
         let keyframe = CAKeyframeAnimation(keyPath: "transform.rotation.z")
-        configure(keyframe, duration: animation.duration)
+        configure(keyframe, duration: animation.duration, autoreverses: animation.autoreverses)
         keyframe.values = animation.keyframes.map { frame in
             let degrees = animation.isRelative ? plan.angles.z + frame.value.z : frame.value.z
             return Self.radians(fromDegrees: degrees)
@@ -459,7 +669,7 @@ final class SceneWallpaperView: NSView,
             return
         }
         let keyframe = CAKeyframeAnimation(keyPath: "opacity")
-        configure(keyframe, duration: animation.duration)
+        configure(keyframe, duration: animation.duration, autoreverses: animation.autoreverses)
         let opacityEffect = opacityMultiplier(for: plan)
         keyframe.values = animation.keyframes.map { frame in
             let opacity = animation.isRelative ? plan.alpha + frame.value : frame.value
@@ -478,15 +688,15 @@ final class SceneWallpaperView: NSView,
             switch effect.effect {
             case .shake:
                 addShakeEffectAnimation(to: layer, effect: effect)
-            case .spin:
+            case .spin where !effect.usesMask:
                 addSpinEffectAnimation(to: layer, effect: effect)
             case .shine:
                 addShineEffectAnimation(to: layer, effect: effect)
             case .pulse:
                 addPulseEffectAnimation(to: layer, effect: effect)
-            case .waterFlow, .waterWaves, .waterRipple, .scroll, .opacity,
+            case .spin, .waterFlow, .waterWaves, .waterRipple, .scroll, .opacity,
                     .bloom, .blur, .chromaticAberration, .clouds, .godRays,
-                    .localContrast, .materialColor:
+                    .localContrast, .materialColor, .sparkle:
                 continue
             }
         }
@@ -507,11 +717,23 @@ final class SceneWallpaperView: NSView,
 
     private func addSpinEffectAnimation(to layer: CALayer, effect: SceneLayerEffectSetting) {
         let animation = CABasicAnimation(keyPath: "transform.rotation.z")
-        animation.byValue = CGFloat.pi * 2
-        animation.duration = Self.layerEffectDuration(for: effect, defaultDuration: 8)
+        let parameters = Self.spinAnimationParameters(for: effect)
+        animation.byValue = parameters.byValue
+        animation.duration = parameters.duration
         animation.repeatCount = .infinity
         animation.timingFunction = CAMediaTimingFunction(name: .linear)
         layer.add(animation, forKey: "scene-effect-spin")
+    }
+
+    /// Wallpaper Engine spin speed is radians per second with sign giving the
+    /// rotation direction.
+    nonisolated static func spinAnimationParameters(
+        for effect: SceneLayerEffectSetting
+    ) -> (byValue: CGFloat, duration: Double) {
+        guard let speed = effect.speed, abs(speed) > 0.000_001 else {
+            return (CGFloat.pi * 2, 8)
+        }
+        return (speed < 0 ? -CGFloat.pi * 2 : CGFloat.pi * 2, (2 * Double.pi) / abs(speed))
     }
 
     private func addShineEffectAnimation(to layer: CALayer, effect: SceneLayerEffectSetting) {
@@ -590,10 +812,11 @@ final class SceneWallpaperView: NSView,
         return maskLayer
     }
 
-    private func configure(_ animation: CAKeyframeAnimation, duration: Double) {
+    private func configure(_ animation: CAKeyframeAnimation, duration: Double, autoreverses: Bool = false) {
         animation.duration = duration
         animation.repeatCount = .infinity
         animation.calculationMode = .linear
+        animation.autoreverses = autoreverses
     }
 
     private func registerShaderEffects(for layer: CALayer, image: CGImage, plan: SceneLayer) {
@@ -604,16 +827,41 @@ final class SceneWallpaperView: NSView,
         registerShaderEffects(for: layer, image: image, effects: effects)
     }
 
+    nonisolated private static let maximumShaderImageDimension: CGFloat = 2048
+
     private func registerShaderEffects(
         for layer: CALayer,
         image: CGImage,
         effects: [SceneLayerEffectSetting]
     ) {
+        var auxiliaryImages: [String: CIImage] = [:]
+        for setting in effects {
+            guard let path = setting.auxiliaryTexturePath,
+                  auxiliaryImages[path] == nil,
+                  let texture = plan.textures[path],
+                  let auxImage = Self.cgImage(fromStorage: texture.storage) else {
+                continue
+            }
+            auxiliaryImages[path] = CIImage(cgImage: auxImage)
+        }
         shaderEffectLayers.append(ShaderEffectLayer(
             layer: layer,
-            baseImage: CIImage(cgImage: image),
-            effects: effects
+            baseImage: Self.shaderBaseImage(from: image),
+            effects: effects,
+            auxiliaryImages: auxiliaryImages
         ))
+    }
+
+    /// Keeps per-tick Core Image work bounded on 4K scenes by rendering the
+    /// effect chain at a capped resolution; the layer scales the result back up.
+    nonisolated private static func shaderBaseImage(from image: CGImage) -> CIImage {
+        let ciImage = CIImage(cgImage: image)
+        let largestDimension = max(ciImage.extent.width, ciImage.extent.height)
+        guard largestDimension > maximumShaderImageDimension else {
+            return ciImage
+        }
+        let factor = maximumShaderImageDimension / largestDimension
+        return ciImage.transformed(by: CGAffineTransform(scaleX: factor, y: factor))
     }
 
     private func startSceneTickSourceIfNeeded() {
@@ -645,7 +893,8 @@ final class SceneWallpaperView: NSView,
                 baseImage: item.baseImage,
                 effects: item.effects,
                 time: time,
-                context: ciContext
+                context: ciContext,
+                auxiliaryImages: item.auxiliaryImages
             ) else {
                 continue
             }
@@ -673,7 +922,8 @@ final class SceneWallpaperView: NSView,
         baseImage: CIImage,
         effects: [SceneLayerEffectSetting],
         time: Double,
-        context: CIContext
+        context: CIContext,
+        auxiliaryImages: [String: CIImage] = [:]
     ) -> CGImage? {
         var image = baseImage
         for effect in effects {
@@ -682,6 +932,15 @@ final class SceneWallpaperView: NSView,
                 image = applyWaterWaves(to: image, effect: effect, time: time) ?? image
             case .scroll:
                 image = applyScroll(to: image, effect: effect, time: time) ?? image
+            case .spin:
+                image = applySpin(to: image, effect: effect, time: time) ?? image
+            case .sparkle:
+                image = applySparkle(
+                    to: image,
+                    effect: effect,
+                    time: time,
+                    noise: effect.auxiliaryTexturePath.flatMap { auxiliaryImages[$0] }
+                ) ?? image
             case .bloom:
                 image = applyBloom(to: image, effect: effect) ?? image
             case .blur:
@@ -694,7 +953,7 @@ final class SceneWallpaperView: NSView,
                 image = applyLocalContrast(to: image, effect: effect) ?? image
             case .materialColor:
                 image = applyMaterialColor(to: image, effect: effect) ?? image
-            case .shake, .spin, .shine, .opacity, .pulse, .clouds:
+            case .shake, .shine, .opacity, .pulse, .clouds:
                 continue
             }
         }
@@ -708,9 +967,13 @@ final class SceneWallpaperView: NSView,
             switch setting.effect {
             case .waterFlow, .waterWaves, .waterRipple, .scroll,
                     .bloom, .blur, .chromaticAberration, .godRays,
-                    .localContrast, .materialColor:
+                    .localContrast, .materialColor, .sparkle:
                 return true
-            case .shake, .spin, .shine, .opacity, .pulse, .clouds:
+            case .spin:
+                // Masked spin rotates the texture beneath a fixed opacity
+                // mask, which only the Core Image path can express.
+                return setting.usesMask
+            case .shake, .shine, .opacity, .pulse, .clouds:
                 return false
             }
         }
@@ -780,7 +1043,7 @@ final class SceneWallpaperView: NSView,
             return true
         case .waterFlow, .waterWaves, .waterRipple, .scroll, .opacity,
                 .bloom, .blur, .chromaticAberration, .clouds, .godRays,
-                .localContrast, .materialColor:
+                .localContrast, .materialColor, .sparkle:
             return false
         }
     }
@@ -804,7 +1067,7 @@ final class SceneWallpaperView: NSView,
             return !hasAlphaAnimation
         case .waterFlow, .waterWaves, .waterRipple, .scroll, .opacity,
                 .bloom, .blur, .chromaticAberration, .clouds, .godRays,
-                .localContrast, .materialColor:
+                .localContrast, .materialColor, .sparkle:
             return false
         }
     }
@@ -886,6 +1149,77 @@ final class SceneWallpaperView: NSView,
                 CIVector(x: extent.origin.x, y: extent.origin.y, z: extent.width, w: extent.height)
             ]
         )
+    }
+
+    private static func applySpin(
+        to image: CIImage,
+        effect: SceneLayerEffectSetting,
+        time: Double
+    ) -> CIImage? {
+        let speed = effect.speed ?? 0
+        guard abs(speed) > 0.000_001 else {
+            return image
+        }
+        let extent = image.extent
+        let angle = CGFloat(speed * time)
+        let center = CGPoint(x: extent.midX, y: extent.midY)
+        let transform = CGAffineTransform(translationX: center.x, y: center.y)
+            .rotated(by: angle)
+            .translatedBy(x: -center.x, y: -center.y)
+        return image.transformed(by: transform).cropped(to: extent)
+    }
+
+    /// Approximates the Wallpaper Engine "nitro" style glint shader: two
+    /// copies of a noise texture scroll against each other and pixels where
+    /// the product crosses the configured band light up as white twinkles.
+    private static func applySparkle(
+        to image: CIImage,
+        effect: SceneLayerEffectSetting,
+        time: Double,
+        noise: CIImage?
+    ) -> CIImage? {
+        guard let kernel = sparkleBandKernel,
+              let noise,
+              noise.extent.width > 0,
+              noise.extent.height > 0 else {
+            return image
+        }
+        let extent = image.extent
+        let uvScale = max(effect.scale ?? 2, 0.05)
+        let speeds = effect.speedVector ?? [0.05, 0, -0.05, 0]
+        let tileSize = CGSize(width: extent.width / uvScale, height: extent.height / uvScale)
+        guard tileSize.width >= 1, tileSize.height >= 1 else {
+            return image
+        }
+        func scrolledNoise(speedX: Double, speedY: Double) -> CIImage {
+            let offset = CGPoint(
+                x: CGFloat((speedX * time).truncatingRemainder(dividingBy: 1)) * tileSize.width,
+                y: CGFloat((speedY * time).truncatingRemainder(dividingBy: 1)) * tileSize.height
+            )
+            return noise
+                .transformed(by: CGAffineTransform(
+                    scaleX: tileSize.width / noise.extent.width,
+                    y: tileSize.height / noise.extent.height
+                ))
+                .transformed(by: CGAffineTransform(translationX: offset.x, y: offset.y))
+                .applyingFilter("CIAffineTile", parameters: [:])
+                .cropped(to: extent)
+        }
+        let bandCenter = effect.bounds.map { ($0.width + $0.height) / 2 } ?? 0.6
+        let gain = max(0.2, min((effect.strength ?? 1) * 0.15, 2.5))
+        guard let band = kernel.apply(
+            extent: extent,
+            arguments: [
+                scrolledNoise(speedX: speeds[0], speedY: speeds.count > 1 ? speeds[1] : 0),
+                scrolledNoise(speedX: speeds.count > 2 ? speeds[2] : -speeds[0], speedY: speeds.count > 3 ? speeds[3] : 0),
+                max(bandCenter - 0.16, 0),
+                min(bandCenter + 0.08, 1),
+                gain
+            ]
+        ) else {
+            return image
+        }
+        return band.composited(over: image).cropped(to: extent)
     }
 
     private static func applyBloom(to image: CIImage, effect: SceneLayerEffectSetting) -> CIImage? {

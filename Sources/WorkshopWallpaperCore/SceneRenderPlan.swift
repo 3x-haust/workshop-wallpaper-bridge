@@ -36,11 +36,13 @@ public struct SceneVectorKeyframe: Equatable, Sendable {
 public struct SceneVectorAnimation: Equatable, Sendable {
     public let duration: Double
     public let isRelative: Bool
+    public let autoreverses: Bool
     public let keyframes: [SceneVectorKeyframe]
 
-    public init(duration: Double, isRelative: Bool, keyframes: [SceneVectorKeyframe]) {
+    public init(duration: Double, isRelative: Bool, autoreverses: Bool = false, keyframes: [SceneVectorKeyframe]) {
         self.duration = duration
         self.isRelative = isRelative
+        self.autoreverses = autoreverses
         self.keyframes = keyframes
     }
 }
@@ -58,11 +60,13 @@ public struct SceneScalarKeyframe: Equatable, Sendable {
 public struct SceneScalarAnimation: Equatable, Sendable {
     public let duration: Double
     public let isRelative: Bool
+    public let autoreverses: Bool
     public let keyframes: [SceneScalarKeyframe]
 
-    public init(duration: Double, isRelative: Bool, keyframes: [SceneScalarKeyframe]) {
+    public init(duration: Double, isRelative: Bool, autoreverses: Bool = false, keyframes: [SceneScalarKeyframe]) {
         self.duration = duration
         self.isRelative = isRelative
+        self.autoreverses = autoreverses
         self.keyframes = keyframes
     }
 }
@@ -196,6 +200,7 @@ public enum SceneLayerEffect: String, Equatable, Sendable {
     case localContrast
     case materialColor
     case pulse
+    case sparkle
 }
 
 public struct SceneEffectMaskReference: Equatable, Sendable {
@@ -217,6 +222,9 @@ public struct SceneLayerEffectSetting: Equatable, Sendable {
     public let scale: Double?
     public let perspective: Double?
     public let direction: SceneVector3?
+    public let bounds: SceneSize?
+    public let speedVector: [Double]?
+    public let auxiliaryTexturePath: String?
     public let usesMask: Bool
     public let maskReference: SceneEffectMaskReference?
 
@@ -229,6 +237,9 @@ public struct SceneLayerEffectSetting: Equatable, Sendable {
         scale: Double? = nil,
         perspective: Double? = nil,
         direction: SceneVector3? = nil,
+        bounds: SceneSize? = nil,
+        speedVector: [Double]? = nil,
+        auxiliaryTexturePath: String? = nil,
         usesMask: Bool = false,
         maskReference: SceneEffectMaskReference? = nil
     ) {
@@ -240,6 +251,9 @@ public struct SceneLayerEffectSetting: Equatable, Sendable {
         self.scale = scale
         self.perspective = perspective
         self.direction = direction
+        self.bounds = bounds
+        self.speedVector = speedVector
+        self.auxiliaryTexturePath = auxiliaryTexturePath
         self.usesMask = usesMask || maskReference != nil
         self.maskReference = maskReference
     }
@@ -304,10 +318,79 @@ public struct SceneLayer: Equatable, Sendable {
     }
 }
 
+/// Conservative summary of a Wallpaper Engine particle system, carrying only
+/// the fields the macOS renderer can approximate with Core Animation emitters.
+public struct SceneParticleLayer: Equatable, Sendable {
+    public let name: String
+    public let origin: SceneVector3
+    public let maxCount: Int
+    public let rate: Double
+    public let lifetimeMin: Double
+    public let lifetimeMax: Double
+    public let sizeMin: Double
+    public let sizeMax: Double
+    public let velocityMin: SceneVector3
+    public let velocityMax: SceneVector3
+    public let emitterRadius: Double
+    public let hasAlphaFade: Bool
+    public let sizeChangeStart: Double?
+    public let sizeChangeEnd: Double?
+    public let angularVelocity: Double?
+    public let startTime: Double
+    public let isTrail: Bool
+    public let texturePath: String?
+    /// Number of content layers declared before this particle system, so the
+    /// renderer can slot it at the matching depth.
+    public let insertionIndex: Int
+
+    public init(
+        name: String,
+        origin: SceneVector3,
+        maxCount: Int,
+        rate: Double,
+        lifetimeMin: Double,
+        lifetimeMax: Double,
+        sizeMin: Double,
+        sizeMax: Double,
+        velocityMin: SceneVector3 = SceneVector3(x: 0, y: 0, z: 0),
+        velocityMax: SceneVector3 = SceneVector3(x: 0, y: 0, z: 0),
+        emitterRadius: Double = 0,
+        hasAlphaFade: Bool = false,
+        sizeChangeStart: Double? = nil,
+        sizeChangeEnd: Double? = nil,
+        angularVelocity: Double? = nil,
+        startTime: Double = 0,
+        isTrail: Bool = false,
+        texturePath: String? = nil,
+        insertionIndex: Int = .max
+    ) {
+        self.name = name
+        self.origin = origin
+        self.maxCount = maxCount
+        self.rate = rate
+        self.lifetimeMin = lifetimeMin
+        self.lifetimeMax = lifetimeMax
+        self.sizeMin = sizeMin
+        self.sizeMax = sizeMax
+        self.velocityMin = velocityMin
+        self.velocityMax = velocityMax
+        self.emitterRadius = emitterRadius
+        self.hasAlphaFade = hasAlphaFade
+        self.sizeChangeStart = sizeChangeStart
+        self.sizeChangeEnd = sizeChangeEnd
+        self.angularVelocity = angularVelocity
+        self.startTime = startTime
+        self.isTrail = isTrail
+        self.texturePath = texturePath
+        self.insertionIndex = insertionIndex
+    }
+}
+
 public struct SceneRenderPlan: Equatable, Sendable {
     public let canvasSize: SceneSize
     public let layers: [SceneLayer]
     public let textures: [String: SceneTexture]
+    public let particleLayers: [SceneParticleLayer]
 
     public var hasRenderableContent: Bool {
         layers.contains { layer in
@@ -321,10 +404,16 @@ public struct SceneRenderPlan: Equatable, Sendable {
         }
     }
 
-    public init(canvasSize: SceneSize, layers: [SceneLayer], textures: [String: SceneTexture]) {
+    public init(
+        canvasSize: SceneSize,
+        layers: [SceneLayer],
+        textures: [String: SceneTexture],
+        particleLayers: [SceneParticleLayer] = []
+    ) {
         self.canvasSize = canvasSize
         self.layers = layers
         self.textures = textures
+        self.particleLayers = particleLayers
     }
 }
 
@@ -360,8 +449,20 @@ public struct SceneRenderPlanBuilder: Sendable {
         let canvasSize = Self.canvasSize(from: scene)
         var layers: [SceneLayer] = []
         var textures: [String: SceneTexture] = [:]
+        var particleLayers: [SceneParticleLayer] = []
 
         for object in objects where Self.isVisible(object["visible"]) {
+            if let particlePath = Self.stringValue(object["particle"]) {
+                if let particle = Self.particleLayer(
+                    from: object,
+                    particlePath: particlePath,
+                    package: package,
+                    insertionIndex: layers.count
+                ) {
+                    particleLayers.append(particle)
+                }
+                continue
+            }
             if let imagePath = Self.stringValue(object["image"]) {
                 if let texturePath = try resolveTexturePath(imagePath: imagePath, package: package) {
                     var texture: SceneTexture?
@@ -419,14 +520,176 @@ public struct SceneRenderPlanBuilder: Sendable {
         guard !layers.isEmpty else {
             throw SceneRenderPlanError.noRenderableLayers
         }
+        let arrangedLayers = Self.distributeFullCanvasWarpEffects(
+            Self.deduplicatedMaskedTextLayers(Self.sortedLayers(layers)),
+            canvasSize: canvasSize
+        )
         if decodeTextures {
-            try Self.decodeMaskTextures(in: layers, package: package, textures: &textures)
+            try Self.decodeEffectTextures(in: arrangedLayers, package: package, textures: &textures)
+            Self.decodeParticleTextures(in: particleLayers, package: package, textures: &textures)
         }
         return SceneRenderPlan(
             canvasSize: canvasSize,
-            layers: Self.deduplicatedMaskedTextLayers(Self.sortedLayers(layers)),
-            textures: textures
+            layers: arrangedLayers,
+            textures: textures,
+            particleLayers: particleLayers
         )
+    }
+
+    /// Full-canvas effect-only layers (Wallpaper Engine compose layers) warp
+    /// everything rendered beneath them. A frozen snapshot overlay would hide
+    /// the live motion of the layers below, so their warp-style effects are
+    /// pushed down onto each underlying image layer instead.
+    static func distributeFullCanvasWarpEffects(
+        _ layers: [SceneLayer],
+        canvasSize: SceneSize
+    ) -> [SceneLayer] {
+        let warpEffects: Set<SceneLayerEffect> = [.waterFlow, .waterWaves, .waterRipple, .scroll]
+        let canvasArea = max(canvasSize.width * canvasSize.height, 1)
+        var result = layers
+        var index = 0
+        while index < result.count {
+            let layer = result[index]
+            let coverage = abs(layer.size.width * layer.size.height) / canvasArea
+            guard layer.isEffectOnly, coverage >= 0.5 else {
+                index += 1
+                continue
+            }
+            let distributable = layer.effectSettings.filter { warpEffects.contains($0.effect) }
+            let targets = (0..<index).filter { result[$0].text == nil && !result[$0].isEffectOnly }
+            guard !distributable.isEmpty, !targets.isEmpty else {
+                index += 1
+                continue
+            }
+            for target in targets {
+                result[target] = Self.appendingEffects(distributable, to: result[target])
+            }
+            let remaining = layer.effectSettings.filter { !warpEffects.contains($0.effect) }
+            if remaining.isEmpty {
+                result.remove(at: index)
+            } else {
+                result[index] = Self.replacingEffects(remaining, in: layer)
+                index += 1
+            }
+        }
+        return result
+    }
+
+    private static func appendingEffects(
+        _ settings: [SceneLayerEffectSetting],
+        to layer: SceneLayer
+    ) -> SceneLayer {
+        Self.replacingEffects(layer.effectSettings + settings, in: layer)
+    }
+
+    private static func replacingEffects(
+        _ settings: [SceneLayerEffectSetting],
+        in layer: SceneLayer
+    ) -> SceneLayer {
+        SceneLayer(
+            id: layer.id,
+            name: layer.name,
+            texturePath: layer.texturePath,
+            text: layer.text,
+            effects: settings.map(\.effect),
+            effectSettings: settings,
+            isEffectOnly: layer.isEffectOnly,
+            origin: layer.origin,
+            size: layer.size,
+            scale: layer.scale,
+            alpha: layer.alpha,
+            angles: layer.angles,
+            originAnimation: layer.originAnimation,
+            scaleAnimation: layer.scaleAnimation,
+            angleAnimation: layer.angleAnimation,
+            alphaAnimation: layer.alphaAnimation
+        )
+    }
+
+    private static let maximumParticleCount = 1_000
+
+    private static func particleLayer(
+        from object: [String: Any],
+        particlePath: String,
+        package: ScenePackage,
+        insertionIndex: Int
+    ) -> SceneParticleLayer? {
+        guard let data = package.data(forPath: particlePath),
+              let particle = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let emitters = particle["emitter"] as? [[String: Any]],
+              let emitter = emitters.first else {
+            return nil
+        }
+        let initializers = particle["initializer"] as? [[String: Any]] ?? []
+        let operators = particle["operator"] as? [[String: Any]] ?? []
+        let renderers = particle["renderer"] as? [[String: Any]] ?? []
+        func initializer(_ name: String) -> [String: Any]? {
+            initializers.first { stringValue($0["name"]) == name }
+        }
+        func operatorNamed(_ name: String) -> [String: Any]? {
+            operators.first { stringValue($0["name"]) == name }
+        }
+        let lifetime = initializer("lifetimerandom")
+        let size = initializer("sizerandom")
+        let velocity = initializer("velocityrandom")
+        let angular = initializer("angularvelocityrandom")
+        let sizeChange = operatorNamed("sizechange")
+        let rendererName = renderers.compactMap { stringValue($0["name"]) }.first ?? "sprite"
+        guard rendererName == "sprite" || rendererName == "spritetrail" else {
+            return nil
+        }
+        let texturePath = particleTexturePath(particle: particle, package: package)
+        let origin = vectorValue(object["origin"]) ?? SceneVector3(x: 0, y: 0, z: 0)
+        let lifetimeMin = max(doubleValue(lifetime?["min"]) ?? 1, 0.05)
+        let lifetimeMax = max(doubleValue(lifetime?["max"]) ?? lifetimeMin, lifetimeMin)
+        let sizeMin = max(doubleValue(size?["min"]) ?? 16, 1)
+        let sizeMax = max(doubleValue(size?["max"]) ?? sizeMin, sizeMin)
+        return SceneParticleLayer(
+            name: stringValue(object["name"]) ?? particlePath,
+            origin: origin,
+            maxCount: min(max(intValue(particle["maxcount"]) ?? 100, 1), maximumParticleCount),
+            rate: min(max(doubleValue(emitter["rate"]) ?? 1, 0), 100_000),
+            lifetimeMin: lifetimeMin,
+            lifetimeMax: lifetimeMax,
+            sizeMin: sizeMin,
+            sizeMax: sizeMax,
+            velocityMin: vectorValue(velocity?["min"]) ?? SceneVector3(x: 0, y: 0, z: 0),
+            velocityMax: vectorValue(velocity?["max"]) ?? SceneVector3(x: 0, y: 0, z: 0),
+            emitterRadius: max(doubleValue(emitter["distancemax"]) ?? 0, 0),
+            hasAlphaFade: operatorNamed("alphafade") != nil,
+            sizeChangeStart: doubleValue(sizeChange?["startvalue"]),
+            sizeChangeEnd: doubleValue(sizeChange?["endvalue"]),
+            angularVelocity: (vectorValue(angular?["min"]) ?? vectorValue(angular?["max"]))?.z,
+            startTime: doubleValue(particle["starttime"]) ?? 0,
+            isTrail: rendererName == "spritetrail",
+            texturePath: texturePath,
+            insertionIndex: insertionIndex
+        )
+    }
+
+    private static func particleTexturePath(particle: [String: Any], package: ScenePackage) -> String? {
+        guard let materialPath = stringValue(particle["material"]),
+              let materialData = package.data(forPath: materialPath),
+              let material = (try? JSONSerialization.jsonObject(with: materialData)) as? [String: Any],
+              let textureName = firstTextureName(in: material) else {
+            return nil
+        }
+        return textureCandidates(for: textureName).first { package.entry(named: $0) != nil }
+    }
+
+    private static func decodeParticleTextures(
+        in particleLayers: [SceneParticleLayer],
+        package: ScenePackage,
+        textures: inout [String: SceneTexture]
+    ) {
+        let decoder = SceneTextureDecoder()
+        for texturePath in Set(particleLayers.compactMap(\.texturePath)) where textures[texturePath] == nil {
+            guard let data = package.data(forPath: texturePath),
+                  let texture = try? decoder.decode(data: data) else {
+                continue
+            }
+            textures[texturePath] = texture
+        }
     }
 
     private func resolveTexturePath(imagePath: String, package: ScenePackage) throws -> String? {
@@ -487,12 +750,56 @@ public struct SceneRenderPlanBuilder: Sendable {
             return []
         }
         if name.hasSuffix(".tex") {
-            return name.contains("/") ? [name] : ["materials/\(name)", name]
+            return name.contains("/") ? [name, "materials/\(name)"] : ["materials/\(name)", name]
         }
         if name.contains("/") {
-            return ["\(name).tex", name]
+            return ["\(name).tex", "materials/\(name).tex", name]
         }
         return ["materials/\(name).tex", "\(name).tex", name]
+    }
+
+    /// Resolves the non-mask helper texture an effect samples, such as a
+    /// noise, normal, or phase map packed next to the effect material.
+    private static func auxiliaryTexturePath(in effect: [String: Any], package: ScenePackage?) -> String? {
+        guard let package else {
+            return nil
+        }
+        var names: [String] = []
+        collectEffectTextureNames(effect, into: &names, depth: 0)
+        for name in names {
+            let lowered = name.lowercased()
+            guard !lowered.contains("mask"),
+                  !lowered.hasPrefix("util/"),
+                  !lowered.hasPrefix("_rt_") else {
+                continue
+            }
+            if let resolved = textureCandidates(for: name).first(where: { package.entry(named: $0) != nil }) {
+                return resolved
+            }
+        }
+        return nil
+    }
+
+    private static func collectEffectTextureNames(_ value: Any, into names: inout [String], depth: Int) {
+        guard depth <= 64 else {
+            return
+        }
+        if let dict = value as? [String: Any] {
+            if let textures = dict["textures"] as? [Any] {
+                for texture in textures {
+                    if let name = stringValue(texture), !name.isEmpty {
+                        names.append(name)
+                    }
+                }
+            }
+            for child in dict.values {
+                collectEffectTextureNames(child, into: &names, depth: depth + 1)
+            }
+        } else if let array = value as? [Any] {
+            for child in array {
+                collectEffectTextureNames(child, into: &names, depth: depth + 1)
+            }
+        }
     }
 
     private static func layer(
@@ -692,6 +999,8 @@ public struct SceneRenderPlanBuilder: Sendable {
                 effect = .materialColor
             } else if file.contains("pulse") {
                 effect = .pulse
+            } else if file.contains("nitro") || file.contains("sparkle") {
+                effect = .sparkle
             } else {
                 effect = nil
             }
@@ -699,6 +1008,7 @@ public struct SceneRenderPlanBuilder: Sendable {
                 let constants = constantShaderValues(from: rawEffect)
                 let speedX = doubleValue(constants["speedx"])
                 let speedY = doubleValue(constants["speedy"])
+                let speedComponents = numericList(constants["speed"])
                 let maskReference = maskReference(in: rawEffect, package: package)
                 settings.append(SceneLayerEffectSetting(
                     effect: effect,
@@ -714,8 +1024,10 @@ public struct SceneRenderPlanBuilder: Sendable {
                     strength: doubleValue(constants["strength"])
                         ?? doubleValue(constants["ripplestrength"])
                         ?? doubleValue(constants["rayintensity"])
+                        ?? doubleValue(constants["multiply"])
                         ?? doubleValue(constants["alpha"]),
                     scale: doubleValue(constants["scale"])
+                        ?? numericList(constants["scale"]).first
                         ?? doubleValue(constants["phasescale"])
                         ?? doubleValue(constants["noisescale"]),
                     perspective: doubleValue(constants["perspective"]),
@@ -723,6 +1035,9 @@ public struct SceneRenderPlanBuilder: Sendable {
                         ?? vectorValue(constants["scrolldirection"])
                         ?? directionVector(fromAngle: doubleValue(constants["direction"]))
                         ?? directionVector(fromAngle: doubleValue(constants["scrolldirection"])),
+                    bounds: sizeValue(constants["bounds"]),
+                    speedVector: speedComponents.count >= 4 ? Array(speedComponents.prefix(4)) : nil,
+                    auxiliaryTexturePath: auxiliaryTexturePath(in: rawEffect, package: package),
                     usesMask: containsMaskReference(rawEffect, depth: 0),
                     maskReference: maskReference
                 ))
@@ -731,16 +1046,17 @@ public struct SceneRenderPlanBuilder: Sendable {
         return settings
     }
 
-    private static func decodeMaskTextures(
+    private static func decodeEffectTextures(
         in layers: [SceneLayer],
         package: ScenePackage,
         textures: inout [String: SceneTexture]
     ) throws {
-        let maskTexturePaths = Set(layers.flatMap { layer in
+        let effectTexturePaths = Set(layers.flatMap { layer in
             layer.effectSettings.compactMap { $0.maskReference?.texturePath }
+                + layer.effectSettings.compactMap(\.auxiliaryTexturePath)
         })
         let decoder = SceneTextureDecoder()
-        for texturePath in maskTexturePaths where textures[texturePath] == nil {
+        for texturePath in effectTexturePaths where textures[texturePath] == nil {
             guard let data = package.data(forPath: texturePath) else {
                 continue
             }
@@ -908,8 +1224,10 @@ public struct SceneRenderPlanBuilder: Sendable {
               let animation = dict["animation"] as? [String: Any] else {
             return nil
         }
-        let fps = doubleValue((animation["options"] as? [String: Any])?["fps"]) ?? 30
-        let isRelative = boolValue((animation["options"] as? [String: Any])?["relative"]) ?? false
+        let options = animation["options"] as? [String: Any]
+        let fps = doubleValue(options?["fps"]) ?? 30
+        let isRelative = boolValue(options?["relative"]) ?? false
+        let autoreverses = stringValue(options?["mode"])?.lowercased() == "mirror"
         let missingChannelValue = isRelative ? SceneVector3(x: 0, y: 0, z: 0) : fallback
         let channels = [
             channelFrames(animation["c0"], fps: fps),
@@ -931,7 +1249,12 @@ public struct SceneRenderPlanBuilder: Sendable {
         guard keyframes.count >= 2 else {
             return nil
         }
-        return SceneVectorAnimation(duration: max(duration, 0.1), isRelative: isRelative, keyframes: keyframes)
+        return SceneVectorAnimation(
+            duration: max(duration, 0.1),
+            isRelative: isRelative,
+            autoreverses: autoreverses,
+            keyframes: keyframes
+        )
     }
 
     private static func scalarAnimation(_ value: Any?, fallback: Double) -> SceneScalarAnimation? {
@@ -939,8 +1262,10 @@ public struct SceneRenderPlanBuilder: Sendable {
               let animation = dict["animation"] as? [String: Any] else {
             return nil
         }
-        let fps = doubleValue((animation["options"] as? [String: Any])?["fps"]) ?? 30
-        let isRelative = boolValue((animation["options"] as? [String: Any])?["relative"]) ?? false
+        let options = animation["options"] as? [String: Any]
+        let fps = doubleValue(options?["fps"]) ?? 30
+        let isRelative = boolValue(options?["relative"]) ?? false
+        let autoreverses = stringValue(options?["mode"])?.lowercased() == "mirror"
         let frames = channelFrames(animation["c0"], fps: fps)
         let duration = animationDuration(animation, fps: fps, channels: [frames])
         let missingChannelValue = isRelative ? 0 : fallback
@@ -950,7 +1275,12 @@ public struct SceneRenderPlanBuilder: Sendable {
         guard keyframes.count >= 2 else {
             return nil
         }
-        return SceneScalarAnimation(duration: max(duration, 0.1), isRelative: isRelative, keyframes: keyframes)
+        return SceneScalarAnimation(
+            duration: max(duration, 0.1),
+            isRelative: isRelative,
+            autoreverses: autoreverses,
+            keyframes: keyframes
+        )
     }
 
     private static func animationDuration(
