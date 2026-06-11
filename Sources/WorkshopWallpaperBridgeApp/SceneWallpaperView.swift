@@ -1231,8 +1231,9 @@ final class SceneWallpaperView: NSView,
         ]
     }
 
-    nonisolated private static let whiteMask = CIImage(color: CIColor.white)
-        .cropped(to: CGRect(x: 0, y: 0, width: 4, height: 4))
+    nonisolated private static func whiteMaskImage() -> CIImage {
+        CIImage(color: CIColor.white).cropped(to: CGRect(x: 0, y: 0, width: 4, height: 4))
+    }
 
     private static func extentVector(_ extent: CGRect) -> CIVector {
         CIVector(x: extent.origin.x, y: extent.origin.y, z: extent.width, w: extent.height)
@@ -1249,7 +1250,7 @@ final class SceneWallpaperView: NSView,
         }
         let direction = normalizedDirection(effect.direction)
         let extent = image.extent
-        let maskImage = mask ?? whiteMask
+        let maskImage = mask ?? whiteMaskImage()
         return kernel.apply(
             extent: extent,
             roiCallback: { index, rect in index == 0 ? rect.insetBy(dx: -64, dy: -64) : maskImage.extent },
@@ -1285,7 +1286,7 @@ final class SceneWallpaperView: NSView,
         }
         let direction = normalizedDirection(effect.direction)
         let extent = image.extent
-        let maskImage = mask ?? whiteMask
+        let maskImage = mask ?? whiteMaskImage()
         return kernel.apply(
             extent: extent,
             roiCallback: { index, rect in
