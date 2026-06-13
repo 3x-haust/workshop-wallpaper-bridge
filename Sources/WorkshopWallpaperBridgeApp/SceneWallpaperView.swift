@@ -13,6 +13,8 @@ final class SceneWallpaperView: NSView,
     private let sceneLayer = CALayer()
     private var contentLayers: [CALayer] = []
     private var shaderEffectLayers: [ShaderEffectLayer] = []
+    private var puppetLayers: [PuppetLayerState] = []
+    private var lastPuppetRenderTime: TimeInterval = -1
     private var dynamicTextLayers: [DynamicTextLayer] = []
     private var textRefreshTimer: Timer?
     private let sceneTickSource: SceneTickSource
@@ -23,10 +25,18 @@ final class SceneWallpaperView: NSView,
 
     private struct ShaderEffectLayer {
         let layer: CALayer
-        let baseImage: CIImage
+        var baseImage: CIImage
         let effects: [SceneLayerEffectSetting]
         let auxiliaryImages: [String: CIImage]
         let maskImages: [String: CIImage]
+    }
+
+    private struct PuppetLayerState {
+        let layer: CALayer
+        let renderer: ScenePuppetMeshRenderer
+        /// Index into `shaderEffectLayers` when the puppet frame also feeds
+        /// a Core Image effect chain on the same layer.
+        let shaderIndex: Int?
     }
 
     private struct DynamicTextLayer {
@@ -182,6 +192,60 @@ final class SceneWallpaperView: NSView,
     }
     """)
 
+    /// shaders/effects/spin.vert + .frag in UV mode with the default
+    /// perspective aspect correction; REPEAT 0 clamps instead of tiling.
+    private static let spinKernel = CIKernel(source: """
+    kernel vec4 weSpin(
+        sampler image, vec4 extent,
+        float time, float speed, vec2 center, float aspect, float repeatFlag
+    ) {
+        vec2 uv = (destCoord() - extent.xy) / extent.zw;
+        vec2 uvWE = vec2(uv.x, 1.0 - uv.y);
+        vec2 spinCenter = vec2(center.x * aspect, center.y);
+        vec2 p = vec2(uvWE.x * aspect, uvWE.y) - spinCenter;
+        float angle = speed * time;
+        vec2 rotated = vec2(p.x * cos(angle) - p.y * sin(angle), p.x * sin(angle) + p.y * cos(angle));
+        vec2 outUV = vec2((rotated.x + spinCenter.x) / aspect, rotated.y + spinCenter.y);
+        if (repeatFlag > 0.5) {
+            outUV = fract(outUV);
+        } else {
+            outUV = clamp(outUV, vec2(0.0, 0.0), vec2(1.0, 1.0));
+        }
+        return sample(image, samplerTransform(image, extent.xy + vec2(outUV.x, 1.0 - outUV.y) * extent.zw));
+    }
+    """)
+
+    /// shaders/effects/shake.frag (NOISE 0, DIRECTION center, no audio):
+    /// the "shake mask" is a flow map whose pixels point along the local
+    /// shake direction, so only fins and tails move.
+    private static let shakeKernel = CIKernel(source: """
+    kernel vec4 weShake(
+        sampler image, sampler flowMap, sampler phaseMap,
+        vec4 extent, vec4 flowExtent, vec4 phaseExtent,
+        float time, float speed, float strength,
+        vec2 friction, vec2 bounds, float hasPhase
+    ) {
+        vec2 uv = (destCoord() - extent.xy) / extent.zw;
+        vec2 uvWE = vec2(uv.x, 1.0 - uv.y);
+        float halfPi = 1.5707963;
+        float flowPhase = halfPi;
+        if (hasPhase > 0.5) {
+            flowPhase = sample(phaseMap, samplerTransform(phaseMap, phaseExtent.xy + uv * phaseExtent.zw)).r * halfPi;
+        }
+        vec2 flow = (sample(flowMap, samplerTransform(flowMap, flowExtent.xy + uv * flowExtent.zw)).rg - vec2(0.498, 0.498)) * 2.0;
+        float t = speed * time + flowPhase;
+        float offset = sin(fract(t / halfPi) * halfPi);
+        offset = offset * 0.498 + 0.5;
+        float base = cos(t) >= 0.0 ? 1.0 : 0.0;
+        offset = mix(1.0 - pow(1.0 - offset, friction.x), pow(offset, friction.y), base);
+        float boundsScale = 1.0 / max(bounds.y - bounds.x, 0.0001);
+        offset = clamp((offset - bounds.x) * boundsScale, 0.0, 1.0);
+        offset = offset * 2.0 - 1.0;
+        vec2 shifted = clamp(uvWE + offset * strength * strength * flow, vec2(0.0, 0.0), vec2(1.0, 1.0));
+        return sample(image, samplerTransform(image, extent.xy + vec2(shifted.x, 1.0 - shifted.y) * extent.zw));
+    }
+    """)
+
     /// shaders/effects/scroll.vert + .frag (speed is squared with its sign
     /// preserved before scaling by time, exactly like the packaged shader).
     private static let scrollWarpKernel = CIWarpKernel(source: """
@@ -265,6 +329,8 @@ final class SceneWallpaperView: NSView,
         }
         contentLayers = []
         shaderEffectLayers = []
+        puppetLayers = []
+        lastPuppetRenderTime = -1
         dynamicTextLayers = []
         textRefreshTimer?.invalidate()
         textRefreshTimer = nil
@@ -321,6 +387,8 @@ final class SceneWallpaperView: NSView,
         }
         contentLayers = []
         shaderEffectLayers = []
+        puppetLayers = []
+        lastPuppetRenderTime = -1
         dynamicTextLayers = []
         textRefreshTimer?.invalidate()
         textRefreshTimer = nil
@@ -379,6 +447,7 @@ final class SceneWallpaperView: NSView,
                 imageLayer.contentsScale = NSScreen.main?.backingScaleFactor ?? 2
                 imageLayer.minificationFilter = .linear
                 imageLayer.magnificationFilter = .linear
+                var puppetRenderer: ScenePuppetMeshRenderer?
                 if let frameContents, frameContents.images.count > 1 {
                     // Shader effect ticks overwrite layer contents every frame,
                     // which would freeze sprite playback, so animated textures
@@ -388,14 +457,37 @@ final class SceneWallpaperView: NSView,
                         forKey: "scene-texture-frames"
                     )
                 } else {
-                    registerShaderEffects(for: imageLayer, image: image, plan: layerPlan)
+                    if let puppetPath = layerPlan.puppetPath,
+                       let puppetModel = plan.puppets[puppetPath] {
+                        puppetRenderer = ScenePuppetMeshRenderer(
+                            model: puppetModel,
+                            texture: image,
+                            animationID: layerPlan.puppetAnimationID,
+                            rate: layerPlan.puppetRate
+                        )
+                    }
+                    let bindPose = puppetRenderer?.render(at: 0)
+                    if let bindPose {
+                        imageLayer.contents = bindPose
+                    }
+                    registerShaderEffects(for: imageLayer, image: bindPose ?? image, plan: layerPlan)
                 }
                 contentLayer = imageLayer
+                if let puppetRenderer {
+                    puppetLayers.append(PuppetLayerState(
+                        layer: imageLayer,
+                        renderer: puppetRenderer,
+                        shaderIndex: shaderEffectLayers.lastIndex { $0.layer === imageLayer }
+                    ))
+                }
             }
             contentLayer.name = layerPlan.name
             contentLayer.opacity = Float(max(0, min(layerPlan.alpha * opacityMultiplier(for: layerPlan), 1)))
             configure(contentLayer, with: layerPlan)
             applyOpacityMaskIfAvailable(to: contentLayer, for: layerPlan)
+            if let state = puppetLayers.last, state.layer === contentLayer {
+                applyPuppetGeometry(to: contentLayer, renderer: state.renderer, plan: layerPlan)
+            }
             sceneLayer.addSublayer(contentLayer)
             contentLayers.append(contentLayer)
         }
@@ -798,15 +890,14 @@ final class SceneWallpaperView: NSView,
             hasAlphaAnimation: plan.alphaAnimation != nil
         ) {
             switch effect.effect {
-            case .shake:
+            case .shake where effect.maskReference?.texturePath == nil:
+                // Flow-mapped shake plays through the Core Image port instead.
                 addShakeEffectAnimation(to: layer, effect: effect)
-            case .spin where !effect.usesMask:
-                addSpinEffectAnimation(to: layer, effect: effect)
             case .shine:
                 addShineEffectAnimation(to: layer, effect: effect)
             case .pulse:
                 addPulseEffectAnimation(to: layer, effect: effect)
-            case .spin, .waterFlow, .waterWaves, .waterRipple, .scroll, .opacity,
+            case .shake, .spin, .waterFlow, .waterWaves, .waterRipple, .scroll, .opacity,
                     .bloom, .blur, .chromaticAberration, .clouds, .godRays,
                     .localContrast, .materialColor, .sparkle:
                 continue
@@ -825,27 +916,6 @@ final class SceneWallpaperView: NSView,
         keyframe.values = offsets.map { CGPoint(x: $0.x, y: $0.y) }
         keyframe.keyTimes = [0, 0.25, 0.5, 0.75, 1]
         layer.add(keyframe, forKey: "scene-effect-shake")
-    }
-
-    private func addSpinEffectAnimation(to layer: CALayer, effect: SceneLayerEffectSetting) {
-        let animation = CABasicAnimation(keyPath: "transform.rotation.z")
-        let parameters = Self.spinAnimationParameters(for: effect)
-        animation.byValue = parameters.byValue
-        animation.duration = parameters.duration
-        animation.repeatCount = .infinity
-        animation.timingFunction = CAMediaTimingFunction(name: .linear)
-        layer.add(animation, forKey: "scene-effect-spin")
-    }
-
-    /// Wallpaper Engine spin speed is radians per second with sign giving the
-    /// rotation direction.
-    nonisolated static func spinAnimationParameters(
-        for effect: SceneLayerEffectSetting
-    ) -> (byValue: CGFloat, duration: Double) {
-        guard let speed = effect.speed, abs(speed) > 0.000_001 else {
-            return (CGFloat.pi * 2, 8)
-        }
-        return (speed < 0 ? -CGFloat.pi * 2 : CGFloat.pi * 2, (2 * Double.pi) / abs(speed))
     }
 
     private func addShineEffectAnimation(to layer: CALayer, effect: SceneLayerEffectSetting) {
@@ -998,12 +1068,52 @@ final class SceneWallpaperView: NSView,
     }
 
     private var needsSceneTickSource: Bool {
-        !shaderEffectLayers.isEmpty || dynamicTextLayers.contains { $0.scriptEvaluator != nil }
+        !shaderEffectLayers.isEmpty
+            || !puppetLayers.isEmpty
+            || dynamicTextLayers.contains { $0.scriptEvaluator != nil }
     }
 
     private func refreshSceneTickDrivenLayers(_ tick: SceneTick) {
+        refreshPuppetLayers(time: tick.elapsedTime)
         refreshShaderEffectLayers(time: tick.elapsedTime)
         refreshDynamicTextLayers(frameTime: tick.frameTime)
+    }
+
+    private static let puppetFrameInterval: TimeInterval = 1.0 / 30.0
+
+    /// Places the puppet canvas (which is the padded mesh bounding box, not
+    /// the sprite rectangle) so the bind pose lines up with the original
+    /// sprite placement.
+    private func applyPuppetGeometry(
+        to layer: CALayer,
+        renderer: ScenePuppetMeshRenderer,
+        plan layerPlan: SceneLayer
+    ) {
+        let bounds = renderer.meshBounds
+        layer.bounds = CGRect(x: 0, y: 0, width: bounds.width, height: bounds.height)
+        let offsetY = (renderer.yGrowsDown ? -1.0 : 1.0) * bounds.midY
+        layer.position = CGPoint(
+            x: CGFloat(layerPlan.origin.x) + bounds.midX * CGFloat(layerPlan.scale.x),
+            y: CGFloat(layerPlan.origin.y) + offsetY * CGFloat(layerPlan.scale.y)
+        )
+    }
+
+    private func refreshPuppetLayers(time: TimeInterval) {
+        guard !isClosed, !isSuspended, !puppetLayers.isEmpty,
+              time - lastPuppetRenderTime >= Self.puppetFrameInterval else {
+            return
+        }
+        lastPuppetRenderTime = time
+        for state in puppetLayers {
+            guard let frame = state.renderer.render(at: time) else {
+                continue
+            }
+            if let index = state.shaderIndex, index < shaderEffectLayers.count {
+                shaderEffectLayers[index].baseImage = CIImage(cgImage: frame)
+            } else {
+                state.layer.contents = frame
+            }
+        }
     }
 
     private func refreshShaderEffectLayers(time: TimeInterval) {
@@ -1068,6 +1178,8 @@ final class SceneWallpaperView: NSView,
                 image = applyScroll(to: image, effect: effect, time: time) ?? image
             case .spin:
                 image = applySpin(to: image, effect: effect, time: time) ?? image
+            case .shake:
+                image = applyShake(to: image, effect: effect, time: time, flowMap: mask, phaseMap: aux) ?? image
             case .sparkle:
                 image = applySparkle(to: image, effect: effect, time: time, noise: aux) ?? image
             case .bloom:
@@ -1082,7 +1194,7 @@ final class SceneWallpaperView: NSView,
                 image = applyLocalContrast(to: image, effect: effect) ?? image
             case .materialColor:
                 image = applyMaterialColor(to: image, effect: effect) ?? image
-            case .shake, .shine, .opacity, .pulse, .clouds:
+            case .shine, .opacity, .pulse, .clouds:
                 continue
             }
         }
@@ -1099,10 +1211,14 @@ final class SceneWallpaperView: NSView,
                     .localContrast, .materialColor, .sparkle:
                 return true
             case .spin:
-                // Masked spin rotates the texture beneath a fixed opacity
-                // mask, which only the Core Image path can express.
-                return setting.usesMask
-            case .shake, .shine, .opacity, .pulse, .clouds:
+                // spin.vert rotates UVs beneath any fixed opacity mask, which
+                // only the Core Image path can express.
+                return true
+            case .shake:
+                // The packaged shake is a flow-map displacement; without the
+                // flow map the Core Animation jiggle stands in.
+                return setting.maskReference?.texturePath != nil
+            case .shine, .opacity, .pulse, .clouds:
                 return false
             }
         }
@@ -1390,17 +1506,70 @@ final class SceneWallpaperView: NSView,
         effect: SceneLayerEffectSetting,
         time: Double
     ) -> CIImage? {
-        let speed = effect.speed ?? 0
-        guard abs(speed) > 0.000_001 else {
+        let speed = effect.speed ?? 1
+        guard let kernel = spinKernel, abs(speed) > 0.000_001 else {
             return image
         }
         let extent = image.extent
-        let angle = CGFloat(speed * time)
-        let center = CGPoint(x: extent.midX, y: extent.midY)
-        let transform = CGAffineTransform(translationX: center.x, y: center.y)
-            .rotated(by: angle)
-            .translatedBy(x: -center.x, y: -center.y)
-        return image.transformed(by: transform).cropped(to: extent)
+        let center = effect.center ?? SceneSize(width: 0.5, height: 0.5)
+        return kernel.apply(
+            extent: extent,
+            roiCallback: { _, rect in rect.insetBy(dx: -extent.width, dy: -extent.height) },
+            arguments: [
+                image,
+                extentVector(extent),
+                CGFloat(time),
+                CGFloat(speed),
+                CIVector(x: CGFloat(center.width), y: CGFloat(center.height)),
+                CGFloat(extent.height > 0 ? extent.width / extent.height : 1),
+                CGFloat(effect.repeats ? 1 : 0)
+            ]
+        )?.cropped(to: extent)
+    }
+
+    private static func applyShake(
+        to image: CIImage,
+        effect: SceneLayerEffectSetting,
+        time: Double,
+        flowMap: CIImage?,
+        phaseMap: CIImage?
+    ) -> CIImage? {
+        guard let kernel = shakeKernel,
+              let flowMap,
+              flowMap.extent.width > 0 else {
+            return image
+        }
+        let extent = image.extent
+        let friction = effect.friction ?? SceneSize(width: 1, height: 1)
+        let bounds = effect.bounds ?? SceneSize(width: 0, height: 1)
+        let phase = phaseMap ?? whiteMaskImage()
+        return kernel.apply(
+            extent: extent,
+            roiCallback: { index, rect in
+                switch index {
+                case 0:
+                    return rect.insetBy(dx: -96, dy: -96)
+                case 1:
+                    return flowMap.extent
+                default:
+                    return phase.extent
+                }
+            },
+            arguments: [
+                image,
+                flowMap,
+                phase,
+                extentVector(extent),
+                extentVector(flowMap.extent),
+                extentVector(phase.extent),
+                CGFloat(time),
+                CGFloat(effect.speed ?? 1),
+                CGFloat(max(0, min(effect.strength ?? 0.1, 0.5))),
+                CIVector(x: CGFloat(max(friction.width, 0.01)), y: CGFloat(max(friction.height, 0.01))),
+                CIVector(x: CGFloat(bounds.width), y: CGFloat(bounds.height)),
+                CGFloat(phaseMap == nil ? 0 : 1)
+            ]
+        )?.cropped(to: extent)
     }
 
     /// Direct port of the workshop "nitro" glint shader: the packaged noise

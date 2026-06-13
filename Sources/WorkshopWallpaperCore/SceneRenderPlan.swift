@@ -228,6 +228,9 @@ public struct SceneLayerEffectSetting: Equatable, Sendable {
     public let animationSpeed: Double?
     public let scrollSpeed: Double?
     public let ratio: Double?
+    public let center: SceneSize?
+    public let friction: SceneSize?
+    public let repeats: Bool
     public let auxiliaryTexturePath: String?
     public let usesMask: Bool
     public let maskReference: SceneEffectMaskReference?
@@ -247,6 +250,9 @@ public struct SceneLayerEffectSetting: Equatable, Sendable {
         animationSpeed: Double? = nil,
         scrollSpeed: Double? = nil,
         ratio: Double? = nil,
+        center: SceneSize? = nil,
+        friction: SceneSize? = nil,
+        repeats: Bool = true,
         auxiliaryTexturePath: String? = nil,
         usesMask: Bool = false,
         maskReference: SceneEffectMaskReference? = nil
@@ -265,6 +271,9 @@ public struct SceneLayerEffectSetting: Equatable, Sendable {
         self.animationSpeed = animationSpeed
         self.scrollSpeed = scrollSpeed
         self.ratio = ratio
+        self.center = center
+        self.friction = friction
+        self.repeats = repeats
         self.auxiliaryTexturePath = auxiliaryTexturePath
         self.usesMask = usesMask || maskReference != nil
         self.maskReference = maskReference
@@ -288,6 +297,9 @@ public struct SceneLayer: Equatable, Sendable {
     public let scaleAnimation: SceneVectorAnimation?
     public let angleAnimation: SceneVectorAnimation?
     public let alphaAnimation: SceneScalarAnimation?
+    public let puppetPath: String?
+    public let puppetAnimationID: Int?
+    public let puppetRate: Double
 
     public var hasAnimation: Bool {
         originAnimation != nil || scaleAnimation != nil || angleAnimation != nil || alphaAnimation != nil
@@ -309,7 +321,10 @@ public struct SceneLayer: Equatable, Sendable {
         originAnimation: SceneVectorAnimation?,
         scaleAnimation: SceneVectorAnimation? = nil,
         angleAnimation: SceneVectorAnimation? = nil,
-        alphaAnimation: SceneScalarAnimation? = nil
+        alphaAnimation: SceneScalarAnimation? = nil,
+        puppetPath: String? = nil,
+        puppetAnimationID: Int? = nil,
+        puppetRate: Double = 1
     ) {
         self.id = id
         self.name = name
@@ -327,6 +342,9 @@ public struct SceneLayer: Equatable, Sendable {
         self.scaleAnimation = scaleAnimation
         self.angleAnimation = angleAnimation
         self.alphaAnimation = alphaAnimation
+        self.puppetPath = puppetPath
+        self.puppetAnimationID = puppetAnimationID
+        self.puppetRate = puppetRate
     }
 }
 
@@ -403,6 +421,7 @@ public struct SceneRenderPlan: Equatable, Sendable {
     public let layers: [SceneLayer]
     public let textures: [String: SceneTexture]
     public let particleLayers: [SceneParticleLayer]
+    public let puppets: [String: ScenePuppetModel]
 
     public var hasRenderableContent: Bool {
         layers.contains { layer in
@@ -420,12 +439,14 @@ public struct SceneRenderPlan: Equatable, Sendable {
         canvasSize: SceneSize,
         layers: [SceneLayer],
         textures: [String: SceneTexture],
-        particleLayers: [SceneParticleLayer] = []
+        particleLayers: [SceneParticleLayer] = [],
+        puppets: [String: ScenePuppetModel] = [:]
     ) {
         self.canvasSize = canvasSize
         self.layers = layers
         self.textures = textures
         self.particleLayers = particleLayers
+        self.puppets = puppets
     }
 }
 
@@ -476,6 +497,7 @@ public struct SceneRenderPlanBuilder: Sendable {
                 continue
             }
             if let imagePath = Self.stringValue(object["image"]) {
+                let model = try? Self.modelJSON(imagePath: imagePath, package: package)
                 if let texturePath = try resolveTexturePath(imagePath: imagePath, package: package) {
                     var texture: SceneTexture?
                     if decodeTextures {
@@ -500,7 +522,8 @@ public struct SceneRenderPlanBuilder: Sendable {
                         text: nil,
                         texture: texture,
                         isEffectOnly: false,
-                        canvasSize: canvasSize
+                        canvasSize: canvasSize,
+                        puppetPath: model.flatMap { Self.stringValue($0["puppet"]) }
                     ))
                 } else if Self.isEffectOnlyImageLayer(imagePath: imagePath, object: object) {
                     layers.append(Self.layer(
@@ -536,16 +559,35 @@ public struct SceneRenderPlanBuilder: Sendable {
             Self.deduplicatedMaskedTextLayers(Self.sortedLayers(layers)),
             canvasSize: canvasSize
         )
+        var puppets: [String: ScenePuppetModel] = [:]
         if decodeTextures {
             try Self.decodeEffectTextures(in: arrangedLayers, package: package, textures: &textures)
             Self.decodeParticleTextures(in: particleLayers, package: package, textures: &textures)
+            puppets = Self.decodePuppetModels(in: arrangedLayers, package: package)
         }
         return SceneRenderPlan(
             canvasSize: canvasSize,
             layers: arrangedLayers,
             textures: textures,
-            particleLayers: particleLayers
+            particleLayers: particleLayers,
+            puppets: puppets
         )
+    }
+
+    private static func decodePuppetModels(
+        in layers: [SceneLayer],
+        package: ScenePackage
+    ) -> [String: ScenePuppetModel] {
+        var puppets: [String: ScenePuppetModel] = [:]
+        let decoder = ScenePuppetModelDecoder()
+        for path in Set(layers.compactMap(\.puppetPath)) {
+            guard let data = package.data(forPath: path),
+                  let model = try? decoder.decode(data: data) else {
+                continue
+            }
+            puppets[path] = model
+        }
+        return puppets
     }
 
     /// Full-canvas effect-only layers (Wallpaper Engine compose layers) warp
@@ -617,10 +659,38 @@ public struct SceneRenderPlanBuilder: Sendable {
             animationSpeed: setting.animationSpeed,
             scrollSpeed: setting.scrollSpeed,
             ratio: setting.ratio,
+            center: setting.center,
+            friction: setting.friction,
+            repeats: setting.repeats,
             auxiliaryTexturePath: setting.auxiliaryTexturePath,
             usesMask: false,
             maskReference: nil
         )
+    }
+
+    /// Reads a [COMBO] switch value (e.g. REPEAT) from an effect instance.
+    private static func comboValue(named name: String, in effect: [String: Any], depth: Int = 0) -> Int? {
+        guard depth <= 64 else {
+            return nil
+        }
+        if let combos = effect["combos"] as? [String: Any], let value = intValue(combos[name]) {
+            return value
+        }
+        for child in effect.values {
+            if let childDict = child as? [String: Any],
+               let value = comboValue(named: name, in: childDict, depth: depth + 1) {
+                return value
+            }
+            if let array = child as? [Any] {
+                for item in array {
+                    if let itemDict = item as? [String: Any],
+                       let value = comboValue(named: name, in: itemDict, depth: depth + 1) {
+                        return value
+                    }
+                }
+            }
+        }
+        return nil
     }
 
     private static func replacingEffects(
@@ -643,7 +713,10 @@ public struct SceneRenderPlanBuilder: Sendable {
             originAnimation: layer.originAnimation,
             scaleAnimation: layer.scaleAnimation,
             angleAnimation: layer.angleAnimation,
-            alphaAnimation: layer.alphaAnimation
+            alphaAnimation: layer.alphaAnimation,
+            puppetPath: layer.puppetPath,
+            puppetAnimationID: layer.puppetAnimationID,
+            puppetRate: layer.puppetRate
         )
     }
 
@@ -843,6 +916,24 @@ public struct SceneRenderPlanBuilder: Sendable {
         }
     }
 
+    /// Parses the first visible puppet animation layer reference on an object.
+    private static func puppetAnimationLayer(from object: [String: Any]) -> (id: Int?, rate: Double) {
+        guard let layers = object["animationlayers"] as? [[String: Any]] else {
+            return (nil, 1)
+        }
+        for layer in layers where boolValue(layer["visible"]) ?? true {
+            return (intValue(layer["animation"]), doubleValue(layer["rate"]) ?? 1)
+        }
+        return (nil, 1)
+    }
+
+    private static func modelJSON(imagePath: String, package: ScenePackage) throws -> [String: Any]? {
+        guard let modelData = package.data(forPath: imagePath) else {
+            return nil
+        }
+        return try JSONSerialization.jsonObject(with: modelData) as? [String: Any]
+    }
+
     private static func layer(
         from object: [String: Any],
         package: ScenePackage,
@@ -850,7 +941,8 @@ public struct SceneRenderPlanBuilder: Sendable {
         text: SceneTextLayer?,
         texture: SceneTexture?,
         isEffectOnly: Bool,
-        canvasSize: SceneSize
+        canvasSize: SceneSize,
+        puppetPath: String? = nil
     ) -> SceneLayer {
         let originValue = vectorValue(object["origin"]) ?? SceneVector3(
             x: canvasSize.width / 2,
@@ -881,7 +973,10 @@ public struct SceneRenderPlanBuilder: Sendable {
             originAnimation: vectorAnimation(object["origin"], fallback: originValue),
             scaleAnimation: vectorAnimation(object["scale"], fallback: scaleValue),
             angleAnimation: vectorAnimation(object["angles"], fallback: anglesValue),
-            alphaAnimation: scalarAnimation(object["alpha"], fallback: alphaValue)
+            alphaAnimation: scalarAnimation(object["alpha"], fallback: alphaValue),
+            puppetPath: puppetPath,
+            puppetAnimationID: puppetAnimationLayer(from: object).id,
+            puppetRate: puppetAnimationLayer(from: object).rate
         )
     }
 
@@ -1085,6 +1180,9 @@ public struct SceneRenderPlanBuilder: Sendable {
                     animationSpeed: doubleValue(constants["animationspeed"]),
                     scrollSpeed: doubleValue(constants["scrollspeed"]),
                     ratio: doubleValue(constants["ratio"]),
+                    center: sizeValue(constants["center"]),
+                    friction: sizeValue(constants["friction"]),
+                    repeats: comboValue(named: "REPEAT", in: rawEffect) != 0,
                     auxiliaryTexturePath: auxiliaryTexturePath(in: rawEffect, package: package),
                     usesMask: containsMaskReference(rawEffect, depth: 0),
                     maskReference: maskReference

@@ -4,40 +4,26 @@ import XCTest
 @testable import WorkshopWallpaperBridgeApp
 
 final class SceneWallpaperViewEffectParityTests: XCTestCase {
-    func testSpinAnimationParametersFollowSpeedSignAndMagnitude() {
-        let clockwise = SceneWallpaperView.spinAnimationParameters(
-            for: SceneLayerEffectSetting(effect: .spin, speed: -0.16)
+    func testSpinAlwaysRendersThroughCoreImageAndShakeNeedsItsFlowMap() {
+        let spin = SceneLayerEffectSetting(effect: .spin, speed: -0.16)
+        let flowShake = SceneLayerEffectSetting(
+            effect: .shake,
+            speed: 1,
+            strength: 0.16,
+            maskReference: SceneEffectMaskReference(
+                source: "masks/shake_mask",
+                texturePath: "materials/masks/shake_mask.tex"
+            )
         )
-        XCTAssertEqual(clockwise.byValue, -CGFloat.pi * 2)
-        XCTAssertEqual(clockwise.duration, (2 * Double.pi) / 0.16, accuracy: 0.001)
-
-        let counterClockwise = SceneWallpaperView.spinAnimationParameters(
-            for: SceneLayerEffectSetting(effect: .spin, speed: 0.5)
-        )
-        XCTAssertEqual(counterClockwise.byValue, CGFloat.pi * 2)
-        XCTAssertEqual(counterClockwise.duration, (2 * Double.pi) / 0.5, accuracy: 0.001)
-
-        let defaulted = SceneWallpaperView.spinAnimationParameters(
-            for: SceneLayerEffectSetting(effect: .spin)
-        )
-        XCTAssertEqual(defaulted.byValue, CGFloat.pi * 2)
-        XCTAssertEqual(defaulted.duration, 8, accuracy: 0.001)
-    }
-
-    func testMaskedSpinIsShaderRenderableAndUnmaskedSpinIsNot() {
-        let masked = SceneLayerEffectSetting(
-            effect: .spin,
-            speed: -0.16,
-            maskReference: SceneEffectMaskReference(source: "mask", texturePath: "materials/mask.tex")
-        )
-        let unmasked = SceneLayerEffectSetting(effect: .spin, speed: -0.16)
+        let plainShake = SceneLayerEffectSetting(effect: .shake, speed: 1, strength: 0.16)
         let sparkle = SceneLayerEffectSetting(effect: .sparkle)
 
-        let renderable = SceneWallpaperView.shaderRenderableEffects(from: [masked, unmasked, sparkle])
+        let renderable = SceneWallpaperView.shaderRenderableEffects(
+            from: [spin, flowShake, plainShake, sparkle]
+        )
 
-        XCTAssertEqual(renderable.count, 2)
-        XCTAssertTrue(renderable.contains { $0.effect == .spin && $0.usesMask })
-        XCTAssertTrue(renderable.contains { $0.effect == .sparkle })
+        XCTAssertEqual(renderable.map(\.effect), [.spin, .shake, .sparkle])
+        XCTAssertTrue(renderable.contains { $0.effect == .shake && $0.maskReference != nil })
     }
 
     func testEmitterConfigurationMapsWallpaperEngineUnits() {
@@ -114,6 +100,10 @@ final class SceneWallpaperViewEffectParityTests: XCTestCase {
         XCTAssertTrue(source.contains("vec2 uv2r = vec2(-uv2.y, uv2.x);"))
         // waterflow.frag blends four phase-offset framebuffer samples.
         XCTAssertTrue(source.contains("fract(0.25 + time * speed + 0.5)"))
+        // spin.vert applies the aspect-corrected rotation about the center.
+        XCTAssertTrue(source.contains("vec2 spinCenter = vec2(center.x * aspect, center.y);"))
+        // shake.frag shapes the sine with the friction exponents.
+        XCTAssertTrue(source.contains("mix(1.0 - pow(1.0 - offset, friction.x), pow(offset, friction.y), base)"))
     }
 
     func testSparkleEffectOnlyLayersStartFromTransparentBase() throws {
