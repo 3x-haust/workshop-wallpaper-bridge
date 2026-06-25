@@ -30,6 +30,18 @@ Public releases are Developer ID signed, notarized, and Gatekeeper-checked with 
 
 The app checks GitHub Releases for updates automatically when **Auto-check Updates** is enabled. Use **Check Updates** from the settings window, or **Check for Updates** from the menu bar menu, to check manually. When a newer release exists, **Download Update** downloads the latest DMG.
 
+## Free And Pro
+
+The free app keeps local import, scanning, desktop playback, display modes, manual update checks, and video conversion available.
+
+Pro unlocks the operating-system integration features that need ongoing signed-release maintenance:
+
+- Automatic update checks.
+- Writing a still desktop and Lock Screen wallpaper with **Set Still Wallpaper**.
+- Animated screen saver controls with **Animate Screen Saver** and **Screen Saver Settings**.
+
+Enter a Pro license key in the settings window to unlock Pro on the current Mac. The project stays local-only: Pro does not add Steam downloads, account access, DRM bypassing, cloud sync, or creator asset redistribution.
+
 ## Use It
 
 For Wallpaper Engine projects:
