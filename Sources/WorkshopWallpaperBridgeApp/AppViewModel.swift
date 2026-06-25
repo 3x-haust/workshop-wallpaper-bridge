@@ -18,8 +18,6 @@ final class AppViewModel: ObservableObject {
     @Published private(set) var selectedLibraryAssetIds: Set<WallpaperAsset.ID> = []
     @Published var status = "Choose a copied Wallpaper Engine Workshop folder to begin."
     @Published var isWorking = false
-    @Published var proLicenseKey = ""
-    @Published private(set) var isProUnlocked = false
     @Published var displayMode: WallpaperDisplayMode = .fit {
         didSet {
             WallpaperPlayer.shared.setDisplayMode(displayMode)
@@ -40,24 +38,12 @@ final class AppViewModel: ObservableObject {
             guard !isSyncingLockScreenAnimation, lockScreenAnimationEnabled != oldValue else {
                 return
             }
-            guard isProUnlocked || !lockScreenAnimationEnabled else {
-                isSyncingLockScreenAnimation = true
-                lockScreenAnimationEnabled = false
-                isSyncingLockScreenAnimation = false
-                status = "Unlock Pro to animate the screen saver."
-                return
-            }
             setLockScreenAnimation(lockScreenAnimationEnabled)
         }
     }
     @Published var automaticallyCheckForUpdates = true {
         didSet {
             guard automaticallyCheckForUpdates != oldValue else {
-                return
-            }
-            guard isProUnlocked || !automaticallyCheckForUpdates else {
-                automaticallyCheckForUpdates = false
-                status = "Unlock Pro to enable automatic update checks."
                 return
             }
             userDefaults.set(automaticallyCheckForUpdates, forKey: PreferenceKey.automaticallyCheckForUpdates)
@@ -179,12 +165,6 @@ final class AppViewModel: ObservableObject {
         libraryAssets.filter { selectedLibraryAssetIds.contains($0.id) }
     }
 
-    var proStatusText: String {
-        isProUnlocked
-            ? "Pro unlocked. Thanks for supporting compatibility work."
-            : "Free includes local import and desktop playback. Pro unlocks automatic updates, still wallpaper writing, and animated screen saver controls."
-    }
-
     func selectLibraryAssets(_ ids: Set<WallpaperAsset.ID>) {
         selectedLibraryAssetIds = ids
         normalizeLibrarySelection(allowEmpty: true)
@@ -193,29 +173,6 @@ final class AppViewModel: ObservableObject {
     func selectScannedAssets(_ ids: Set<WallpaperAsset.ID>) {
         selectedScannedAssetIds = ids
         normalizeScannedSelection(allowEmpty: true)
-    }
-
-    func activateProLicense() {
-        let normalized = ProLicenseValidator.normalize(proLicenseKey)
-        guard ProLicenseValidator.isValid(normalized) else {
-            isProUnlocked = false
-            userDefaults.removeObject(forKey: PreferenceKey.proLicenseKey)
-            status = "That Pro license key is invalid."
-            return
-        }
-        proLicenseKey = normalized
-        isProUnlocked = true
-        userDefaults.set(normalized, forKey: PreferenceKey.proLicenseKey)
-        status = "Pro unlocked."
-    }
-
-    func clearProLicense() {
-        proLicenseKey = ""
-        isProUnlocked = false
-        userDefaults.removeObject(forKey: PreferenceKey.proLicenseKey)
-        automaticallyCheckForUpdates = false
-        lockScreenAnimationEnabled = false
-        status = "Pro license removed."
     }
 }
 
@@ -312,10 +269,6 @@ extension AppViewModel {
     }
 
     func setStillWallpaper() {
-        guard isProUnlocked else {
-            status = "Unlock Pro to set the macOS desktop and Lock Screen still wallpaper."
-            return
-        }
         guard let asset = selectedLibraryAsset else {
             status = "Select a library project first."
             return
@@ -396,10 +349,6 @@ extension AppViewModel {
     }
 
     func openScreenSaverSettings() {
-        guard isProUnlocked else {
-            status = "Unlock Pro to use animated screen saver controls."
-            return
-        }
         do {
             try lockScreenAnimationController.openScreenSaverSettings()
             status = "Installed and selected Workshop Wallpaper Bridge Screen Saver."
@@ -442,7 +391,7 @@ extension AppViewModel {
     }
 
     func performAutomaticUpdateCheckIfNeeded(force: Bool = false, now: Date = Date()) async {
-        guard automaticallyCheckForUpdates, isProUnlocked else {
+        guard automaticallyCheckForUpdates else {
             return
         }
         if !force,
@@ -528,11 +477,6 @@ extension AppViewModel {
     }
 
     private func restorePreferences() {
-        if let storedLicense = userDefaults.string(forKey: PreferenceKey.proLicenseKey),
-           ProLicenseValidator.isValid(storedLicense) {
-            proLicenseKey = ProLicenseValidator.normalize(storedLicense)
-            isProUnlocked = true
-        }
         if let rawDisplayMode = userDefaults.string(forKey: PreferenceKey.displayMode),
            let storedDisplayMode = WallpaperDisplayMode(rawValue: rawDisplayMode) {
             displayMode = storedDisplayMode
@@ -540,15 +484,13 @@ extension AppViewModel {
         if userDefaults.object(forKey: PreferenceKey.autoPauseWhenCovered) != nil {
             autoPauseWhenCovered = userDefaults.bool(forKey: PreferenceKey.autoPauseWhenCovered)
         }
-        if isProUnlocked, userDefaults.object(forKey: PreferenceKey.lockScreenAnimationEnabled) != nil {
+        if userDefaults.object(forKey: PreferenceKey.lockScreenAnimationEnabled) != nil {
             isSyncingLockScreenAnimation = true
             lockScreenAnimationEnabled = userDefaults.bool(forKey: PreferenceKey.lockScreenAnimationEnabled)
             isSyncingLockScreenAnimation = false
         }
-        if isProUnlocked, userDefaults.object(forKey: PreferenceKey.automaticallyCheckForUpdates) != nil {
+        if userDefaults.object(forKey: PreferenceKey.automaticallyCheckForUpdates) != nil {
             automaticallyCheckForUpdates = userDefaults.bool(forKey: PreferenceKey.automaticallyCheckForUpdates)
-        } else if !isProUnlocked {
-            automaticallyCheckForUpdates = false
         }
     }
 
@@ -681,5 +623,4 @@ private enum PreferenceKey {
     static let lastPlayedAssetId = "lastPlayedAssetId"
     static let automaticallyCheckForUpdates = "automaticallyCheckForUpdates"
     static let lastUpdateCheckAt = "lastUpdateCheckAt"
-    static let proLicenseKey = "proLicenseKey"
 }

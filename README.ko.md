@@ -30,18 +30,6 @@ Workshop Wallpaper Bridge가 도움이 되었다면 [Patreon](https://www.patreo
 
 **Auto-check Updates**가 켜져 있으면 앱이 GitHub Releases에서 업데이트를 자동 확인합니다. 설정 창의 **Check Updates** 또는 메뉴바 메뉴의 **Check for Updates**로 수동 확인할 수 있습니다. 새 릴리즈가 있으면 **Download Update**가 최신 DMG를 다운로드합니다.
 
-## 무료와 Pro
-
-무료 앱은 로컬 import, scan, desktop playback, display mode, 수동 update check, video conversion을 계속 제공합니다.
-
-Pro는 signed release 유지보수가 필요한 운영체제 통합 기능을 해제합니다.
-
-- 자동 update check.
-- **Set Still Wallpaper**로 desktop과 Lock Screen 정적 배경화면 쓰기.
-- **Animate Screen Saver**와 **Screen Saver Settings**로 animated screen saver 제어.
-
-설정 창에 Pro license key를 입력하면 현재 Mac에서 Pro가 해제됩니다. 프로젝트 경계는 그대로 유지됩니다. Pro는 Steam 다운로드, 계정 접근, DRM 우회, cloud sync, 제작자 asset 재배포를 추가하지 않습니다.
-
 ## 사용 방법
 
 Wallpaper Engine 프로젝트를 쓰는 경우:

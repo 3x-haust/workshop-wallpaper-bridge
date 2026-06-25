@@ -12,12 +12,7 @@ struct StatusMenu: View {
         Toggle("Open at Login", isOn: $model.launchAtLogin)
         Toggle("Auto-pause Behind Apps", isOn: $model.autoPauseWhenCovered)
         Toggle("Animate Screen Saver", isOn: $model.lockScreenAnimationEnabled)
-            .disabled(!model.isProUnlocked)
         Toggle("Auto-check Updates", isOn: $model.automaticallyCheckForUpdates)
-            .disabled(!model.isProUnlocked)
-        Button(model.isProUnlocked ? "Pro Unlocked" : "Unlock Pro...") {
-            SettingsWindowCoordinator.shared.show(model: model)
-        }
         Button("Check for Updates") {
             model.checkForUpdates()
         }
@@ -33,7 +28,6 @@ struct StatusMenu: View {
         Button("Open Screen Saver Settings") {
             model.openScreenSaverSettings()
         }
-        .disabled(!model.isProUnlocked)
         Button("Stop Playback") {
             model.stopPlayback()
         }
