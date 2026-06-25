@@ -6,7 +6,6 @@ final class DocumentationTests: XCTestCase {
         let expectedHeadings = [
             "## Demo",
             "## Download",
-            "## Free And Pro",
             "## Use It",
             "## What Works",
             "## Screen Saver",
@@ -40,7 +39,6 @@ final class DocumentationTests: XCTestCase {
         let expectedHeadings = [
             "## 데모",
             "## 다운로드",
-            "## 무료와 Pro",
             "## 사용 방법",
             "## 지원 범위",
             "## 화면 보호기",
@@ -78,7 +76,6 @@ final class DocumentationTests: XCTestCase {
             XCTAssertTrue(readme.contains("MP4"))
             XCTAssertTrue(readme.contains("scene.pkg"))
             XCTAssertTrue(readme.contains("ffmpeg"))
-            XCTAssertTrue(readme.contains("Pro"))
             XCTAssertTrue(readme.contains("Steam Workshop"))
             XCTAssertTrue(readme.contains("DRM"))
             XCTAssertTrue(readme.contains("~/Library/Application Support/WorkshopWallpaperBridge"))

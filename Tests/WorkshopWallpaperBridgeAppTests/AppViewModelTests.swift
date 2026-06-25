@@ -5,8 +5,6 @@ import WorkshopWallpaperCore
 
 @MainActor
 final class AppViewModelTests: XCTestCase {
-    private let validProLicenseKey = "WWB-PRO-TEST-2026-ABDC"
-
     func testImportSelectedImportsMultipleScannedAssets() throws {
         // Given
         let sourceRoot = try makeTempDirectory()
@@ -207,7 +205,6 @@ final class AppViewModelTests: XCTestCase {
     func testInitRestoresLockScreenAnimationPreferenceWithoutInstalling() throws {
         // Given
         let defaults = try makeUserDefaults()
-        defaults.set(validProLicenseKey, forKey: "proLicenseKey")
         defaults.set(true, forKey: "lockScreenAnimationEnabled")
         let lockScreen = MockLockScreenAnimationController()
 
@@ -234,7 +231,6 @@ final class AppViewModelTests: XCTestCase {
             lockScreenAnimationController: lockScreen,
             userDefaults: defaults
         )
-        unlockPro(model)
 
         // When
         model.lockScreenAnimationEnabled = true
@@ -343,7 +339,6 @@ final class AppViewModelTests: XCTestCase {
     func testAutomaticUpdateCheckHonorsPreferenceAndInterval() async throws {
         // Given
         let defaults = try makeUserDefaults()
-        defaults.set(validProLicenseKey, forKey: "proLicenseKey")
         let now = Date(timeIntervalSince1970: 100)
         defaults.set(now, forKey: "lastUpdateCheckAt")
         let checker = MockUpdateChecker(
@@ -385,96 +380,6 @@ final class AppViewModelTests: XCTestCase {
 
         // Then
         XCTAssertTrue(checker.requestedVersions.isEmpty)
-    }
-
-    func testProLicenseUnlocksAndPersists() throws {
-        // Given
-        let defaults = try makeUserDefaults()
-        let model = AppViewModel(
-            store: LibraryStore(root: try makeTempDirectory()),
-            loginItemController: MockLoginItemController(),
-            userDefaults: defaults
-        )
-        model.proLicenseKey = " wwb pro test 2026 abdc "
-
-        // When
-        model.activateProLicense()
-
-        // Then
-        XCTAssertTrue(model.isProUnlocked)
-        XCTAssertEqual(model.proLicenseKey, validProLicenseKey)
-        XCTAssertEqual(defaults.string(forKey: "proLicenseKey"), validProLicenseKey)
-        XCTAssertEqual(model.status, "Pro unlocked.")
-    }
-
-    func testInvalidProLicenseIsRejected() throws {
-        // Given
-        let defaults = try makeUserDefaults()
-        let model = AppViewModel(
-            store: LibraryStore(root: try makeTempDirectory()),
-            loginItemController: MockLoginItemController(),
-            userDefaults: defaults
-        )
-        model.proLicenseKey = "WWB-PRO-TEST-2026-0000"
-
-        // When
-        model.activateProLicense()
-
-        // Then
-        XCTAssertFalse(model.isProUnlocked)
-        XCTAssertNil(defaults.string(forKey: "proLicenseKey"))
-        XCTAssertEqual(model.status, "That Pro license key is invalid.")
-    }
-
-    func testFreePlanBlocksProScreenSaverAndAutomaticUpdates() async throws {
-        // Given
-        let checker = MockUpdateChecker(
-            result: .upToDate(currentVersion: "1.1.0", latestVersion: "1.1.0")
-        )
-        let lockScreen = MockLockScreenAnimationController()
-        let model = AppViewModel(
-            store: LibraryStore(root: try makeTempDirectory()),
-            loginItemController: MockLoginItemController(),
-            lockScreenAnimationController: lockScreen,
-            updateChecker: checker,
-            userDefaults: try makeUserDefaults()
-        )
-
-        // When
-        model.lockScreenAnimationEnabled = true
-        model.automaticallyCheckForUpdates = true
-        await model.performAutomaticUpdateCheckIfNeeded(force: true)
-
-        // Then
-        XCTAssertFalse(model.lockScreenAnimationEnabled)
-        XCTAssertFalse(model.automaticallyCheckForUpdates)
-        XCTAssertTrue(lockScreen.enabledRequests.isEmpty)
-        XCTAssertTrue(checker.requestedVersions.isEmpty)
-        XCTAssertEqual(model.status, "Unlock Pro to enable automatic update checks.")
-    }
-
-    func testFreePlanBlocksStillWallpaperAndScreenSaverSettings() throws {
-        // Given
-        let lockScreen = MockLockScreenAnimationController()
-        let model = AppViewModel(
-            store: LibraryStore(root: try makeTempDirectory()),
-            loginItemController: MockLoginItemController(),
-            lockScreenAnimationController: lockScreen,
-            userDefaults: try makeUserDefaults()
-        )
-
-        // When
-        model.setStillWallpaper()
-        let stillWallpaperStatus = model.status
-        model.openScreenSaverSettings()
-
-        // Then
-        XCTAssertEqual(
-            stillWallpaperStatus,
-            "Unlock Pro to set the macOS desktop and Lock Screen still wallpaper."
-        )
-        XCTAssertEqual(model.status, "Unlock Pro to use animated screen saver controls.")
-        XCTAssertFalse(lockScreen.didOpenSettings)
     }
 
     func testStopPlaybackClearsLastPlayedWallpaperPreference() throws {
@@ -530,11 +435,6 @@ final class AppViewModelTests: XCTestCase {
             redistributionAllowed: false,
             issues: []
         )
-    }
-
-    private func unlockPro(_ model: AppViewModel) {
-        model.proLicenseKey = validProLicenseKey
-        model.activateProLicense()
     }
 }
 

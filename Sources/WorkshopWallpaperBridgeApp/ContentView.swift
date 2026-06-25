@@ -42,11 +42,8 @@ struct ContentView: View {
                 headerToggle("Open at Login", isOn: $model.launchAtLogin)
                 headerToggle("Auto-pause behind apps", isOn: $model.autoPauseWhenCovered)
                 headerToggle("Animate Screen Saver", isOn: $model.lockScreenAnimationEnabled)
-                    .disabled(!model.isProUnlocked)
                 headerToggle("Auto-check Updates", isOn: $model.automaticallyCheckForUpdates)
-                    .disabled(!model.isProUnlocked)
             }
-            proPanel
 
             HStack(spacing: 8) {
                 Button("Check Updates") {
@@ -62,33 +59,6 @@ struct ContentView: View {
             }
         }
         .padding()
-    }
-
-    private var proPanel: some View {
-        HStack(spacing: 8) {
-            Text(model.isProUnlocked ? "Pro" : "Free")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(model.isProUnlocked ? .green : .secondary)
-                .frame(width: 38, alignment: .leading)
-            Text(model.proStatusText)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-            Spacer()
-            if model.isProUnlocked {
-                Button("Remove Pro") {
-                    model.clearProLicense()
-                }
-            } else {
-                TextField("WWB-PRO-XXXX-XXXX-CHECK", text: $model.proLicenseKey)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 230)
-                Button("Unlock Pro") {
-                    model.activateProLicense()
-                }
-                .disabled(model.proLicenseKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
-        }
     }
 
     private func headerToggle(_ title: String, isOn: Binding<Bool>) -> some View {
@@ -202,14 +172,13 @@ struct ContentView: View {
                 actionButton("Set Still Wallpaper") {
                     model.setStillWallpaper()
                 }
-                .disabled(model.selectedLibraryAsset == nil || !model.isProUnlocked)
+                .disabled(model.selectedLibraryAsset == nil)
                 Spacer()
             }
             HStack(spacing: 8) {
                 actionButton("Screen Saver Settings") {
                     model.openScreenSaverSettings()
                 }
-                .disabled(!model.isProUnlocked)
                 actionButton(model.selectedLibraryAssetCount > 1 ? "Remove Selected" : "Remove") {
                     model.removeSelectedLibraryAssets()
                 }
