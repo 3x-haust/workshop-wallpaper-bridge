@@ -376,7 +376,8 @@ final class WallpaperPlayerSuspensionTests: XCTestCase {
             .chromaticAberration,
             .godRays,
             .localContrast,
-            .materialColor
+            .materialColor,
+            .spin
         ])
     }
 
