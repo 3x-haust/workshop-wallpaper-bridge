@@ -160,26 +160,38 @@ jobs:
         run: bash Scripts/package-app.sh
 
       - name: Create checksum
+        id: artifact
         run: |
           set -euo pipefail
-          cd dist
-          shasum -a 256 WorkshopWallpaperBridge-macOS-arm64.dmg > WorkshopWallpaperBridge-macOS-arm64.dmg.sha256
+          artifact_count="$(find dist -maxdepth 1 -type f \( -name "*.dmg" -o -name "*.zip" \) | wc -l | tr -d ' ')"
+          if [ "$artifact_count" -ne 1 ]; then
+            echo "::error::Expected exactly one release archive in dist, found $artifact_count."
+            find dist -maxdepth 1 -type f -print
+            exit 1
+          fi
+          artifact="$(find dist -maxdepth 1 -type f \( -name "*.dmg" -o -name "*.zip" \) | sort | head -n 1)"
+          checksum="$artifact.sha256"
+          shasum -a 256 "$artifact" > "$checksum"
+          echo "path=$artifact" >> "$GITHUB_OUTPUT"
+          echo "checksum=$checksum" >> "$GITHUB_OUTPUT"
 
       - name: Publish release assets
         env:
           GH_TOKEN: ${{ github.token }}
           TAG_NAME: ${{ steps.version.outputs.tag }}
+          RELEASE_ARTIFACT: ${{ steps.artifact.outputs.path }}
+          RELEASE_CHECKSUM: ${{ steps.artifact.outputs.checksum }}
         run: |
           set -euo pipefail
           if gh release view "$TAG_NAME" >/dev/null 2>&1; then
             gh release upload "$TAG_NAME" \
-              dist/WorkshopWallpaperBridge-macOS-arm64.dmg \
-              dist/WorkshopWallpaperBridge-macOS-arm64.dmg.sha256 \
+              "$RELEASE_ARTIFACT" \
+              "$RELEASE_CHECKSUM" \
               --clobber
           else
             gh release create "$TAG_NAME" \
-              dist/WorkshopWallpaperBridge-macOS-arm64.dmg \
-              dist/WorkshopWallpaperBridge-macOS-arm64.dmg.sha256 \
+              "$RELEASE_ARTIFACT" \
+              "$RELEASE_CHECKSUM" \
               --title "$TAG_NAME" \
               --generate-notes \
               --verify-tag
