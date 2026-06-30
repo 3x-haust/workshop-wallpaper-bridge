@@ -113,6 +113,40 @@ final class AppViewModelRotationTests: XCTestCase {
         XCTAssertFalse(defaults.bool(forKey: "rotationEnabled"))
     }
 
+    // MARK: Manual playback takes priority over rotation
+
+    func testStopPlaybackTurnsRotationOffAndClearsPreference() throws {
+        // Given rotation is on (persisted) and treated as running.
+        let defaults = try makeUserDefaults()
+        let model = makeModel(defaults: defaults)
+        model.setRotationEnabledSilently(true)
+        defaults.set(true, forKey: "rotationEnabled")
+
+        // When the user stops playback manually.
+        model.stopPlayback()
+
+        // Then rotation is off in both the UI state and the persisted preference.
+        XCTAssertFalse(model.rotationEnabled)
+        XCTAssertFalse(defaults.bool(forKey: "rotationEnabled"))
+    }
+
+    // MARK: Restore priority — rotation vs. last single wallpaper
+
+    func testRotationRestoreTakesPriorityOverLastPlayedWallpaper() throws {
+        // Given both "rotation was on" and a remembered single wallpaper are persisted.
+        let defaults = try makeUserDefaults()
+        defaults.set(true, forKey: "rotationEnabled")
+        defaults.set("remembered-id", forKey: "lastPlayedAssetId")
+
+        // When the app launches (empty library, so no playback is triggered).
+        let model = makeModel(defaults: defaults)
+
+        // Then the single-wallpaper restore is skipped — rotation owns startup —
+        // so the remembered id is left untouched and no "Restored ..." status shows.
+        XCTAssertEqual(defaults.string(forKey: "lastPlayedAssetId"), "remembered-id")
+        XCTAssertFalse(model.status.contains("Restored"))
+    }
+
     // MARK: Helpers
 
     private func makeModel(defaults: UserDefaults) -> AppViewModel {
