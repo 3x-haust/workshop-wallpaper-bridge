@@ -10,6 +10,20 @@ struct UpdateAlert: Identifiable {
 }
 
 @MainActor
+protocol WallpaperPlaying: AnyObject {
+    func play(
+        asset: WallpaperAsset,
+        autoPauseWhenCovered: Bool,
+        displayMode: WallpaperDisplayMode
+    ) throws
+    func stop()
+    func setDisplayMode(_ mode: WallpaperDisplayMode)
+    func setAutoPauseWhenCovered(_ enabled: Bool)
+}
+
+extension WallpaperPlayer: WallpaperPlaying {}
+
+@MainActor
 final class AppViewModel: ObservableObject {
     @Published var sourcePath = ""
     @Published var scannedAssets: [WallpaperAsset] = []
@@ -20,7 +34,7 @@ final class AppViewModel: ObservableObject {
     @Published var isWorking = false
     @Published var displayMode: WallpaperDisplayMode = .fit {
         didSet {
-            WallpaperPlayer.shared.setDisplayMode(displayMode)
+            wallpaperPlayer.setDisplayMode(displayMode)
             userDefaults.set(displayMode.rawValue, forKey: PreferenceKey.displayMode)
             if lockScreenAnimationEnabled, let asset = selectedLibraryAsset {
                 _ = refreshLockScreenAnimationConfiguration(asset: asset)
@@ -29,7 +43,7 @@ final class AppViewModel: ObservableObject {
     }
     @Published var autoPauseWhenCovered = false {
         didSet {
-            WallpaperPlayer.shared.setAutoPauseWhenCovered(autoPauseWhenCovered)
+            wallpaperPlayer.setAutoPauseWhenCovered(autoPauseWhenCovered)
             userDefaults.set(autoPauseWhenCovered, forKey: PreferenceKey.autoPauseWhenCovered)
         }
     }
@@ -110,6 +124,7 @@ final class AppViewModel: ObservableObject {
     private let userDefaults: UserDefaults
     private let updateChecker: UpdateChecking
     private let updateURLOpener: UpdateURLOpening
+    private let wallpaperPlayer: WallpaperPlaying
     private let currentVersionProvider: () -> String
     private var isSyncingLaunchAtLogin = false
     private var isSyncingLockScreenAnimation = false
@@ -124,6 +139,7 @@ final class AppViewModel: ObservableObject {
         lockScreenAnimationController = LockScreenAnimationController()
         updateChecker = GitHubReleaseUpdateChecker()
         updateURLOpener = WorkspaceUpdateURLOpener()
+        wallpaperPlayer = WallpaperPlayer.shared
         currentVersionProvider = { AppVersionProvider.currentVersion() }
         do {
             store = try LibraryStore.defaultStore()
@@ -148,6 +164,7 @@ final class AppViewModel: ObservableObject {
         lockScreenAnimationController: LockScreenAnimationManaging = LockScreenAnimationController(),
         updateChecker: UpdateChecking = DisabledUpdateChecker(),
         updateURLOpener: UpdateURLOpening = WorkspaceUpdateURLOpener(),
+        wallpaperPlayer: WallpaperPlaying = WallpaperPlayer.shared,
         currentVersionProvider: @escaping () -> String = { "0.0.0" },
         userDefaults: UserDefaults = .standard
     ) {
@@ -156,6 +173,7 @@ final class AppViewModel: ObservableObject {
         self.lockScreenAnimationController = lockScreenAnimationController
         self.updateChecker = updateChecker
         self.updateURLOpener = updateURLOpener
+        self.wallpaperPlayer = wallpaperPlayer
         self.currentVersionProvider = currentVersionProvider
         self.userDefaults = userDefaults
         restorePreferences()
@@ -388,7 +406,7 @@ extension AppViewModel {
         if rotationEnabled {
             disableRotation()
         }
-        WallpaperPlayer.shared.stop()
+        wallpaperPlayer.stop()
         userDefaults.removeObject(forKey: PreferenceKey.lastPlayedAssetId)
         status = "Playback stopped."
     }
@@ -597,7 +615,7 @@ extension AppViewModel {
     }
 
     private func play(asset: WallpaperAsset, remember: Bool) throws {
-        try WallpaperPlayer.shared.play(
+        try wallpaperPlayer.play(
             asset: asset,
             autoPauseWhenCovered: autoPauseWhenCovered,
             displayMode: displayMode
@@ -769,6 +787,7 @@ extension AppViewModel {
             rotationIndex = (rotationIndex + 1) % rotationQueue.count
         }
         var attempts = 0
+        var lastPlaybackError: String?
         while attempts < rotationQueue.count {
             let id = rotationQueue[rotationIndex]
             if let asset = libraryAssets.first(where: { $0.id == id && $0.supportStatus == .playable }) {
@@ -777,12 +796,19 @@ extension AppViewModel {
                     try play(asset: asset, remember: true)
                     status = "Rotating \(rotationIndex + 1)/\(rotationQueue.count): \(asset.title)"
                 } catch {
-                    status = error.localizedDescription
+                    lastPlaybackError = error.localizedDescription
+                    rotationIndex = (rotationIndex + 1) % rotationQueue.count
+                    attempts += 1
+                    continue
                 }
                 return
             }
             rotationIndex = (rotationIndex + 1) % rotationQueue.count
             attempts += 1
+        }
+        if let lastPlaybackError {
+            disableRotation(status: "Rotation stopped: \(lastPlaybackError)")
+            return
         }
         disableRotation(status: "No playable wallpapers left to rotate.")
     }

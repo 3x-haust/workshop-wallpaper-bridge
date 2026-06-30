@@ -147,12 +147,61 @@ final class AppViewModelRotationTests: XCTestCase {
         XCTAssertFalse(model.status.contains("Restored"))
     }
 
+    // MARK: Playback failures
+
+    func testAdvanceRotationSkipsPlayableAssetWhenPlaybackFails() throws {
+        // Given the first playable item is in the queue but fails at playback time.
+        let defaults = try makeUserDefaults()
+        let player = MockWallpaperPlayer()
+        player.failingAssetIds = ["bad"]
+        let model = makeModel(defaults: defaults, player: player)
+        model.libraryAssets = [
+            makeAsset(id: "bad", status: .playable),
+            makeAsset(id: "good", status: .playable)
+        ]
+        model.selectedLibraryAssetId = "bad"
+        model.buildRotationQueue()
+
+        // When rotation advances.
+        model.advanceRotation(initial: true)
+
+        // Then it tries the failing item once and moves on to the next playable item.
+        XCTAssertEqual(player.playedAssetIds, ["bad", "good"])
+        XCTAssertEqual(model.selectedLibraryAssetId, "good")
+        XCTAssertEqual(model.status, "Rotating 2/2: Asset good")
+    }
+
+    func testAdvanceRotationDisablesRotationWhenEveryPlayableAssetFailsPlayback() throws {
+        // Given every queued playable item fails at playback time.
+        let defaults = try makeUserDefaults()
+        defaults.set(true, forKey: "rotationEnabled")
+        let player = MockWallpaperPlayer()
+        player.failingAssetIds = ["bad"]
+        let model = makeModel(defaults: defaults, player: player)
+        model.libraryAssets = [makeAsset(id: "bad", status: .playable)]
+        model.setRotationEnabledSilently(true)
+        model.buildRotationQueue()
+
+        // When rotation advances.
+        model.advanceRotation(initial: true)
+
+        // Then rotation is stopped and its persisted enabled flag is cleared.
+        XCTAssertEqual(player.playedAssetIds, ["bad"])
+        XCTAssertFalse(model.rotationEnabled)
+        XCTAssertFalse(defaults.bool(forKey: "rotationEnabled"))
+        XCTAssertEqual(model.status, "Rotation stopped: playback failed")
+    }
+
     // MARK: Helpers
 
-    private func makeModel(defaults: UserDefaults) -> AppViewModel {
+    private func makeModel(
+        defaults: UserDefaults,
+        player: WallpaperPlaying = MockWallpaperPlayer()
+    ) -> AppViewModel {
         AppViewModel(
             store: makeStore(),
             loginItemController: MockLoginItemController(),
+            wallpaperPlayer: player,
             userDefaults: defaults
         )
     }
@@ -200,4 +249,44 @@ private final class MockLoginItemController: LoginItemManaging {
     }
 
     func openSystemSettings() {}
+}
+
+@MainActor
+private final class MockWallpaperPlayer: WallpaperPlaying {
+    var failingAssetIds: Set<WallpaperAsset.ID> = []
+    private(set) var playedAssetIds: [WallpaperAsset.ID] = []
+    private(set) var stopped = false
+    private(set) var displayMode: WallpaperDisplayMode?
+    private(set) var autoPauseWhenCovered: Bool?
+
+    func play(
+        asset: WallpaperAsset,
+        autoPauseWhenCovered: Bool,
+        displayMode: WallpaperDisplayMode
+    ) throws {
+        playedAssetIds.append(asset.id)
+        if failingAssetIds.contains(asset.id) {
+            throw TestPlaybackError.failure
+        }
+    }
+
+    func stop() {
+        stopped = true
+    }
+
+    func setDisplayMode(_ mode: WallpaperDisplayMode) {
+        displayMode = mode
+    }
+
+    func setAutoPauseWhenCovered(_ enabled: Bool) {
+        autoPauseWhenCovered = enabled
+    }
+}
+
+private enum TestPlaybackError: LocalizedError {
+    case failure
+
+    var errorDescription: String? {
+        "playback failed"
+    }
 }
