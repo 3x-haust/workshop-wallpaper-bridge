@@ -163,9 +163,11 @@ final class DocumentationTests: XCTestCase {
         XCTAssertTrue(workflow.contains("automation/update-profile-roster"))
         XCTAssertTrue(workflow.contains("gh pr create"))
         XCTAssertTrue(maintenanceNotes.contains("creates or reuses a pull request"))
+        XCTAssertTrue(maintenanceNotes.contains("intentionally omits commit counts"))
         XCTAssertTrue(script.contains("/collaborators?affiliation=direct&per_page=100"))
         XCTAssertTrue(script.contains("permissions.push === true"))
         XCTAssertTrue(script.contains("/contributors?anon=false&per_page=100"))
+        XCTAssertFalse(script.contains("contributionLabel"))
     }
 
     func testPackagingScriptVerifiesNotarizedQuarantinedApp() throws {
