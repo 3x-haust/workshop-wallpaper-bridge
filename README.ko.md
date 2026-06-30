@@ -10,6 +10,14 @@ Workshop Wallpaper Bridge는 복사해 온 Wallpaper Engine Workshop 폴더를 M
 
 [웹사이트](https://3x-haust.github.io/workshop-wallpaper-bridge/) · [English](README.md) · [기여 안내](CONTRIBUTING.md) · [보안 정책](SECURITY.md) · [릴리즈](https://github.com/3x-haust/workshop-wallpaper-bridge/releases) · [후원](https://www.patreon.com/c/3xhaust)
 
+## 빠른 링크
+
+- [다운로드](#다운로드): 최신 DMG를 설치합니다.
+- [사용 방법](#사용-방법): 복사한 Workshop 폴더를 가져오거나 로컬 영상을 추가합니다.
+- [지원 범위](#지원-범위): 지원되는 월페이퍼 유형을 확인합니다.
+- [소스에서 빌드](#소스에서-빌드): 앱을 로컬에서 실행하거나 DMG를 패키징합니다.
+- [메인테이너와 기여자](#메인테이너와-기여자): 프로젝트 메인테이너와 기여자 목록입니다.
+
 ## 데모
 
 ![Workshop Wallpaper Bridge 데모](assets/workshop-wallpaper-bridge-demo.gif)
@@ -85,9 +93,35 @@ Wallpaper Engine 프로젝트를 쓰는 경우:
 | `.webm`, `.mkv`, `.avi` 동영상 | 로컬 `ffmpeg`로 변환 후 재생 |
 | `index.html` 웹 월페이퍼 | 제한된 로컬 WebView에서 재생 |
 | `.jpg`, `.png`, `.gif`, `.heic` 이미지 | 정적 데스크톱 레이어로 표시 |
-| `scene.pkg` 씬 월페이퍼 | 로컬 렌더 캐시 비디오가 붙어 있어도 네이티브 scene renderer를 먼저 사용; 패키지 안의 2D image layer, animated sprite-sheet (`texgif`) texture, text-only scene, 일부 text SceneScript `update(value)` snippet, 기본 keyframe 움직임, image-layer와 effect-only layer의 `waterFlow` / `waterWaves` / `waterRipple` / `scroll` shader 움직임, 단순 `shake` / `spin` / `shine` layer effect를 package constant 기반으로 렌더링; 엔진 렌더러 작업에 필요한 shader/effect/script/audio 요구사항 보존 |
+| `scene.pkg` 씬 월페이퍼 | 네이티브 scene renderer를 먼저 사용합니다. packed 2D image layer, animated sprite-sheet texture, text-only scene, 일부 SceneScript snippet, keyframe 움직임, 일부 water/scroll shader, 단순 layer effect를 지원합니다. |
 
-scene 지원은 보수적입니다. 데스크톱 scene 재생은 renderer-first이며, 붙어 있는 렌더 캐시 비디오를 scene 구현으로 취급하지 않습니다. `wwbctl attach-scene-video <asset-id> <video-file>`는 진단이나 비교 workflow용 로컬 reference cache만 Mac 전용 라이브러리에 저장합니다. 기본 image-layer와 text-only scene은 동작하며, packed `.tex` texture, LZ4 block, 주요 DXT 형식, text layer, 일부 text SceneScript `update(value)` snippet, position/scale/rotation/opacity keyframe을 처리하고, mirror 모드 keyframe 애니메이션은 ping-pong 루프로 재생합니다. animated sprite-sheet texture는 RePKG에 문서화된 `TEXS0001`-`TEXS0003` frame container(회전된 sheet packing, frame별 재생 시간 포함)를 해석해 Core Animation frame sequence로 재생하며, 내장 MP4 video texture는 여전히 지원하지 않습니다. scene 전체를 덮는 compose layer의 `waterripple` 같은 warp는 아래 layer들로 분배되어, effect snapshot에 가려 layer keyframe 움직임이 멈춰 보이는 문제 없이 살아있는 모션 위에 물결이 적용됩니다. workshop `nitro` 계열 glint effect는 noise 기반 twinkle 근사로 재생되고, 단순 sprite/pulse-ring particle system은 Core Animation emitter로 근사합니다. 복잡한 particle operator는 여전히 생략됩니다. puppet-warp 모델(`MDLV0013` skeleton — Wallpaper Engine이 물고기·캐릭터의 몸을 휘게 하는 포맷)은 mesh/bone/mirror 모드 bone 애니메이션까지 디코드해 CPU skinning으로 재생하므로 puppet 몸체가 뻣뻣하게 미끄러지지 않고 실제로 휘어집니다. `spin`, `shake`, `waterripple`, `waterwaves`, `waterflow`, `scroll`은 scene 패키지에 들어있는 GLSL shader를 Core Image로 그대로 포팅해 실행하며, flow-map 기반 shake 덕분에 지느러미와 꼬리만 움직입니다. 지원되는 text script는 제한된 JavaScriptCore context에서 `Date`, `Math`, `engine.runtime`, `engine.frametime`, `engine.timeOfDay`, 파싱된 `scriptProperties`를 사용할 수 있고, loop, timer, eval/dynamic function, 지원하지 않는 API, 오류를 던지는 script는 기존 text를 유지하는 fail-closed 방식으로 처리합니다. 지원되는 image-layer와 effect-only layer의 `waterFlow`, `waterWaves`, `waterRipple`, `scroll` effect는 임의의 layer drift가 아니라 package shader constant의 speed, axis speed, direction, scale, strength, perspective 값을 사용해 움직이고, 단순 `shake`, `spin`, `shine` layer effect는 안전하게 표현할 수 있을 때 Core Animation으로 매핑합니다. 이제 package analyzer가 effect file, shader file, shader uniform, SceneScript, particle, sound layer, audio-analysis input, video texture 같은 scene runtime 요구사항을 보존하므로 renderer-engine parity 작업을 정확히 겨냥할 수 있습니다. masked effect composition, particle, audio-reactive 또는 object/scene API script, 전체 custom shader pipeline, media integration, video texture 재생은 네이티브 scene engine이 해당 runtime 기능을 구현하기 전까지 여전히 생략되거나 Wallpaper Engine과 다르게 보일 수 있습니다.
+scene 지원은 보수적입니다. 이 앱은 지원되는 scene 기능을 직접 렌더링하지만, Wallpaper Engine 런타임 전체 호환을 주장하지 않습니다.
+
+지원되는 scene 기능:
+
+- Packed `.tex` texture, LZ4 block, 주요 DXT 형식.
+- Text layer와 일부 text SceneScript `update(value)` snippet.
+- Position, scale, rotation, opacity keyframe.
+- Mirror 모드 keyframe animation의 ping-pong loop 재생.
+- `TEXS0001`-`TEXS0003` frame container 기반 animated sprite-sheet(`texgif`) texture.
+- Package constant 기반 일부 `waterFlow`, `waterWaves`, `waterRipple`, `scroll` shader 움직임.
+- 안전하게 표현 가능한 단순 `shake`, `spin`, `shine` layer effect.
+- Mesh, bone, mirror-mode bone animation, CPU skinning을 포함한 puppet-warp 모델(`MDLV0013`).
+- `nitro` 계열 glint effect 근사와 단순 sprite 또는 pulse-ring particle system 근사.
+
+아직 제한되거나 지원하지 않는 것:
+
+- 내장 MP4 video texture.
+- 복잡한 particle operator.
+- Masked effect composition.
+- Audio-reactive script.
+- Object 또는 scene API script.
+- 전체 custom shader pipeline.
+- Media integration.
+
+`wwbctl attach-scene-video <asset-id> <video-file>`는 진단이나 비교 workflow용 로컬 reference cache만 Mac 전용 라이브러리에 저장합니다. scene renderer를 대체하지 않습니다.
+
+Package analyzer는 effect file, shader file, shader uniform, SceneScript, particle, sound layer, audio-analysis input, video texture 같은 scene runtime 요구사항을 보존하므로 renderer-engine parity 작업을 정확히 겨냥할 수 있습니다.
 
 `preview.jpg`, `thumbnail.jpg`, `cover.png` 같은 Workshop 미리보기 파일은 썸네일로 취급합니다. 프로젝트에 `scene.pkg`가 있으면 낮은 해상도 미리보기를 늘려 쓰지 않고 패키지 내부 scene 데이터를 읽습니다.
 
@@ -209,6 +243,22 @@ Workshop Wallpaper Bridge는 local-only 앱입니다.
 - 원본으로 복사해 온 Workshop 폴더를 수정하지 않습니다.
 
 Workshop Wallpaper Bridge는 Valve, Steam, Wallpaper Engine과 관련이 없는 비공식 프로젝트입니다. Wallpaper Engine은 해당 소유자의 상표입니다.
+
+## 메인테이너와 기여자
+
+<!-- profile-roster:start -->
+이 영역은 GitHub 사용자 프로필에서 자동 생성됩니다.
+
+### 메인테이너
+
+- <a href="https://github.com/3x-haust"><img src="https://avatars.githubusercontent.com/u/94370559?v=4&s=72" width="36" height="36" alt="@3x-haust"></a> [유성윤](https://github.com/3x-haust) `@3x-haust`
+- <a href="https://github.com/dev-di-tto"><img src="https://avatars.githubusercontent.com/u/297542341?v=4&s=72" width="36" height="36" alt="@dev-di-tto"></a> [메타몽](https://github.com/dev-di-tto) `@dev-di-tto`
+
+### 기여자
+
+- <a href="https://github.com/3x-haust"><img src="https://avatars.githubusercontent.com/u/94370559?v=4&s=72" width="36" height="36" alt="@3x-haust"></a> [유성윤](https://github.com/3x-haust) `@3x-haust` - 35 커밋
+- <a href="https://github.com/ohjack83-lab"><img src="https://avatars.githubusercontent.com/u/263676419?v=4&s=72" width="36" height="36" alt="@ohjack83-lab"></a> [ohjack83](https://github.com/ohjack83-lab) `@ohjack83-lab` - 1 커밋
+<!-- profile-roster:end -->
 
 ## 라이선스
 
