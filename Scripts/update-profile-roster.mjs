@@ -153,13 +153,6 @@ function avatar(profile) {
   return `<a href="${profile.htmlUrl}"><img src="${profile.avatarUrl}${separator}s=72" width="36" height="36" alt="@${profile.login}"></a>`;
 }
 
-function contributionLabel(count, korean) {
-  if (korean) {
-    return `${count} 커밋`;
-  }
-  return `${count} ${count === 1 ? "commit" : "commits"}`;
-}
-
 function renderSection(maintainers, contributors, korean) {
   const generated = korean
     ? "이 영역은 GitHub 사용자 프로필에서 자동 생성됩니다."
@@ -173,8 +166,7 @@ function renderSection(maintainers, contributors, korean) {
   lines.push("", `### ${contributorHeading}`, "");
   if (contributors.length > 0) {
     for (const profile of contributors) {
-      const contributionText = profile.contributions ? ` - ${contributionLabel(profile.contributions, korean)}` : "";
-      lines.push(`- ${avatar(profile)} ${display(profile)}${contributionText}`);
+      lines.push(`- ${avatar(profile)} ${display(profile)}`);
     }
   } else {
     lines.push(`- ${empty}`);
