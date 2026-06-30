@@ -10,6 +10,14 @@ Workshop Wallpaper Bridge imports a copied Wallpaper Engine Workshop folder into
 
 [Website](https://3x-haust.github.io/workshop-wallpaper-bridge/) · [한국어](README.ko.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Releases](https://github.com/3x-haust/workshop-wallpaper-bridge/releases) · [Support](https://www.patreon.com/c/3xhaust)
 
+## Quick Links
+
+- [Download](#download): install the latest DMG.
+- [Use It](#use-it): import a copied Workshop folder or add local videos.
+- [What Works](#what-works): check supported wallpaper types.
+- [Build From Source](#build-from-source): run the app locally or package a DMG.
+- [Maintainers And Contributors](#maintainers-and-contributors): project maintainers and contributors.
+
 ## Demo
 
 ![Workshop Wallpaper Bridge demo](assets/workshop-wallpaper-bridge-demo.gif)
@@ -85,9 +93,35 @@ Imported files are stored in:
 | `.webm`, `.mkv`, `.avi` video | Converts locally with `ffmpeg`, then plays |
 | `index.html` web wallpaper | Plays in a restricted local WebView |
 | `.jpg`, `.png`, `.gif`, `.heic` image | Displays as a static desktop layer |
-| `scene.pkg` scene wallpaper | Uses the native scene renderer first, even when a local rendered video cache is attached; renders packed 2D image layers, animated sprite-sheet (`texgif`) textures, text-only scenes, selected text SceneScript `update(value)` snippets, basic keyframed motion, selected image-layer and effect-only `waterFlow` / `waterWaves` / `waterRipple` / `scroll` shader motion, and simple `shake` / `spin` / `shine` layer effects from package constants; preserves shader/effect/script/audio requirements for engine-renderer work |
+| `scene.pkg` scene wallpaper | Uses the native scene renderer first; supports packed 2D image layers, animated sprite-sheet textures, text-only scenes, selected SceneScript snippets, keyframed motion, selected water/scroll shaders, and simple layer effects |
 
-Scene support is conservative. Desktop scene playback is renderer-first and does not treat an attached rendered video cache as the scene implementation. `wwbctl attach-scene-video <asset-id> <video-file>` only stores a local reference cache inside the private Mac library for diagnostics or comparison workflows. Basic image-layer and text-only scenes work, including packed `.tex` textures, LZ4 blocks, common DXT formats, text layers, selected text SceneScript `update(value)` snippets, keyframed position, scale, rotation, and opacity, with mirror-mode keyframe animations playing as ping-pong loops. Animated sprite-sheet textures are decoded from the RePKG-documented `TEXS0001`-`TEXS0003` frame containers, including rotated sheet packing and per-frame timing, and play back as Core Animation frame sequences; embedded MP4 video textures remain unsupported. Full-canvas compose-layer warps such as a scene-wide `waterripple` are distributed onto the layers beneath them so keyframed layer motion stays live instead of freezing under an effect snapshot. Workshop `nitro`-style glint effects play as an approximate noise-driven twinkle pass, and simple sprite or pulse-ring particle systems are approximated with Core Animation emitters; complex particle operators are still skipped. Puppet-warp models (`MDLV0013` skeletons, the format Wallpaper Engine uses for bending fish and characters) are decoded — mesh, bones, and mirror-mode bone animations — and played with CPU skinning, so puppet bodies flex instead of gliding rigidly; `spin`, `shake`, `waterripple`, `waterwaves`, `waterflow`, and `scroll` run as direct Core Image ports of the GLSL shaders packed inside the scene, including flow-map-driven shake so only fins and tails move. Supported text scripts run through a restricted JavaScriptCore context with `Date`, `Math`, `engine.runtime`, `engine.frametime`, `engine.timeOfDay`, and parsed `scriptProperties`; loops, timers, eval/dynamic functions, unsupported APIs, and throwing scripts fail closed and keep the existing text. Supported image-layer and effect-only `waterFlow`, `waterWaves`, `waterRipple`, and `scroll` effects are driven from package shader constants such as speed, axis speed, direction, scale, strength, and perspective instead of generic layer drift; simple `shake`, `spin`, and `shine` layer effects are mapped to Core Animation when they can be represented safely. The package analyzer preserves scene runtime requirements such as effect files, shader files, shader uniforms, SceneScript, particles, sound layers, audio-analysis inputs, and video textures so renderer-engine parity work can be targeted. Masked effect composition, particles, audio-reactive or object/scene API scripts, full custom shader pipelines, media integration, and video texture playback may still be skipped or look different from Wallpaper Engine until the native scene engine implements those runtime features.
+Scene support is conservative. The app renders supported scene features directly instead of claiming full Wallpaper Engine runtime compatibility.
+
+Supported scene features include:
+
+- Packed `.tex` textures, LZ4 blocks, and common DXT formats.
+- Text layers and selected text SceneScript `update(value)` snippets.
+- Keyframed position, scale, rotation, and opacity.
+- Mirror-mode keyframe animations as ping-pong loops.
+- Animated sprite-sheet (`texgif`) textures from `TEXS0001`-`TEXS0003` frame containers.
+- Selected `waterFlow`, `waterWaves`, `waterRipple`, and `scroll` shader motion from package constants.
+- Simple `shake`, `spin`, and `shine` layer effects when they can be represented safely.
+- Puppet-warp models (`MDLV0013`) with decoded mesh, bones, mirror-mode bone animations, and CPU skinning.
+- Approximate `nitro`-style glint effects and simple sprite or pulse-ring particle systems.
+
+Still limited or unsupported:
+
+- Embedded MP4 video textures.
+- Complex particle operators.
+- Masked effect composition.
+- Audio-reactive scripts.
+- Object or scene API scripts.
+- Full custom shader pipelines.
+- Media integration.
+
+`wwbctl attach-scene-video <asset-id> <video-file>` stores a local reference cache inside the private Mac library for diagnostics or comparison workflows. It does not replace the scene renderer.
+
+The package analyzer preserves scene runtime requirements such as effect files, shader files, shader uniforms, SceneScript, particles, sound layers, audio-analysis inputs, and video textures so renderer-engine parity work can be targeted.
 
 Workshop preview files such as `preview.jpg`, `thumbnail.jpg`, and `cover.png` are treated as thumbnails. If a project contains `scene.pkg`, the app reads the packed scene data instead of stretching a low-resolution preview across the screen.
 
@@ -209,6 +243,20 @@ Workshop Wallpaper Bridge is local-only.
 - It does not modify the original copied Workshop folder.
 
 Workshop Wallpaper Bridge is not affiliated with Valve, Steam, or Wallpaper Engine. Wallpaper Engine is a trademark of its respective owner.
+
+## Maintainers And Contributors
+
+Maintainers:
+
+- [3x-haust](https://github.com/3x-haust)
+- [MetaMong](https://github.com/dev-di-tto) (`dev-di-tto`)
+
+Contributors:
+
+- [3x-haust](https://github.com/3x-haust)
+- [MetaMong](https://github.com/dev-di-tto) (`dev-di-tto`)
+- [ohjack83-lab](https://github.com/ohjack83-lab)
+- ohjack83
 
 ## License
 
