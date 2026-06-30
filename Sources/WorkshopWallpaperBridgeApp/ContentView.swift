@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import WorkshopWallpaperCore
 
@@ -94,6 +95,7 @@ struct ContentView: View {
             assetList(
                 title: "Scanned Projects",
                 assets: model.scannedAssets,
+                previewAsset: model.selectedScannedAsset,
                 selection: Binding(
                     get: { model.selectedScannedAssetIds },
                     set: { model.selectScannedAssets($0) }
@@ -134,6 +136,7 @@ struct ContentView: View {
             libraryAssetList(
                 title: "Imported Projects",
                 assets: model.libraryAssets,
+                previewAsset: model.selectedLibraryAsset,
                 selection: Binding(
                     get: { model.selectedLibraryAssetIds },
                     set: { model.selectLibraryAssets($0) }
@@ -246,47 +249,134 @@ struct ContentView: View {
     private func assetList(
         title: String,
         assets: [WallpaperAsset],
+        previewAsset: WallpaperAsset?,
         selection: Binding<Set<WallpaperAsset.ID>>
     ) -> some View {
-        List(selection: selection) {
-            ForEach(assets) { asset in
-                AssetRow(asset: asset)
-                    .tag(asset.id)
+        VStack(alignment: .leading, spacing: 10) {
+            List(selection: selection) {
+                ForEach(assets) { asset in
+                    AssetRow(asset: asset)
+                        .tag(asset.id)
+                }
             }
-        }
-        .overlay {
-            if assets.isEmpty {
-                Text(title)
-                    .foregroundStyle(.tertiary)
+            .overlay {
+                if assets.isEmpty {
+                    Text(title)
+                        .foregroundStyle(.tertiary)
+                }
             }
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            AssetPreview(asset: previewAsset)
         }
-        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
     private func libraryAssetList(
         title: String,
         assets: [WallpaperAsset],
+        previewAsset: WallpaperAsset?,
         selection: Binding<Set<WallpaperAsset.ID>>
     ) -> some View {
-        List(selection: selection) {
-            ForEach(assets) { asset in
-                AssetRow(asset: asset)
-                    .tag(asset.id)
-                    .contextMenu {
-                        Button("Remove") {
-                            model.selectLibraryAssets([asset.id])
-                            model.removeSelectedLibraryAssets()
+        VStack(alignment: .leading, spacing: 10) {
+            List(selection: selection) {
+                ForEach(assets) { asset in
+                    AssetRow(asset: asset)
+                        .tag(asset.id)
+                        .contextMenu {
+                            Button("Remove") {
+                                model.selectLibraryAssets([asset.id])
+                                model.removeSelectedLibraryAssets()
+                            }
                         }
-                    }
+                }
             }
-        }
-        .overlay {
-            if assets.isEmpty {
-                Text(title)
-                    .foregroundStyle(.tertiary)
+            .overlay {
+                if assets.isEmpty {
+                    Text(title)
+                        .foregroundStyle(.tertiary)
+                }
             }
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            AssetPreview(asset: previewAsset)
         }
+    }
+}
+
+private struct AssetPreview: View {
+    let asset: WallpaperAsset?
+
+    var body: some View {
+        HStack(spacing: 12) {
+            previewImage
+            VStack(alignment: .leading, spacing: 4) {
+                Text(asset?.title ?? "Select a wallpaper")
+                    .font(.callout.weight(.semibold))
+                    .lineLimit(1)
+                Text(assetDescription)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                if let issue = asset?.issues.first {
+                    Text(issue.message)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            Spacer()
+        }
+        .padding(10)
+        .frame(minHeight: 112, alignment: .leading)
+        .background(Color(nsColor: .controlBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    @ViewBuilder
+    private var previewImage: some View {
+        if let image = previewNSImage {
+            Image(nsImage: image)
+                .resizable()
+                .scaledToFill()
+                .frame(width: 144, height: 88)
+                .clipped()
+                .background(.black)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+        } else {
+            ZStack {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(.black.opacity(0.72))
+                Text(asset?.kind.rawValue.uppercased() ?? "PREVIEW")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.72))
+            }
+            .frame(width: 144, height: 88)
+        }
+    }
+
+    private var previewNSImage: NSImage? {
+        guard let url = previewURL else {
+            return nil
+        }
+        return NSImage(contentsOf: url)
+    }
+
+    private var previewURL: URL? {
+        guard let asset else {
+            return nil
+        }
+        if let thumbnail = asset.thumbnail {
+            return URL(filePath: thumbnail)
+        }
+        guard asset.kind == .image, let entrypoint = asset.entrypoint else {
+            return nil
+        }
+        return URL(filePath: entrypoint)
+    }
+
+    private var assetDescription: String {
+        guard let asset else {
+            return "The selected wallpaper preview appears here."
+        }
+        return "\(asset.kind.rawValue) · \(asset.supportStatus.rawValue)"
     }
 }
 
@@ -299,17 +389,17 @@ private struct AssetRow: View {
                 Text(asset.title)
                     .font(.body.weight(.medium))
                     .lineLimit(1)
-            Text(asset.projectDirectory)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-            if let issue = asset.issues.first {
-                Text(issue.message)
-                    .font(.caption2)
+                Text(asset.projectDirectory)
+                    .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                if let issue = asset.issues.first {
+                    Text(issue.message)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
             }
-        }
             Spacer()
             Text(asset.kind.rawValue)
                 .font(.caption)
