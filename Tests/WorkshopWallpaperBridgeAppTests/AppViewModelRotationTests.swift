@@ -113,6 +113,30 @@ final class AppViewModelRotationTests: XCTestCase {
         XCTAssertFalse(defaults.bool(forKey: "rotationEnabled"))
     }
 
+    func testRemovingLastPlayableWhileRotatingReportsRotationStopped() throws {
+        // Given the library contains one playable asset and rotation is running.
+        let defaults = try makeUserDefaults()
+        let store = makeStore()
+        let asset = makeAsset(id: "last", status: .playable)
+        try store.replaceAsset(asset)
+        let model = makeModel(defaults: defaults, store: store)
+        model.selectedLibraryAssetId = asset.id
+        model.setRotationEnabledSilently(true)
+        defaults.set(true, forKey: "rotationEnabled")
+
+        // When that last playable asset is removed from the library.
+        model.removeSelectedLibraryAsset()
+
+        // Then the user-facing status preserves the rotation shutdown,
+        // instead of replacing it with a plain remove message.
+        XCTAssertFalse(model.rotationEnabled)
+        XCTAssertFalse(defaults.bool(forKey: "rotationEnabled"))
+        XCTAssertEqual(
+            model.status,
+            "Removed Asset last from your Mac library. Rotation stopped — no playable wallpapers left."
+        )
+    }
+
     // MARK: Manual playback takes priority over rotation
 
     func testStopPlaybackTurnsRotationOffAndClearsPreference() throws {
@@ -196,10 +220,11 @@ final class AppViewModelRotationTests: XCTestCase {
 
     private func makeModel(
         defaults: UserDefaults,
+        store: LibraryStore? = nil,
         player: WallpaperPlaying = MockWallpaperPlayer()
     ) -> AppViewModel {
         AppViewModel(
-            store: makeStore(),
+            store: store ?? makeStore(),
             loginItemController: MockLoginItemController(),
             wallpaperPlayer: player,
             userDefaults: defaults

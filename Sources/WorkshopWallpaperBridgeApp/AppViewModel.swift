@@ -361,12 +361,19 @@ extension AppViewModel {
             status = "Select a library project first."
             return
         }
+        let wasRotating = rotationEnabled
         do {
             for asset in assets {
                 try store.removeAsset(id: asset.id)
             }
             loadLibrary()
-            if assets.count == 1, let asset = assets.first {
+            if wasRotating, !rotationEnabled {
+                if assets.count == 1, let asset = assets.first {
+                    status = "Removed \(asset.title) from your Mac library. Rotation stopped — no playable wallpapers left."
+                } else {
+                    status = "Removed \(assets.count) items from your Mac library. Rotation stopped — no playable wallpapers left."
+                }
+            } else if assets.count == 1, let asset = assets.first {
                 status = "Removed \(asset.title) from your Mac library."
             } else {
                 status = "Removed \(assets.count) items from your Mac library."
