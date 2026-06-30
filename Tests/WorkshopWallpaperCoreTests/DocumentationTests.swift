@@ -158,6 +158,9 @@ final class DocumentationTests: XCTestCase {
 
         XCTAssertTrue(workflow.contains("node Scripts/update-profile-roster.mjs"))
         XCTAssertTrue(workflow.contains("contents: write"))
+        XCTAssertTrue(workflow.contains("pull-requests: write"))
+        XCTAssertTrue(workflow.contains("automation/update-profile-roster"))
+        XCTAssertTrue(workflow.contains("gh pr create"))
         XCTAssertTrue(script.contains("/collaborators?affiliation=direct&per_page=100"))
         XCTAssertTrue(script.contains("permissions.push === true"))
         XCTAssertTrue(script.contains("/contributors?anon=false&per_page=100"))
