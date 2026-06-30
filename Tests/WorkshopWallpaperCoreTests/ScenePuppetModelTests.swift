@@ -65,6 +65,22 @@ final class ScenePuppetModelTests: XCTestCase {
         XCTAssertEqual(animation.poses(at: 2.0)[0].x, 0, accuracy: 0.0001)
     }
 
+    func testAnimationSamplingHandlesNegativeRate() {
+        let animation = ScenePuppetAnimation(
+            id: 1,
+            name: "reverse",
+            mirrors: false,
+            fps: 1,
+            frames: [
+                [ScenePuppetPose(x: 0, y: 0, rotation: 0)],
+                [ScenePuppetPose(x: 10, y: 0, rotation: 1)],
+                [ScenePuppetPose(x: 20, y: 0, rotation: 2)]
+            ]
+        )
+
+        XCTAssertEqual(animation.poses(at: 0.5, rate: -1)[0].x, 15, accuracy: 0.0001)
+    }
+
     func testSkinningRotatesWeightedVerticesAboutTheBone() throws {
         let model = ScenePuppetModel(
             vertices: [
@@ -124,6 +140,27 @@ final class ScenePuppetModelTests: XCTestCase {
         XCTAssertEqual(positions[0].y, 4, accuracy: 0.001)
     }
 
+    func testDecoderAcceptsStaticModelWithoutAnimationChunk() throws {
+        let data = Self.puppetData(
+            vertices: [
+                (x: -10, y: -10, bone: 0, u: 0, v: 0),
+                (x: 10, y: -10, bone: 0, u: 1, v: 0),
+                (x: -10, y: 10, bone: 0, u: 0, v: 1)
+            ],
+            triangles: [0, 1, 2],
+            bones: [-1],
+            animation: nil
+        )
+
+        let model = try ScenePuppetModelDecoder().decode(data: data)
+        let skins = try XCTUnwrap(model.skinTransforms(at: 3, animationID: nil, rate: 1))
+        let positions = model.deformedPositions(skins: skins)
+
+        XCTAssertTrue(model.animations.isEmpty)
+        XCTAssertEqual(positions[0].x, -10, accuracy: 0.001)
+        XCTAssertEqual(positions[1].y, -10, accuracy: 0.001)
+    }
+
     // MARK: - Fixture
 
     // swiftlint:disable:next function_body_length
@@ -131,7 +168,7 @@ final class ScenePuppetModelTests: XCTestCase {
         vertices: [(x: Double, y: Double, bone: Int, u: Double, v: Double)],
         triangles: [Int],
         bones: [Int],
-        animation: (id: Int, name: String, mode: String, fps: Double, tracks: [[(x: Double, y: Double, rz: Double)]])
+        animation: (id: Int, name: String, mode: String, fps: Double, tracks: [[(x: Double, y: Double, rz: Double)]])?
     ) -> Data {
         var data = Data()
         data.append(Data("MDLV0013".utf8))
@@ -176,6 +213,9 @@ final class ScenePuppetModelTests: XCTestCase {
                 data.appendFloat(value)
             }
             data.append(0)
+        }
+        guard let animation else {
+            return data
         }
         data.append(Data("MDLA0001".utf8))
         data.append(0)
