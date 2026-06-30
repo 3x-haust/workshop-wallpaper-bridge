@@ -305,9 +305,7 @@ extension AppViewModel {
             return
         }
         if rotationEnabled {
-            setRotationEnabledSilently(false)
-            stopRotationTimer()
-            userDefaults.set(false, forKey: PreferenceKey.rotationEnabled)
+            disableRotation()
         }
         do {
             try play(asset: asset, remember: true)
@@ -388,9 +386,7 @@ extension AppViewModel {
 
     func stopPlayback() {
         if rotationEnabled {
-            setRotationEnabledSilently(false)
-            stopRotationTimer()
-            userDefaults.set(false, forKey: PreferenceKey.rotationEnabled)
+            disableRotation()
         }
         WallpaperPlayer.shared.stop()
         userDefaults.removeObject(forKey: PreferenceKey.lastPlayedAssetId)
@@ -473,7 +469,14 @@ extension AppViewModel {
             libraryAssets = try store.load().assets
             normalizeLibrarySelection(allowEmpty: false)
             if rotationEnabled {
-                buildRotationQueue()
+                if playableLibraryAssets.isEmpty {
+                    // The last playable item was removed while rotating: shut
+                    // rotation down cleanly instead of leaving a stale enabled
+                    // flag that would resurrect on the next launch.
+                    disableRotation(status: "Rotation stopped — no playable wallpapers left.")
+                } else {
+                    buildRotationQueue()
+                }
             }
         } catch {
             status = error.localizedDescription
@@ -716,9 +719,7 @@ extension AppViewModel {
 
     func startRotation() {
         guard !playableLibraryAssets.isEmpty else {
-            setRotationEnabledSilently(false)
-            userDefaults.set(false, forKey: PreferenceKey.rotationEnabled)
-            status = "Import or add a playable wallpaper before starting rotation."
+            disableRotation(status: "Import or add a playable wallpaper before starting rotation.")
             return
         }
         userDefaults.set(true, forKey: PreferenceKey.rotationEnabled)
@@ -731,6 +732,18 @@ extension AppViewModel {
         isSyncingRotation = true
         rotationEnabled = value
         isSyncingRotation = false
+    }
+
+    /// Single exit point for turning rotation off: stop the timer, flip the
+    /// published flag without side effects, and clear the persisted preference
+    /// so a stale "enabled" value is never restored on the next launch.
+    func disableRotation(status message: String? = nil) {
+        stopRotationTimer()
+        setRotationEnabledSilently(false)
+        userDefaults.set(false, forKey: PreferenceKey.rotationEnabled)
+        if let message {
+            status = message
+        }
     }
 
     func buildRotationQueue() {
@@ -749,8 +762,7 @@ extension AppViewModel {
 
     func advanceRotation(initial: Bool = false) {
         guard !rotationQueue.isEmpty else {
-            setRotationEnabledSilently(false)
-            stopRotationTimer()
+            disableRotation()
             return
         }
         if !initial {
@@ -772,9 +784,7 @@ extension AppViewModel {
             rotationIndex = (rotationIndex + 1) % rotationQueue.count
             attempts += 1
         }
-        setRotationEnabledSilently(false)
-        stopRotationTimer()
-        status = "No playable wallpapers left to rotate."
+        disableRotation(status: "No playable wallpapers left to rotate.")
     }
 
     func restartRotationTimer() {

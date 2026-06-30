@@ -96,6 +96,23 @@ final class AppViewModelRotationTests: XCTestCase {
         )
     }
 
+    func testLibraryReloadWithNoPlayableStopsRotationAndClearsPreference() throws {
+        // Given rotation is on (persisted) and treated as currently running.
+        let defaults = try makeUserDefaults()
+        let model = makeModel(defaults: defaults)
+        model.setRotationEnabledSilently(true)
+        defaults.set(true, forKey: "rotationEnabled")
+
+        // When the library reloads and nothing playable remains
+        // (e.g. the last playable item was removed while rotating).
+        model.loadLibrary()
+
+        // Then rotation is off in BOTH the UI state and the persisted preference,
+        // so a stale "enabled" value cannot resurrect on the next launch.
+        XCTAssertFalse(model.rotationEnabled)
+        XCTAssertFalse(defaults.bool(forKey: "rotationEnabled"))
+    }
+
     // MARK: Helpers
 
     private func makeModel(defaults: UserDefaults) -> AppViewModel {
