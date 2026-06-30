@@ -64,6 +64,13 @@ Playback notes:
 - Use **Set Still Wallpaper** only when you explicitly want to replace the macOS desktop and Lock Screen still image.
 - **Remove** deletes the imported Mac-library copy only. It does not touch the original copied folder or video.
 
+Library rotation:
+
+- Turn on **Rotate Library** to automatically cycle through every playable wallpaper in your Mac library on a timer.
+- **Shuffle** randomizes the order, **Rotate Every** sets the interval (30s, 1m, 5m, 15m, 30m, 1h), and **Next** jumps to the next wallpaper immediately.
+- Rotation is available in both the settings window and the menu bar menu. The on/off state, shuffle, and interval are remembered across launches and resume after login.
+- **Play on Desktop** or **Stop** turns rotation off so manual selection always wins. Non-playable items are skipped automatically.
+
 Imported files are stored in:
 
 ```text

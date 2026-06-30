@@ -10,6 +10,20 @@ struct UpdateAlert: Identifiable {
 }
 
 @MainActor
+protocol WallpaperPlaying: AnyObject {
+    func play(
+        asset: WallpaperAsset,
+        autoPauseWhenCovered: Bool,
+        displayMode: WallpaperDisplayMode
+    ) throws
+    func stop()
+    func setDisplayMode(_ mode: WallpaperDisplayMode)
+    func setAutoPauseWhenCovered(_ enabled: Bool)
+}
+
+extension WallpaperPlayer: WallpaperPlaying {}
+
+@MainActor
 final class AppViewModel: ObservableObject {
     @Published var sourcePath = ""
     @Published var scannedAssets: [WallpaperAsset] = []
@@ -20,7 +34,7 @@ final class AppViewModel: ObservableObject {
     @Published var isWorking = false
     @Published var displayMode: WallpaperDisplayMode = .fit {
         didSet {
-            WallpaperPlayer.shared.setDisplayMode(displayMode)
+            wallpaperPlayer.setDisplayMode(displayMode)
             userDefaults.set(displayMode.rawValue, forKey: PreferenceKey.displayMode)
             if lockScreenAnimationEnabled, let asset = selectedLibraryAsset {
                 _ = refreshLockScreenAnimationConfiguration(asset: asset)
@@ -29,7 +43,7 @@ final class AppViewModel: ObservableObject {
     }
     @Published var autoPauseWhenCovered = false {
         didSet {
-            WallpaperPlayer.shared.setAutoPauseWhenCovered(autoPauseWhenCovered)
+            wallpaperPlayer.setAutoPauseWhenCovered(autoPauseWhenCovered)
             userDefaults.set(autoPauseWhenCovered, forKey: PreferenceKey.autoPauseWhenCovered)
         }
     }
@@ -64,6 +78,43 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    @Published var rotationEnabled = false {
+        didSet {
+            guard !isSyncingRotation, rotationEnabled != oldValue else {
+                return
+            }
+            if rotationEnabled {
+                startRotation()
+            } else {
+                stopRotationTimer()
+                userDefaults.set(false, forKey: PreferenceKey.rotationEnabled)
+                status = "Rotation stopped."
+            }
+        }
+    }
+    @Published var rotationShuffle = false {
+        didSet {
+            guard rotationShuffle != oldValue else {
+                return
+            }
+            userDefaults.set(rotationShuffle, forKey: PreferenceKey.rotationShuffle)
+            if rotationEnabled {
+                buildRotationQueue()
+            }
+        }
+    }
+    @Published var rotationInterval: TimeInterval = 300 {
+        didSet {
+            guard rotationInterval != oldValue else {
+                return
+            }
+            userDefaults.set(rotationInterval, forKey: PreferenceKey.rotationInterval)
+            if rotationEnabled {
+                restartRotationTimer()
+            }
+        }
+    }
+
     private let scanner = WallpaperScanner()
     private let converter = VideoConverter()
     private let systemWallpaperSetter = SystemWallpaperSetter()
@@ -73,9 +124,14 @@ final class AppViewModel: ObservableObject {
     private let userDefaults: UserDefaults
     private let updateChecker: UpdateChecking
     private let updateURLOpener: UpdateURLOpening
+    private let wallpaperPlayer: WallpaperPlaying
     private let currentVersionProvider: () -> String
     private var isSyncingLaunchAtLogin = false
     private var isSyncingLockScreenAnimation = false
+    private var isSyncingRotation = false
+    private var rotationTimer: Timer?
+    private var rotationQueue: [WallpaperAsset.ID] = []
+    private var rotationIndex = 0
 
     init() {
         userDefaults = .standard
@@ -83,6 +139,7 @@ final class AppViewModel: ObservableObject {
         lockScreenAnimationController = LockScreenAnimationController()
         updateChecker = GitHubReleaseUpdateChecker()
         updateURLOpener = WorkspaceUpdateURLOpener()
+        wallpaperPlayer = WallpaperPlayer.shared
         currentVersionProvider = { AppVersionProvider.currentVersion() }
         do {
             store = try LibraryStore.defaultStore()
@@ -90,6 +147,7 @@ final class AppViewModel: ObservableObject {
             loadLibrary()
             playLastWallpaperIfAvailable()
             restoreLockScreenAnimationIfNeeded()
+            restoreRotationIfNeeded()
         } catch {
             store = LibraryStore(
                 root: FileManager.default.temporaryDirectory.appending(path: "WorkshopWallpaperBridge")
@@ -106,6 +164,7 @@ final class AppViewModel: ObservableObject {
         lockScreenAnimationController: LockScreenAnimationManaging = LockScreenAnimationController(),
         updateChecker: UpdateChecking = DisabledUpdateChecker(),
         updateURLOpener: UpdateURLOpening = WorkspaceUpdateURLOpener(),
+        wallpaperPlayer: WallpaperPlaying = WallpaperPlayer.shared,
         currentVersionProvider: @escaping () -> String = { "0.0.0" },
         userDefaults: UserDefaults = .standard
     ) {
@@ -114,12 +173,14 @@ final class AppViewModel: ObservableObject {
         self.lockScreenAnimationController = lockScreenAnimationController
         self.updateChecker = updateChecker
         self.updateURLOpener = updateURLOpener
+        self.wallpaperPlayer = wallpaperPlayer
         self.currentVersionProvider = currentVersionProvider
         self.userDefaults = userDefaults
         restorePreferences()
         loadLibrary()
         playLastWallpaperIfAvailable()
         restoreLockScreenAnimationIfNeeded()
+        restoreRotationIfNeeded()
         syncLaunchAtLoginStatus()
     }
 
@@ -261,6 +322,9 @@ extension AppViewModel {
             status = "Select a library project first."
             return
         }
+        if rotationEnabled {
+            disableRotation()
+        }
         do {
             try play(asset: asset, remember: true)
         } catch {
@@ -297,12 +361,19 @@ extension AppViewModel {
             status = "Select a library project first."
             return
         }
+        let wasRotating = rotationEnabled
         do {
             for asset in assets {
                 try store.removeAsset(id: asset.id)
             }
             loadLibrary()
-            if assets.count == 1, let asset = assets.first {
+            if wasRotating, !rotationEnabled {
+                if assets.count == 1, let asset = assets.first {
+                    status = "Removed \(asset.title) from your Mac library. Rotation stopped — no playable wallpapers left."
+                } else {
+                    status = "Removed \(assets.count) items from your Mac library. Rotation stopped — no playable wallpapers left."
+                }
+            } else if assets.count == 1, let asset = assets.first {
                 status = "Removed \(asset.title) from your Mac library."
             } else {
                 status = "Removed \(assets.count) items from your Mac library."
@@ -339,7 +410,10 @@ extension AppViewModel {
     }
 
     func stopPlayback() {
-        WallpaperPlayer.shared.stop()
+        if rotationEnabled {
+            disableRotation()
+        }
+        wallpaperPlayer.stop()
         userDefaults.removeObject(forKey: PreferenceKey.lastPlayedAssetId)
         status = "Playback stopped."
     }
@@ -419,6 +493,16 @@ extension AppViewModel {
         do {
             libraryAssets = try store.load().assets
             normalizeLibrarySelection(allowEmpty: false)
+            if rotationEnabled {
+                if playableLibraryAssets.isEmpty {
+                    // The last playable item was removed while rotating: shut
+                    // rotation down cleanly instead of leaving a stale enabled
+                    // flag that would resurrect on the next launch.
+                    disableRotation(status: "Rotation stopped — no playable wallpapers left.")
+                } else {
+                    buildRotationQueue()
+                }
+            }
         } catch {
             status = error.localizedDescription
         }
@@ -492,9 +576,21 @@ extension AppViewModel {
         if userDefaults.object(forKey: PreferenceKey.automaticallyCheckForUpdates) != nil {
             automaticallyCheckForUpdates = userDefaults.bool(forKey: PreferenceKey.automaticallyCheckForUpdates)
         }
+        if userDefaults.object(forKey: PreferenceKey.rotationShuffle) != nil {
+            rotationShuffle = userDefaults.bool(forKey: PreferenceKey.rotationShuffle)
+        }
+        let storedRotationInterval = userDefaults.double(forKey: PreferenceKey.rotationInterval)
+        if storedRotationInterval > 0 {
+            rotationInterval = storedRotationInterval
+        }
     }
 
     private func playLastWallpaperIfAvailable() {
+        // If rotation was on, let restoreRotationIfNeeded() own the initial play
+        // to avoid playing a wallpaper twice on launch (double play / flicker).
+        guard !userDefaults.bool(forKey: PreferenceKey.rotationEnabled) else {
+            return
+        }
         guard let id = userDefaults.string(forKey: PreferenceKey.lastPlayedAssetId),
               let asset = libraryAssets.first(where: { $0.id == id }),
               asset.supportStatus == .playable else {
@@ -526,7 +622,7 @@ extension AppViewModel {
     }
 
     private func play(asset: WallpaperAsset, remember: Bool) throws {
-        try WallpaperPlayer.shared.play(
+        try wallpaperPlayer.play(
             asset: asset,
             autoPauseWhenCovered: autoPauseWhenCovered,
             displayMode: displayMode
@@ -616,6 +712,131 @@ extension AppViewModel {
     private static let automaticUpdateCheckInterval: TimeInterval = 12 * 60 * 60
 }
 
+extension AppViewModel {
+    static let rotationIntervalOptions: [(label: String, seconds: TimeInterval)] = [
+        ("30 sec", 30),
+        ("1 min", 60),
+        ("5 min", 300),
+        ("15 min", 900),
+        ("30 min", 1800),
+        ("1 hour", 3600)
+    ]
+
+    var playableLibraryAssets: [WallpaperAsset] {
+        libraryAssets.filter { $0.supportStatus == .playable }
+    }
+
+    func nextWallpaper() {
+        guard rotationEnabled else {
+            return
+        }
+        restartRotationTimer()
+        advanceRotation()
+    }
+
+    func restoreRotationIfNeeded() {
+        guard userDefaults.bool(forKey: PreferenceKey.rotationEnabled) else {
+            return
+        }
+        setRotationEnabledSilently(true)
+        startRotation()
+    }
+
+    func startRotation() {
+        guard !playableLibraryAssets.isEmpty else {
+            disableRotation(status: "Import or add a playable wallpaper before starting rotation.")
+            return
+        }
+        userDefaults.set(true, forKey: PreferenceKey.rotationEnabled)
+        buildRotationQueue()
+        restartRotationTimer()
+        advanceRotation(initial: true)
+    }
+
+    func setRotationEnabledSilently(_ value: Bool) {
+        isSyncingRotation = true
+        rotationEnabled = value
+        isSyncingRotation = false
+    }
+
+    /// Single exit point for turning rotation off: stop the timer, flip the
+    /// published flag without side effects, and clear the persisted preference
+    /// so a stale "enabled" value is never restored on the next launch.
+    func disableRotation(status message: String? = nil) {
+        stopRotationTimer()
+        setRotationEnabledSilently(false)
+        userDefaults.set(false, forKey: PreferenceKey.rotationEnabled)
+        if let message {
+            status = message
+        }
+    }
+
+    func buildRotationQueue() {
+        var ids = playableLibraryAssets.map(\.id)
+        if rotationShuffle {
+            ids.shuffle()
+        }
+        rotationQueue = ids
+        if let selected = selectedLibraryAsset?.id,
+           let index = rotationQueue.firstIndex(of: selected) {
+            rotationIndex = index
+        } else {
+            rotationIndex = 0
+        }
+    }
+
+    func advanceRotation(initial: Bool = false) {
+        guard !rotationQueue.isEmpty else {
+            disableRotation()
+            return
+        }
+        if !initial {
+            rotationIndex = (rotationIndex + 1) % rotationQueue.count
+        }
+        var attempts = 0
+        var lastPlaybackError: String?
+        while attempts < rotationQueue.count {
+            let id = rotationQueue[rotationIndex]
+            if let asset = libraryAssets.first(where: { $0.id == id && $0.supportStatus == .playable }) {
+                selectedLibraryAssetId = id
+                do {
+                    try play(asset: asset, remember: true)
+                    status = "Rotating \(rotationIndex + 1)/\(rotationQueue.count): \(asset.title)"
+                } catch {
+                    lastPlaybackError = error.localizedDescription
+                    rotationIndex = (rotationIndex + 1) % rotationQueue.count
+                    attempts += 1
+                    continue
+                }
+                return
+            }
+            rotationIndex = (rotationIndex + 1) % rotationQueue.count
+            attempts += 1
+        }
+        if let lastPlaybackError {
+            disableRotation(status: "Rotation stopped: \(lastPlaybackError)")
+            return
+        }
+        disableRotation(status: "No playable wallpapers left to rotate.")
+    }
+
+    func restartRotationTimer() {
+        stopRotationTimer()
+        let timer = Timer.scheduledTimer(withTimeInterval: rotationInterval, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.advanceRotation()
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        rotationTimer = timer
+    }
+
+    func stopRotationTimer() {
+        rotationTimer?.invalidate()
+        rotationTimer = nil
+    }
+}
+
 private enum PreferenceKey {
     static let displayMode = "displayMode"
     static let autoPauseWhenCovered = "autoPauseWhenCovered"
@@ -623,4 +844,7 @@ private enum PreferenceKey {
     static let lastPlayedAssetId = "lastPlayedAssetId"
     static let automaticallyCheckForUpdates = "automaticallyCheckForUpdates"
     static let lastUpdateCheckAt = "lastUpdateCheckAt"
+    static let rotationEnabled = "rotationEnabled"
+    static let rotationShuffle = "rotationShuffle"
+    static let rotationInterval = "rotationInterval"
 }
