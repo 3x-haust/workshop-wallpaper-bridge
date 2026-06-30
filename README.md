@@ -246,17 +246,19 @@ Workshop Wallpaper Bridge is not affiliated with Valve, Steam, or Wallpaper Engi
 
 ## Maintainers And Contributors
 
-Maintainers:
+<!-- profile-roster:start -->
+This section is generated from GitHub user profiles.
 
-- [3x-haust](https://github.com/3x-haust)
-- [MetaMong](https://github.com/dev-di-tto) (`dev-di-tto`)
+### Maintainers
 
-Contributors:
+- <a href="https://github.com/3x-haust"><img src="https://avatars.githubusercontent.com/u/94370559?v=4&s=72" width="36" height="36" alt="@3x-haust"></a> [유성윤](https://github.com/3x-haust) `@3x-haust`
+- <a href="https://github.com/dev-di-tto"><img src="https://avatars.githubusercontent.com/u/297542341?v=4&s=72" width="36" height="36" alt="@dev-di-tto"></a> [메타몽](https://github.com/dev-di-tto) `@dev-di-tto`
 
-- [3x-haust](https://github.com/3x-haust)
-- [MetaMong](https://github.com/dev-di-tto) (`dev-di-tto`)
-- [ohjack83-lab](https://github.com/ohjack83-lab)
-- ohjack83
+### Contributors
+
+- <a href="https://github.com/3x-haust"><img src="https://avatars.githubusercontent.com/u/94370559?v=4&s=72" width="36" height="36" alt="@3x-haust"></a> [유성윤](https://github.com/3x-haust) `@3x-haust` - 35 commits
+- <a href="https://github.com/ohjack83-lab"><img src="https://avatars.githubusercontent.com/u/263676419?v=4&s=72" width="36" height="36" alt="@ohjack83-lab"></a> [ohjack83](https://github.com/ohjack83-lab) `@ohjack83-lab` - 1 commit
+<!-- profile-roster:end -->
 
 ## License
 

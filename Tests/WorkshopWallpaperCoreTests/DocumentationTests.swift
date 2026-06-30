@@ -144,6 +144,25 @@ final class DocumentationTests: XCTestCase {
         XCTAssertTrue(workflow.contains("REQUIRE_NOTARIZATION: ${{ steps.signing.outputs.available == 'true' && '1' || '0' }}"))
     }
 
+    func testProfileRosterIsGeneratedFromGitHubMetadata() throws {
+        let english = try String(contentsOfFile: "README.md")
+        let korean = try String(contentsOfFile: "README.ko.md")
+        let workflow = try String(contentsOfFile: ".github/workflows/update-profile-roster.yml")
+        let script = try String(contentsOfFile: "Scripts/update-profile-roster.mjs")
+
+        for readme in [english, korean] {
+            XCTAssertTrue(readme.contains("<!-- profile-roster:start -->"))
+            XCTAssertTrue(readme.contains("<!-- profile-roster:end -->"))
+            XCTAssertTrue(readme.contains("avatars.githubusercontent.com"))
+        }
+
+        XCTAssertTrue(workflow.contains("node Scripts/update-profile-roster.mjs"))
+        XCTAssertTrue(workflow.contains("contents: write"))
+        XCTAssertTrue(script.contains("/collaborators?affiliation=direct&per_page=100"))
+        XCTAssertTrue(script.contains("permissions.push === true"))
+        XCTAssertTrue(script.contains("/contributors?anon=false&per_page=100"))
+    }
+
     func testPackagingScriptVerifiesNotarizedQuarantinedApp() throws {
         let script = try String(contentsOfFile: "Scripts/package-app.sh")
 
