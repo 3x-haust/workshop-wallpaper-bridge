@@ -105,13 +105,16 @@ final class DocumentationTests: XCTestCase {
         XCTAssertTrue(workflow.contains("macos-15"))
     }
 
-    func testReleaseWorkflowPublishesDmgAndChecksum() throws {
+    func testReleaseWorkflowPublishesReleaseArchiveAndChecksum() throws {
         let workflow = try String(contentsOfFile: ".github/workflows/release.yml")
 
         XCTAssertTrue(workflow.contains("Scripts/package-app.sh"))
         XCTAssertTrue(workflow.contains("shasum -a 256"))
         XCTAssertTrue(workflow.contains("gh release upload"))
-        XCTAssertTrue(workflow.contains("WorkshopWallpaperBridge-macOS-arm64.dmg"))
+        XCTAssertTrue(workflow.contains("-name \"*.dmg\""))
+        XCTAssertTrue(workflow.contains("-name \"*.zip\""))
+        XCTAssertTrue(workflow.contains("RELEASE_ARTIFACT"))
+        XCTAssertTrue(workflow.contains("RELEASE_CHECKSUM"))
         XCTAssertTrue(workflow.contains("contents: write"))
     }
 

@@ -186,6 +186,30 @@ struct ContentView: View {
                 .keyboardShortcut(.delete, modifiers: [])
                 Spacer()
             }
+            HStack(spacing: 16) {
+                Toggle("Rotate Library", isOn: $model.rotationEnabled)
+                    .toggleStyle(.switch)
+                    .lineLimit(1)
+                    .fixedSize()
+                Toggle("Shuffle", isOn: $model.rotationShuffle)
+                    .toggleStyle(.switch)
+                    .lineLimit(1)
+                    .fixedSize()
+                Spacer()
+            }
+            HStack(spacing: 12) {
+                Picker("Every", selection: $model.rotationInterval) {
+                    ForEach(AppViewModel.rotationIntervalOptions, id: \.seconds) { option in
+                        Text(option.label).tag(option.seconds)
+                    }
+                }
+                .fixedSize()
+                actionButton("Next") {
+                    model.nextWallpaper()
+                }
+                .disabled(!model.rotationEnabled)
+                Spacer()
+            }
         }
     }
 
