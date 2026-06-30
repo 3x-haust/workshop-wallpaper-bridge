@@ -4,6 +4,7 @@ final class DocumentationTests: XCTestCase {
     func testEnglishReadmeUsesConciseOpenSourceStructure() throws {
         let readme = try String(contentsOfFile: "README.md")
         let expectedHeadings = [
+            "## Quick Links",
             "## Demo",
             "## Download",
             "## Use It",
@@ -13,6 +14,7 @@ final class DocumentationTests: XCTestCase {
             "## CLI",
             "## Troubleshooting",
             "## Project Boundaries",
+            "## Maintainers And Contributors",
             "## License"
         ]
 
@@ -37,6 +39,7 @@ final class DocumentationTests: XCTestCase {
     func testKoreanReadmeMirrorsEnglishStructure() throws {
         let readme = try String(contentsOfFile: "README.ko.md")
         let expectedHeadings = [
+            "## 빠른 링크",
             "## 데모",
             "## 다운로드",
             "## 사용 방법",
@@ -46,6 +49,7 @@ final class DocumentationTests: XCTestCase {
             "## CLI",
             "## 문제 해결",
             "## 프로젝트 경계",
+            "## 메인테이너와 기여자",
             "## 라이선스"
         ]
 
@@ -78,6 +82,8 @@ final class DocumentationTests: XCTestCase {
             XCTAssertTrue(readme.contains("ffmpeg"))
             XCTAssertTrue(readme.contains("Steam Workshop"))
             XCTAssertTrue(readme.contains("DRM"))
+            XCTAssertTrue(readme.contains("dev-di-tto"))
+            XCTAssertTrue(readme.contains("ohjack83-lab"))
             XCTAssertTrue(readme.contains("~/Library/Application Support/WorkshopWallpaperBridge"))
         }
     }
