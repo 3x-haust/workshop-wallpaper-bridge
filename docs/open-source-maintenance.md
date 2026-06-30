@@ -12,7 +12,7 @@ Reasoning: this project is easy to misunderstand as a Steam or Wallpaper Engine 
 
 Purpose: give Codex, Copilot-style agents, and other AI coding tools repo-specific rules.
 
-Reasoning: AI tools often optimize for implementation speed. This project needs extra care around file system safety, Swift concurrency, and honest compatibility claims. `AGENTS.md` makes those constraints explicit.
+Reasoning: AI tools often optimize for implementation speed. This project needs extra care around file system safety, Swift concurrency, honest compatibility claims, and maintainer workflow discipline. `AGENTS.md` makes those constraints explicit, including `$work` usage, LLM Wiki root resolution, branch-per-change work, PR-first publishing, and deleting completed branches after merge.
 
 ## `CLAUDE.md`
 
@@ -53,3 +53,9 @@ Reasoning: this app reads user-selected folders, parses third-party package form
 Purpose: keep history readable.
 
 Reasoning: conventional prefixes such as `fix`, `feat`, `docs`, `test`, and `perf` make release notes and future archaeology easier, especially when outside contributors and AI-generated commits are involved.
+
+## `Scripts/cleanup-merged-branches.sh`
+
+Purpose: remove completed branches after they are merged.
+
+Reasoning: maintainer work should end with a clean repository state. The script fetches and prunes the target remote, then deletes only branches already merged into the configured base branch. It skips protected names, the current branch, unmerged branches, and branches currently checked out in another worktree.

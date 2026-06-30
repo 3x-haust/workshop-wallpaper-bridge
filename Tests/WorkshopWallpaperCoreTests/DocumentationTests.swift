@@ -147,6 +147,31 @@ final class DocumentationTests: XCTestCase {
         XCTAssertTrue(script.contains("com.apple.quarantine"))
     }
 
+    func testMaintainerWorkflowRequiresWorkWikiFallbackAndBranchCleanup() throws {
+        let agents = try String(contentsOfFile: "AGENTS.md")
+        let claude = try String(contentsOfFile: "CLAUDE.md")
+        let maintenance = try String(contentsOfFile: "docs/open-source-maintenance.md")
+        let cleanup = try String(contentsOfFile: "Scripts/cleanup-merged-branches.sh")
+
+        XCTAssertTrue(agents.contains("use the `$work` workflow"))
+        XCTAssertTrue(agents.contains("Keep `VAULT_ROOT` and `REPO_ROOT` separate"))
+        XCTAssertTrue(agents.contains("`$LLM_WIKI_ROOT` when set, `/workspace/llm-wiki`, then a repo-local `wiki/`"))
+        XCTAssertTrue(agents.contains("Do not fail a deploy or maintainer task merely because this repository has no `wiki/` directory"))
+        XCTAssertTrue(agents.contains("push the branch, open a PR, merge the PR after checks/review, then delete the completed branch"))
+        XCTAssertTrue(agents.contains("Scripts/cleanup-merged-branches.sh origin main"))
+
+        XCTAssertTrue(claude.contains("use `$work` for maintainer/deploy/release requests"))
+        XCTAssertTrue(claude.contains("do not treat this repo's missing `wiki/` directory as a deploy blocker"))
+
+        XCTAssertTrue(maintenance.contains("LLM Wiki root resolution"))
+        XCTAssertTrue(maintenance.contains("`Scripts/cleanup-merged-branches.sh`"))
+
+        XCTAssertTrue(cleanup.contains("git fetch --prune \"$remote\""))
+        XCTAssertTrue(cleanup.contains("git branch -d \"$branch\""))
+        XCTAssertTrue(cleanup.contains("git push \"$remote\" --delete \"$branch\""))
+        XCTAssertTrue(cleanup.contains("git worktree list --porcelain"))
+    }
+
     func testPackagedAppDefaultsToCurrentReleaseVersion() throws {
         let script = try String(contentsOfFile: "Scripts/package-app.sh")
 

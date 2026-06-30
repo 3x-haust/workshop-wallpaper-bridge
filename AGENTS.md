@@ -68,11 +68,15 @@ Before proposing or committing changes, check:
 
 Treat this repository like a public open-source project, even for local agent work.
 
-- Never publish work directly from `main`. Create a focused branch before committing, pushing, opening a PR, or preparing a release.
+- For maintainer, deploy, release, CI/CD, verification, and project-channel requests, use the `$work` workflow so repository work is grounded in the LLM Wiki when it is available.
+- Keep `VAULT_ROOT` and `REPO_ROOT` separate. Resolve wiki memory in this order: `$LLM_WIKI_ROOT` when set, `/workspace/llm-wiki`, then a repo-local `wiki/` only when it exists. Do not fail a deploy or maintainer task merely because this repository has no `wiki/` directory; if no wiki is found, name the searched paths and continue from repository files, GitHub state, and explicit user context.
+- Never publish work directly from `main`. Create a focused branch before committing, pushing, opening a PR, preparing a release, or deploying.
 - Do not commit directly to `main` unless the user explicitly asks for a direct hotfix.
 - Create a focused branch before publishing changes, for example `fix/dock-flicker` or `docs/contribution-workflow`.
 - Keep each branch and pull request scoped to one problem.
 - Use Conventional Commit messages from this file.
+- Maintainer changes must follow this order: update `main`, create the matching branch, make and verify the change, push the branch, open a PR, merge the PR after checks/review, then delete the completed branch.
+- Delete completed branches after merge. Use `Scripts/cleanup-merged-branches.sh origin main` to prune local and remote branches already merged into `origin/main`; the script skips `main`, the current branch, unmerged branches, and branches checked out in another worktree.
 - Before opening a PR, run the required local checks for the touched surface:
   - `swift test` for code changes.
   - `bash Scripts/package-app.sh` for app bundle or release changes.
@@ -93,10 +97,11 @@ When preparing a patch release:
 6. Commit with a `fix:` subject for bug fixes.
 7. Push the branch and open a PR.
 8. Merge the PR into `main`.
-9. Tag the merged commit with the next semantic version:
+9. Delete the completed branch locally and on GitHub, or run `Scripts/cleanup-merged-branches.sh origin main`.
+10. Tag the merged commit with the next semantic version:
    - Patch bug fix: `vMAJOR.MINOR.PATCH`
    - Feature release: `vMAJOR.MINOR.0`
-10. Push the tag. The release workflow builds the DMG, checksum, and GitHub Release.
+11. Push the tag. The release workflow builds the DMG, checksum, and GitHub Release.
 
 Release tags must use the `v<version>` format because `.github/workflows/release.yml` derives the app version from the tag.
 
