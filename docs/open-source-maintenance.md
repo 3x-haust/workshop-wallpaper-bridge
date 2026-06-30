@@ -36,7 +36,7 @@ Reasoning: reviewers should not have to guess whether tests ran, whether docs we
 
 Purpose: keep the README maintainer and contributor roster generated from GitHub user profiles.
 
-Reasoning: contributor lists drift when they are hand-edited. The workflow reads direct repository collaborators with write, maintain, or admin permission for maintainers and GitHub's contributor API for contributors, then commits README updates after merges, on schedule, or by manual dispatch.
+Reasoning: contributor lists drift when they are hand-edited. The workflow reads direct repository collaborators with write, maintain, or admin permission for maintainers and GitHub's contributor API for contributors, then pushes README updates to `automation/update-profile-roster` and creates or reuses a pull request after merges, on schedule, or by manual dispatch.
 
 ## `Scripts/update-profile-roster.mjs`
 

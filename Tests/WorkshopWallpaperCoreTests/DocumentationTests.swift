@@ -149,6 +149,7 @@ final class DocumentationTests: XCTestCase {
         let korean = try String(contentsOfFile: "README.ko.md")
         let workflow = try String(contentsOfFile: ".github/workflows/update-profile-roster.yml")
         let script = try String(contentsOfFile: "Scripts/update-profile-roster.mjs")
+        let maintenanceNotes = try String(contentsOfFile: "docs/open-source-maintenance.md")
 
         for readme in [english, korean] {
             XCTAssertTrue(readme.contains("<!-- profile-roster:start -->"))
@@ -158,6 +159,10 @@ final class DocumentationTests: XCTestCase {
 
         XCTAssertTrue(workflow.contains("node Scripts/update-profile-roster.mjs"))
         XCTAssertTrue(workflow.contains("contents: write"))
+        XCTAssertTrue(workflow.contains("pull-requests: write"))
+        XCTAssertTrue(workflow.contains("automation/update-profile-roster"))
+        XCTAssertTrue(workflow.contains("gh pr create"))
+        XCTAssertTrue(maintenanceNotes.contains("creates or reuses a pull request"))
         XCTAssertTrue(script.contains("/collaborators?affiliation=direct&per_page=100"))
         XCTAssertTrue(script.contains("permissions.push === true"))
         XCTAssertTrue(script.contains("/contributors?anon=false&per_page=100"))
