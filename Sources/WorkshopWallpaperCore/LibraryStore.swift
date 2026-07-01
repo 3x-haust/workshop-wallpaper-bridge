@@ -170,6 +170,7 @@ public struct LibraryStore: Sendable {
             entrypoint: asset.entrypoint,
             thumbnail: asset.thumbnail,
             workshopId: asset.workshopId,
+            dateAdded: asset.dateAdded,
             redistributionAllowed: false,
             issues: mergedIssues(asset.issues + [cacheIssue])
         )
@@ -276,6 +277,7 @@ public struct LibraryStore: Sendable {
             entrypoint: rewrite(path: asset.entrypoint, source: source, target: target),
             thumbnail: rewrite(path: asset.thumbnail, source: source, target: target),
             workshopId: asset.workshopId,
+            dateAdded: asset.dateAdded,
             redistributionAllowed: false,
             issues: asset.issues
         )
@@ -326,6 +328,7 @@ public struct LibraryStore: Sendable {
             entrypoint: scanned.entrypoint,
             thumbnail: scanned.thumbnail ?? asset.thumbnail,
             workshopId: asset.workshopId,
+            dateAdded: asset.dateAdded ?? scanned.dateAdded,
             redistributionAllowed: false,
             issues: mergedIssues(asset.issues + scanned.issues)
         )
@@ -371,6 +374,7 @@ public struct LibraryStore: Sendable {
             entrypoint: asset.entrypoint,
             thumbnail: asset.thumbnail,
             workshopId: asset.workshopId,
+            dateAdded: asset.dateAdded,
             redistributionAllowed: hasRenderCache ? false : asset.redistributionAllowed,
             issues: mergedIssues(preserved + refreshed + cacheIssues)
         )

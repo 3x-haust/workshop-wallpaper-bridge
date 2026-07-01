@@ -41,6 +41,7 @@ public struct WallpaperAsset: Codable, Equatable, Identifiable, Sendable {
     public let entrypoint: String?
     public let thumbnail: String?
     public let workshopId: String?
+    public let dateAdded: Date?
     public let redistributionAllowed: Bool
     public let issues: [ScanIssue]
 
@@ -54,6 +55,7 @@ public struct WallpaperAsset: Codable, Equatable, Identifiable, Sendable {
         entrypoint: String?,
         thumbnail: String?,
         workshopId: String?,
+        dateAdded: Date? = nil,
         redistributionAllowed: Bool,
         issues: [ScanIssue]
     ) {
@@ -66,6 +68,7 @@ public struct WallpaperAsset: Codable, Equatable, Identifiable, Sendable {
         self.entrypoint = entrypoint
         self.thumbnail = thumbnail
         self.workshopId = workshopId
+        self.dateAdded = dateAdded
         self.redistributionAllowed = redistributionAllowed
         self.issues = issues
     }

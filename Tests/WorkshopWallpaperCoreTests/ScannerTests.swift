@@ -29,6 +29,37 @@ final class ScannerTests: XCTestCase {
         XCTAssertEqual(asset.redistributionAllowed, false)
     }
 
+    func testScanReadsDateAddedAndSortsNewestFirst() throws {
+        // Given
+        let root = try Fixture.makeTempDirectory()
+        try Fixture.project(
+            root: root,
+            id: "100",
+            metadata: #"{"title":"Older","file":"older.mp4"}"#,
+            file: "older.mp4"
+        )
+        try Fixture.project(
+            root: root,
+            id: "200",
+            metadata: #"{"title":"Newer","file":"newer.mp4"}"#,
+            file: "newer.mp4"
+        )
+        let older = root.appending(path: "100")
+        let newer = root.appending(path: "200")
+        let olderDate = Date(timeIntervalSince1970: 1_700_000_000)
+        let newerDate = Date(timeIntervalSince1970: 1_700_086_400)
+        try FileManager.default.setAttributes([.modificationDate: olderDate], ofItemAtPath: older.path)
+        try FileManager.default.setAttributes([.modificationDate: newerDate], ofItemAtPath: newer.path)
+
+        // When
+        let result = try WallpaperScanner().scan(root: root)
+
+        // Then
+        XCTAssertEqual(result.assets.map(\.id), ["200", "100"])
+        XCTAssertNotNil(result.assets[0].dateAdded)
+        XCTAssertNotNil(result.assets[1].dateAdded)
+    }
+
     func testScanClassifiesWebImageAndSceneProjects() throws {
         // Given
         let root = try Fixture.makeTempDirectory()
@@ -55,8 +86,10 @@ final class ScannerTests: XCTestCase {
         let result = try WallpaperScanner().scan(root: root)
 
         // Then
-        XCTAssertEqual(result.assets.map(\.kind), [.image, .scene, .web])
-        XCTAssertEqual(result.assets.map(\.supportStatus), [.playable, .unsupported, .playable])
+        let supportByKind = Dictionary(uniqueKeysWithValues: result.assets.map { ($0.kind, $0.supportStatus) })
+        XCTAssertEqual(supportByKind[.image], .playable)
+        XCTAssertEqual(supportByKind[.scene], .unsupported)
+        XCTAssertEqual(supportByKind[.web], .playable)
     }
 
     func testScanReportsMalformedProjectJsonWithoutThrowing() throws {
