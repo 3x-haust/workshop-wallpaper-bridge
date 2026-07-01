@@ -5,7 +5,7 @@ import WorkshopWallpaperCore
 
 @MainActor
 final class AppViewModelTests: XCTestCase {
-    func testImportSelectedImportsMultipleScannedAssets() throws {
+    func testImportSelectedImportsMultipleScannedAssets() async throws {
         // Given
         let sourceRoot = try makeTempDirectory()
         let first = try makeScannedProject(root: sourceRoot, id: "first", title: "First Loop")
@@ -19,9 +19,13 @@ final class AppViewModelTests: XCTestCase {
         model.scannedAssets = [first, second]
         model.selectScannedAssets([first.id, second.id])
 
-        // When
-        model.importSelected()
+        // When (import runs off the main thread; await its completion)
+        await model.importSelected().value
         let manifest = try store.load()
+
+        // Then the working/progress state is cleared once the import finishes.
+        XCTAssertFalse(model.isWorking)
+        XCTAssertNil(model.importProgress)
 
         // Then
         XCTAssertEqual(Set(manifest.assets.map(\.id)), [first.id, second.id])
