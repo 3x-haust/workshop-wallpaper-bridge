@@ -32,18 +32,20 @@ final class ScannerTests: XCTestCase {
     func testScanReadsDateAddedAndSortsNewestFirst() throws {
         // Given
         let root = try Fixture.makeTempDirectory()
-        let older = try Fixture.project(
+        try Fixture.project(
             root: root,
             id: "100",
             metadata: #"{"title":"Older","file":"older.mp4"}"#,
             file: "older.mp4"
         )
-        let newer = try Fixture.project(
+        try Fixture.project(
             root: root,
             id: "200",
             metadata: #"{"title":"Newer","file":"newer.mp4"}"#,
             file: "newer.mp4"
         )
+        let older = root.appending(path: "100")
+        let newer = root.appending(path: "200")
         let olderDate = Date(timeIntervalSince1970: 1_700_000_000)
         let newerDate = Date(timeIntervalSince1970: 1_700_086_400)
         try FileManager.default.setAttributes([.modificationDate: olderDate], ofItemAtPath: older.path)
