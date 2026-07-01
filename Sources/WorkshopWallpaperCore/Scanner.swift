@@ -7,7 +7,7 @@ public struct WallpaperScanner: Sendable {
         let projects = try discoverProjects(root: root.standardizedFileURL)
         let assets = try projects
             .map { try scanProject(root: root.standardizedFileURL, project: $0) }
-            .sorted { $0.id.localizedStandardCompare($1.id) == .orderedAscending }
+            .sorted(by: dateAddedSort)
         return ScanResult(root: root.path, generatedAt: Date(), assets: assets)
     }
 
@@ -18,7 +18,7 @@ public struct WallpaperScanner: Sendable {
         return try FileManager.default
             .contentsOfDirectory(
                 at: root,
-                includingPropertiesForKeys: [.isDirectoryKey],
+                includingPropertiesForKeys: [.isDirectoryKey, .addedToDirectoryDateKey, .contentModificationDateKey],
                 options: [.skipsHiddenFiles]
             )
             .filter { isDirectory($0) && isProjectDirectory($0) }
@@ -42,6 +42,7 @@ public struct WallpaperScanner: Sendable {
             entrypoint: entry?.path,
             thumbnail: thumbnail?.path,
             workshopId: id.allSatisfy(\.isNumber) ? id : nil,
+            dateAdded: dateAdded(for: project),
             redistributionAllowed: false,
             issues: issues
         )
@@ -214,6 +215,11 @@ public struct WallpaperScanner: Sendable {
         }
         return .manualFolder
     }
+
+    private func dateAdded(for project: URL) -> Date? {
+        let values = try? project.resourceValues(forKeys: [.addedToDirectoryDateKey, .contentModificationDateKey])
+        return values?.addedToDirectoryDate ?? values?.contentModificationDate
+    }
 }
 
 private struct ProjectMetadata: Decodable {
@@ -264,6 +270,19 @@ private func entrypointRank(_ url: URL) -> Int {
     if imageExtensions.contains(ext) { return 3 }
     if ext == "pkg" { return 4 }
     return 5
+}
+
+private func dateAddedSort(_ lhs: WallpaperAsset, _ rhs: WallpaperAsset) -> Bool {
+    switch (lhs.dateAdded, rhs.dateAdded) {
+    case let (left?, right?) where left != right:
+        return left > right
+    case (_?, nil):
+        return true
+    case (nil, _?):
+        return false
+    default:
+        return lhs.id.localizedStandardCompare(rhs.id) == .orderedAscending
+    }
 }
 
 private func isDirectory(_ url: URL) -> Bool {

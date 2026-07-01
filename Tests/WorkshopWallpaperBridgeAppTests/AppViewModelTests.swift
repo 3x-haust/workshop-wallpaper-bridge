@@ -54,6 +54,68 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertEqual(model.selectedScannedAssetId, asset.id)
     }
 
+    func testScanSourceSortsByDateAddedByDefaultAndCanSortByName() throws {
+        // Given
+        let sourceRoot = try makeTempDirectory()
+        let older = try makeScannedProject(root: sourceRoot, id: "100", title: "Alpha")
+        let newer = try makeScannedProject(root: sourceRoot, id: "200", title: "Beta")
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date(timeIntervalSince1970: 1_700_000_000)],
+            ofItemAtPath: older.projectDirectory
+        )
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date(timeIntervalSince1970: 1_700_086_400)],
+            ofItemAtPath: newer.projectDirectory
+        )
+        let model = AppViewModel(
+            store: LibraryStore(root: try makeTempDirectory()),
+            loginItemController: MockLoginItemController(),
+            userDefaults: try makeUserDefaults()
+        )
+        model.sourcePath = sourceRoot.path
+
+        // When
+        model.scanSource()
+
+        // Then
+        XCTAssertEqual(model.scannedAssets.map(\.id), ["200", "100"])
+        XCTAssertEqual(model.selectedScannedAssetId, "200")
+
+        // When
+        model.scannedSortOrder = .name
+
+        // Then
+        XCTAssertEqual(model.scannedAssets.map(\.id), ["100", "200"])
+    }
+
+    func testNewScannedAssetUsesLastImportBaseline() throws {
+        // Given
+        let sourceRoot = try makeTempDirectory()
+        let old = try makeScannedProject(
+            root: sourceRoot,
+            id: "old",
+            title: "Old",
+            dateAdded: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        let fresh = try makeScannedProject(
+            root: sourceRoot,
+            id: "fresh",
+            title: "Fresh",
+            dateAdded: Date(timeIntervalSince1970: 1_700_010_000)
+        )
+        let defaults = try makeUserDefaults()
+        defaults.set(Date(timeIntervalSince1970: 1_700_005_000), forKey: "lastImportAt")
+        let model = AppViewModel(
+            store: LibraryStore(root: try makeTempDirectory()),
+            loginItemController: MockLoginItemController(),
+            userDefaults: defaults
+        )
+
+        // Then
+        XCTAssertFalse(model.isNewScannedAsset(old))
+        XCTAssertTrue(model.isNewScannedAsset(fresh))
+    }
+
     func testInitSelectsFirstLibraryAssetWhenAvailable() throws {
         // Given
         let sourceRoot = try makeTempDirectory()
@@ -417,11 +479,21 @@ final class AppViewModelTests: XCTestCase {
         return defaults
     }
 
-    private func makeScannedProject(root: URL, id: String, title: String) throws -> WallpaperAsset {
+    private func makeScannedProject(
+        root: URL,
+        id: String,
+        title: String,
+        dateAdded: Date? = nil
+    ) throws -> WallpaperAsset {
         let project = root.appending(path: id)
         try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
         let entrypoint = project.appending(path: "loop.mp4")
         try Data([1]).write(to: entrypoint)
+        try #"{"title":"\#(title)","file":"loop.mp4"}"#.write(
+            to: project.appending(path: "project.json"),
+            atomically: true,
+            encoding: .utf8
+        )
         return WallpaperAsset(
             id: id,
             title: title,
@@ -432,6 +504,7 @@ final class AppViewModelTests: XCTestCase {
             entrypoint: entrypoint.path,
             thumbnail: nil,
             workshopId: id,
+            dateAdded: dateAdded,
             redistributionAllowed: false,
             issues: []
         )

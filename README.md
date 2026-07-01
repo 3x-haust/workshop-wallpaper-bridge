@@ -54,6 +54,11 @@ For Wallpaper Engine projects:
 5. Select a supported item and click **Import Selected**.
 6. Click **Play on Desktop**.
 
+The scan list sorts by **Date Added** newest first by default, using the macOS
+folder Date Added value with modification date as a fallback. Switch the sort to
+**Name** when you want an alphabetical list. After you import, items added to
+the copied Workshop folder later are marked **NEW** on the next scan.
+
 For your own videos, click **Add Video File** instead of scanning a Workshop folder.
 
 Display modes:

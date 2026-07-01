@@ -9,6 +9,22 @@ struct UpdateAlert: Identifiable {
     let message: String
 }
 
+enum ScannedAssetSortOrder: String, CaseIterable, Identifiable {
+    case dateAdded
+    case name
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .dateAdded:
+            "Date Added"
+        case .name:
+            "Name"
+        }
+    }
+}
+
 @MainActor
 protocol WallpaperPlaying: AnyObject {
     func play(
@@ -112,6 +128,15 @@ final class AppViewModel: ObservableObject {
             if rotationEnabled {
                 restartRotationTimer()
             }
+        }
+    }
+    @Published var scannedSortOrder: ScannedAssetSortOrder = .dateAdded {
+        didSet {
+            guard scannedSortOrder != oldValue else {
+                return
+            }
+            userDefaults.set(scannedSortOrder.rawValue, forKey: PreferenceKey.scannedSortOrder)
+            sortScannedAssets()
         }
     }
 
@@ -256,8 +281,8 @@ extension AppViewModel {
         }
         do {
             let result = try scanner.scan(root: URL(filePath: sourcePath))
-            scannedAssets = result.assets
-            selectedScannedAssetIds = result.assets.first.map { Set([$0.id]) } ?? []
+            scannedAssets = sortedScannedAssets(result.assets)
+            selectedScannedAssetIds = scannedAssets.first.map { Set([$0.id]) } ?? []
             status = "Found \(result.assets.count) project(s)."
         } catch {
             status = error.localizedDescription
@@ -275,6 +300,7 @@ extension AppViewModel {
             for asset in assets {
                 importedAssets.append(try store.importAsset(asset))
             }
+            userDefaults.set(Date(), forKey: PreferenceKey.lastImportAt)
             loadLibrary()
             selectLibraryAssets(Set(importedAssets.map(\.id)))
             if importedAssets.count == 1, let imported = importedAssets.first {
@@ -579,9 +605,33 @@ extension AppViewModel {
         if userDefaults.object(forKey: PreferenceKey.rotationShuffle) != nil {
             rotationShuffle = userDefaults.bool(forKey: PreferenceKey.rotationShuffle)
         }
+        if let rawScannedSortOrder = userDefaults.string(forKey: PreferenceKey.scannedSortOrder),
+           let storedScannedSortOrder = ScannedAssetSortOrder(rawValue: rawScannedSortOrder) {
+            scannedSortOrder = storedScannedSortOrder
+        }
         let storedRotationInterval = userDefaults.double(forKey: PreferenceKey.rotationInterval)
         if storedRotationInterval > 0 {
             rotationInterval = storedRotationInterval
+        }
+    }
+
+    private func sortScannedAssets() {
+        scannedAssets = sortedScannedAssets(scannedAssets)
+        normalizeScannedSelection(allowEmpty: true)
+    }
+
+    private func sortedScannedAssets(_ assets: [WallpaperAsset]) -> [WallpaperAsset] {
+        switch scannedSortOrder {
+        case .dateAdded:
+            assets.sorted(by: dateAddedSort)
+        case .name:
+            assets.sorted { lhs, rhs in
+                let titleOrder = lhs.title.localizedStandardCompare(rhs.title)
+                if titleOrder != .orderedSame {
+                    return titleOrder == .orderedAscending
+                }
+                return lhs.id.localizedStandardCompare(rhs.id) == .orderedAscending
+            }
         }
     }
 
@@ -669,9 +719,18 @@ extension AppViewModel {
             entrypoint: output.path,
             thumbnail: asset.thumbnail,
             workshopId: asset.workshopId,
+            dateAdded: asset.dateAdded,
             redistributionAllowed: false,
             issues: asset.issues.filter { $0.code != "needs_conversion" }
         )
+    }
+
+    func isNewScannedAsset(_ asset: WallpaperAsset) -> Bool {
+        guard let lastImportAt = userDefaults.object(forKey: PreferenceKey.lastImportAt) as? Date,
+              let dateAdded = asset.dateAdded else {
+            return false
+        }
+        return dateAdded > lastImportAt
     }
 
     private func scheduleAutomaticUpdateCheck(force: Bool = false) {
@@ -847,4 +906,19 @@ private enum PreferenceKey {
     static let rotationEnabled = "rotationEnabled"
     static let rotationShuffle = "rotationShuffle"
     static let rotationInterval = "rotationInterval"
+    static let scannedSortOrder = "scannedSortOrder"
+    static let lastImportAt = "lastImportAt"
+}
+
+private func dateAddedSort(_ lhs: WallpaperAsset, _ rhs: WallpaperAsset) -> Bool {
+    switch (lhs.dateAdded, rhs.dateAdded) {
+    case let (left?, right?) where left != right:
+        return left > right
+    case (_?, nil):
+        return true
+    case (nil, _?):
+        return false
+    default:
+        return lhs.id.localizedStandardCompare(rhs.id) == .orderedAscending
+    }
 }

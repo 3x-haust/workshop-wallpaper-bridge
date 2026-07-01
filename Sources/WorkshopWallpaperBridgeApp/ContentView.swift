@@ -92,10 +92,23 @@ struct ContentView: View {
                     model.scanSource()
                 }
             }
+            HStack {
+                Text("Scanned Projects")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Picker("Sort", selection: $model.scannedSortOrder) {
+                    ForEach(ScannedAssetSortOrder.allCases) { order in
+                        Text(order.title).tag(order)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 220)
+            }
             assetList(
                 title: "Scanned Projects",
                 assets: model.scannedAssets,
                 previewAsset: model.selectedScannedAsset,
+                isNew: { model.isNewScannedAsset($0) },
                 selection: Binding(
                     get: { model.selectedScannedAssetIds },
                     set: { model.selectScannedAssets($0) }
@@ -137,6 +150,7 @@ struct ContentView: View {
                 title: "Imported Projects",
                 assets: model.libraryAssets,
                 previewAsset: model.selectedLibraryAsset,
+                isNew: { _ in false },
                 selection: Binding(
                     get: { model.selectedLibraryAssetIds },
                     set: { model.selectLibraryAssets($0) }
@@ -250,12 +264,13 @@ struct ContentView: View {
         title: String,
         assets: [WallpaperAsset],
         previewAsset: WallpaperAsset?,
+        isNew: @escaping (WallpaperAsset) -> Bool,
         selection: Binding<Set<WallpaperAsset.ID>>
     ) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             List(selection: selection) {
                 ForEach(assets) { asset in
-                    AssetRow(asset: asset)
+                    AssetRow(asset: asset, isNew: isNew(asset))
                         .tag(asset.id)
                 }
             }
@@ -274,12 +289,13 @@ struct ContentView: View {
         title: String,
         assets: [WallpaperAsset],
         previewAsset: WallpaperAsset?,
+        isNew: @escaping (WallpaperAsset) -> Bool,
         selection: Binding<Set<WallpaperAsset.ID>>
     ) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             List(selection: selection) {
                 ForEach(assets) { asset in
-                    AssetRow(asset: asset)
+                    AssetRow(asset: asset, isNew: isNew(asset))
                         .tag(asset.id)
                         .contextMenu {
                             Button("Remove") {
@@ -345,6 +361,7 @@ private struct AssetPreview: View {
 
 private struct AssetRow: View {
     let asset: WallpaperAsset
+    let isNew: Bool
 
     var body: some View {
         HStack(spacing: 10) {
@@ -365,6 +382,20 @@ private struct AssetRow: View {
                 }
             }
             Spacer()
+            if isNew {
+                Text("NEW")
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Color.accentColor))
+            }
+            if let dateAddedText {
+                Text(dateAddedText)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
             Text(asset.kind.rawValue)
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -374,6 +405,20 @@ private struct AssetRow: View {
         }
         .padding(.vertical, 4)
     }
+
+    private var dateAddedText: String? {
+        guard let dateAdded = asset.dateAdded else {
+            return nil
+        }
+        return Self.dateFormatter.string(from: dateAdded)
+    }
+
+    private static let dateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .short
+        formatter.timeStyle = .short
+        return formatter
+    }()
 }
 
 private struct AssetThumbnail: View {
