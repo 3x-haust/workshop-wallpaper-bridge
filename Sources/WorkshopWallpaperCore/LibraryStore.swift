@@ -79,7 +79,6 @@ public struct LibraryStore: Sendable {
             entrypoint: entrypoint.path,
             thumbnail: nil,
             workshopId: nil,
-            dateAdded: Date(),
             redistributionAllowed: false,
             issues: []
         )

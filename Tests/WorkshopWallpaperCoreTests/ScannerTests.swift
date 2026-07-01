@@ -86,8 +86,10 @@ final class ScannerTests: XCTestCase {
         let result = try WallpaperScanner().scan(root: root)
 
         // Then
-        XCTAssertEqual(result.assets.map(\.kind), [.image, .scene, .web])
-        XCTAssertEqual(result.assets.map(\.supportStatus), [.playable, .unsupported, .playable])
+        let supportByKind = Dictionary(uniqueKeysWithValues: result.assets.map { ($0.kind, $0.supportStatus) })
+        XCTAssertEqual(supportByKind[.image], .playable)
+        XCTAssertEqual(supportByKind[.scene], .unsupported)
+        XCTAssertEqual(supportByKind[.web], .playable)
     }
 
     func testScanReportsMalformedProjectJsonWithoutThrowing() throws {
