@@ -105,7 +105,7 @@ struct ContentView: View {
                 Button(importButtonTitle) {
                     model.importSelected()
                 }
-                .disabled(model.selectedScannedAssetIds.isEmpty)
+                .disabled(model.selectedScannedAssetIds.isEmpty || model.isWorking)
                 Spacer()
             }
         }
@@ -234,7 +234,11 @@ struct ContentView: View {
 
     private var statusBar: some View {
         HStack {
-            if model.isWorking {
+            if let progress = model.importProgress {
+                ProgressView(value: progress.fraction)
+                    .controlSize(.small)
+                    .frame(width: 120)
+            } else if model.isWorking {
                 ProgressView()
                     .controlSize(.small)
             }

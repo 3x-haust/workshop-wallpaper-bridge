@@ -9,6 +9,12 @@ struct UpdateAlert: Identifiable {
     let message: String
 }
 
+struct ImportProgress: Equatable {
+    let completed: Int
+    let total: Int
+    var fraction: Double { total > 0 ? Double(completed) / Double(total) : 0 }
+}
+
 @MainActor
 protocol WallpaperPlaying: AnyObject {
     func play(
@@ -32,6 +38,7 @@ final class AppViewModel: ObservableObject {
     @Published private(set) var selectedLibraryAssetIds: Set<WallpaperAsset.ID> = []
     @Published var status = "Choose a copied Wallpaper Engine Workshop folder to begin."
     @Published var isWorking = false
+    @Published private(set) var importProgress: ImportProgress?
     @Published var displayMode: WallpaperDisplayMode = .fit {
         didSet {
             wallpaperPlayer.setDisplayMode(displayMode)
@@ -264,31 +271,45 @@ extension AppViewModel {
         }
     }
 
-    func importSelected() {
+    @discardableResult
+    func importSelected() -> Task<Void, Never> {
         let assets = selectedScannedAssets
         guard !assets.isEmpty else {
             status = "Select a scanned project first."
-            return
+            return Task {}
         }
-        var importedAssets: [WallpaperAsset] = []
-        do {
-            for asset in assets {
-                importedAssets.append(try store.importAsset(asset))
+        // Copy files off the main thread so the UI stays responsive, and report
+        // per-item progress so a large multi-import never looks frozen.
+        isWorking = true
+        importProgress = ImportProgress(completed: 0, total: assets.count)
+        status = "Importing 0/\(assets.count)..."
+        let store = self.store
+        return Task {
+            var importedAssets: [WallpaperAsset] = []
+            do {
+                for asset in assets {
+                    let imported = try await Task.detached { try store.importAsset(asset) }.value
+                    importedAssets.append(imported)
+                    importProgress = ImportProgress(completed: importedAssets.count, total: assets.count)
+                    status = "Importing \(importedAssets.count)/\(assets.count)..."
+                }
+                loadLibrary()
+                selectLibraryAssets(Set(importedAssets.map(\.id)))
+                if importedAssets.count == 1, let imported = importedAssets.first {
+                    status = "Imported \(imported.title)."
+                } else {
+                    status = "Imported \(importedAssets.count) projects."
+                }
+            } catch {
+                loadLibrary()
+                if importedAssets.isEmpty {
+                    status = error.localizedDescription
+                } else {
+                    status = "Imported \(importedAssets.count) project(s), then failed: \(error.localizedDescription)"
+                }
             }
-            loadLibrary()
-            selectLibraryAssets(Set(importedAssets.map(\.id)))
-            if importedAssets.count == 1, let imported = importedAssets.first {
-                status = "Imported \(imported.title)."
-            } else {
-                status = "Imported \(importedAssets.count) projects."
-            }
-        } catch {
-            loadLibrary()
-            if importedAssets.isEmpty {
-                status = error.localizedDescription
-            } else {
-                status = "Imported \(importedAssets.count) project(s), then failed: \(error.localizedDescription)"
-            }
+            importProgress = nil
+            isWorking = false
         }
     }
 
@@ -304,16 +325,23 @@ extension AppViewModel {
         }
     }
 
-    func importVideoFile(_ url: URL) {
-        do {
-            let imported = try store.importVideoFile(url)
-            loadLibrary()
-            selectedLibraryAssetId = imported.id
-            status = imported.supportStatus == .needsConversion
-                ? "Added \(imported.title). Convert it before playing."
-                : "Added \(imported.title)."
-        } catch {
-            status = error.localizedDescription
+    @discardableResult
+    func importVideoFile(_ url: URL) -> Task<Void, Never> {
+        isWorking = true
+        status = "Adding \(url.lastPathComponent)..."
+        let store = self.store
+        return Task {
+            do {
+                let imported = try await Task.detached { try store.importVideoFile(url) }.value
+                loadLibrary()
+                selectedLibraryAssetId = imported.id
+                status = imported.supportStatus == .needsConversion
+                    ? "Added \(imported.title). Convert it before playing."
+                    : "Added \(imported.title)."
+            } catch {
+                status = error.localizedDescription
+            }
+            isWorking = false
         }
     }
 
