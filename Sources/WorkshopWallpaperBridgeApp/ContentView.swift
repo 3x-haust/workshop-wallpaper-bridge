@@ -332,44 +332,7 @@ private struct AssetPreview: View {
 
     @ViewBuilder
     private var previewImage: some View {
-        if let image = previewNSImage {
-            Image(nsImage: image)
-                .resizable()
-                .scaledToFill()
-                .frame(width: 144, height: 88)
-                .clipped()
-                .background(.black)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-        } else {
-            ZStack {
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(.black.opacity(0.72))
-                Text(asset?.kind.rawValue.uppercased() ?? "PREVIEW")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.white.opacity(0.72))
-            }
-            .frame(width: 144, height: 88)
-        }
-    }
-
-    private var previewNSImage: NSImage? {
-        guard let url = previewURL else {
-            return nil
-        }
-        return NSImage(contentsOf: url)
-    }
-
-    private var previewURL: URL? {
-        guard let asset else {
-            return nil
-        }
-        if let thumbnail = asset.thumbnail {
-            return URL(filePath: thumbnail)
-        }
-        guard asset.kind == .image, let entrypoint = asset.entrypoint else {
-            return nil
-        }
-        return URL(filePath: entrypoint)
+        AssetThumbnail(asset: asset, width: 144, height: 88, cornerRadius: 6)
     }
 
     private var assetDescription: String {
@@ -385,6 +348,7 @@ private struct AssetRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
+            AssetThumbnail(asset: asset, width: 64, height: 40, cornerRadius: 5)
             VStack(alignment: .leading, spacing: 2) {
                 Text(asset.title)
                     .font(.body.weight(.medium))
@@ -409,5 +373,62 @@ private struct AssetRow: View {
                 .foregroundStyle(asset.supportStatus == .playable ? .green : .orange)
         }
         .padding(.vertical, 4)
+    }
+}
+
+private struct AssetThumbnail: View {
+    let asset: WallpaperAsset?
+    let width: CGFloat
+    let height: CGFloat
+    let cornerRadius: CGFloat
+
+    var body: some View {
+        ZStack {
+            Rectangle()
+                .fill(.black.opacity(0.72))
+            if let image = previewNSImage {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: width, height: height)
+            } else {
+                Text(asset?.kind.rawValue.uppercased() ?? "PREVIEW")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.72))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                    .padding(.horizontal, 6)
+            }
+        }
+        .frame(width: width, height: height)
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+        .accessibilityLabel(accessibilityLabel)
+    }
+
+    private var previewNSImage: NSImage? {
+        guard let url = previewURL else {
+            return nil
+        }
+        return NSImage(contentsOf: url)
+    }
+
+    private var previewURL: URL? {
+        guard let asset else {
+            return nil
+        }
+        if let thumbnail = asset.thumbnail {
+            return URL(filePath: thumbnail)
+        }
+        guard asset.kind == .image, let entrypoint = asset.entrypoint else {
+            return nil
+        }
+        return URL(filePath: entrypoint)
+    }
+
+    private var accessibilityLabel: String {
+        guard let asset else {
+            return "Wallpaper preview placeholder"
+        }
+        return "Wallpaper preview for \(asset.title)"
     }
 }
