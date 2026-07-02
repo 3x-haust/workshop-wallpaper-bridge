@@ -132,6 +132,7 @@ struct ContentView: View {
                 Button("Add Video File") {
                     model.chooseVideoFile()
                 }
+                .disabled(model.isWorking)
             }
             libraryAssetList(
                 title: "Imported Projects",
@@ -185,7 +186,7 @@ struct ContentView: View {
                 actionButton(model.selectedLibraryAssetCount > 1 ? "Remove Selected" : "Remove") {
                     model.removeSelectedLibraryAssets()
                 }
-                .disabled(model.selectedLibraryAssetIds.isEmpty)
+                .disabled(model.selectedLibraryAssetIds.isEmpty || model.isWorking)
                 .keyboardShortcut(.delete, modifiers: [])
                 Spacer()
             }

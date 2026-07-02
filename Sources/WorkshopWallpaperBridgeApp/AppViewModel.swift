@@ -273,6 +273,10 @@ extension AppViewModel {
 
     @discardableResult
     func importSelected() -> Task<Void, Never> {
+        guard !isWorking else {
+            status = "Finish the current library operation first."
+            return Task {}
+        }
         let assets = selectedScannedAssets
         guard !assets.isEmpty else {
             status = "Select a scanned project first."
@@ -285,6 +289,10 @@ extension AppViewModel {
         status = "Importing 0/\(assets.count)..."
         let store = self.store
         return Task {
+            defer {
+                importProgress = nil
+                isWorking = false
+            }
             var importedAssets: [WallpaperAsset] = []
             do {
                 for asset in assets {
@@ -308,8 +316,6 @@ extension AppViewModel {
                     status = "Imported \(importedAssets.count) project(s), then failed: \(error.localizedDescription)"
                 }
             }
-            importProgress = nil
-            isWorking = false
         }
     }
 
@@ -327,10 +333,17 @@ extension AppViewModel {
 
     @discardableResult
     func importVideoFile(_ url: URL) -> Task<Void, Never> {
+        guard !isWorking else {
+            status = "Finish the current library operation first."
+            return Task {}
+        }
         isWorking = true
         status = "Adding \(url.lastPathComponent)..."
         let store = self.store
         return Task {
+            defer {
+                isWorking = false
+            }
             do {
                 let imported = try await Task.detached { try store.importVideoFile(url) }.value
                 loadLibrary()
@@ -341,7 +354,6 @@ extension AppViewModel {
             } catch {
                 status = error.localizedDescription
             }
-            isWorking = false
         }
     }
 
@@ -384,6 +396,10 @@ extension AppViewModel {
     }
 
     func removeSelectedLibraryAssets() {
+        guard !isWorking else {
+            status = "Finish the current library operation first."
+            return
+        }
         let assets = selectedLibraryAssets
         guard !assets.isEmpty else {
             status = "Select a library project first."
@@ -412,6 +428,10 @@ extension AppViewModel {
     }
 
     func convertSelected() {
+        guard !isWorking else {
+            status = "Finish the current library operation first."
+            return
+        }
         guard let asset = selectedLibraryAsset, let entrypoint = asset.entrypoint else {
             status = "Select a library video first."
             return
