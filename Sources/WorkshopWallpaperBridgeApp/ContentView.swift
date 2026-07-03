@@ -105,7 +105,7 @@ struct ContentView: View {
                 Button(importButtonTitle) {
                     model.importSelected()
                 }
-                .disabled(model.selectedScannedAssetIds.isEmpty)
+                .disabled(model.selectedScannedAssetIds.isEmpty || model.isWorking)
                 Spacer()
             }
         }
@@ -132,6 +132,7 @@ struct ContentView: View {
                 Button("Add Video File") {
                     model.chooseVideoFile()
                 }
+                .disabled(model.isWorking)
             }
             libraryAssetList(
                 title: "Imported Projects",
@@ -185,7 +186,7 @@ struct ContentView: View {
                 actionButton(model.selectedLibraryAssetCount > 1 ? "Remove Selected" : "Remove") {
                     model.removeSelectedLibraryAssets()
                 }
-                .disabled(model.selectedLibraryAssetIds.isEmpty)
+                .disabled(model.selectedLibraryAssetIds.isEmpty || model.isWorking)
                 .keyboardShortcut(.delete, modifiers: [])
                 Spacer()
             }
@@ -234,7 +235,11 @@ struct ContentView: View {
 
     private var statusBar: some View {
         HStack {
-            if model.isWorking {
+            if let progress = model.importProgress {
+                ProgressView(value: progress.fraction)
+                    .controlSize(.small)
+                    .frame(width: 120)
+            } else if model.isWorking {
                 ProgressView()
                     .controlSize(.small)
             }

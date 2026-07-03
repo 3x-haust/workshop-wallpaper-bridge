@@ -5,7 +5,7 @@ import WorkshopWallpaperCore
 
 @MainActor
 final class AppViewModelTests: XCTestCase {
-    func testImportSelectedImportsMultipleScannedAssets() throws {
+    func testImportSelectedImportsMultipleScannedAssets() async throws {
         // Given
         let sourceRoot = try makeTempDirectory()
         let first = try makeScannedProject(root: sourceRoot, id: "first", title: "First Loop")
@@ -19,9 +19,13 @@ final class AppViewModelTests: XCTestCase {
         model.scannedAssets = [first, second]
         model.selectScannedAssets([first.id, second.id])
 
-        // When
-        model.importSelected()
+        // When (import runs off the main thread; await its completion)
+        await model.importSelected().value
         let manifest = try store.load()
+
+        // Then the working/progress state is cleared once the import finishes.
+        XCTAssertFalse(model.isWorking)
+        XCTAssertNil(model.importProgress)
 
         // Then
         XCTAssertEqual(Set(manifest.assets.map(\.id)), [first.id, second.id])
@@ -54,6 +58,30 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertEqual(model.selectedScannedAssetId, asset.id)
     }
 
+    func testImportSelectedDoesNotStartWhileLibraryOperationIsRunning() async throws {
+        // Given
+        let sourceRoot = try makeTempDirectory()
+        let asset = try makeScannedProject(root: sourceRoot, id: "one", title: "One")
+        let store = LibraryStore(root: try makeTempDirectory())
+        let model = AppViewModel(
+            store: store,
+            loginItemController: MockLoginItemController(),
+            userDefaults: try makeUserDefaults()
+        )
+        model.scannedAssets = [asset]
+        model.selectScannedAssets([asset.id])
+        model.isWorking = true
+
+        // When
+        await model.importSelected().value
+        let manifest = try store.load()
+
+        // Then
+        XCTAssertTrue(manifest.assets.isEmpty)
+        XCTAssertEqual(model.status, "Finish the current library operation first.")
+        XCTAssertNil(model.importProgress)
+    }
+
     func testInitSelectsFirstLibraryAssetWhenAvailable() throws {
         // Given
         let sourceRoot = try makeTempDirectory()
@@ -72,6 +100,28 @@ final class AppViewModelTests: XCTestCase {
         // Then
         XCTAssertEqual(model.selectedLibraryAssetId, imported.id)
         XCTAssertEqual(model.selectedLibraryAsset, imported)
+    }
+
+    func testImportVideoFileDoesNotStartWhileLibraryOperationIsRunning() async throws {
+        // Given
+        let sourceRoot = try makeTempDirectory()
+        let video = sourceRoot.appending(path: "clip.mp4")
+        FileManager.default.createFile(atPath: video.path, contents: Data([1]))
+        let store = LibraryStore(root: try makeTempDirectory())
+        let model = AppViewModel(
+            store: store,
+            loginItemController: MockLoginItemController(),
+            userDefaults: try makeUserDefaults()
+        )
+        model.isWorking = true
+
+        // When
+        await model.importVideoFile(video).value
+        let manifest = try store.load()
+
+        // Then
+        XCTAssertTrue(manifest.assets.isEmpty)
+        XCTAssertEqual(model.status, "Finish the current library operation first.")
     }
 
     func testRemoveSelectedLibraryAssetDeletesImportedCopy() throws {
@@ -98,6 +148,31 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertTrue(manifest.assets.isEmpty)
         XCTAssertFalse(FileManager.default.fileExists(atPath: imported.projectDirectory))
         XCTAssertTrue(FileManager.default.fileExists(atPath: video.path))
+    }
+
+    func testRemoveSelectedLibraryAssetDoesNotRunWhileLibraryOperationIsRunning() throws {
+        // Given
+        let sourceRoot = try makeTempDirectory()
+        let video = sourceRoot.appending(path: "clip.mp4")
+        FileManager.default.createFile(atPath: video.path, contents: Data([1]))
+        let store = LibraryStore(root: try makeTempDirectory())
+        let imported = try store.importVideoFile(video)
+        let model = AppViewModel(
+            store: store,
+            loginItemController: MockLoginItemController(),
+            userDefaults: try makeUserDefaults()
+        )
+        model.selectedLibraryAssetId = imported.id
+        model.isWorking = true
+
+        // When
+        model.removeSelectedLibraryAsset()
+        let manifest = try store.load()
+
+        // Then
+        XCTAssertEqual(manifest.assets, [imported])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: imported.projectDirectory))
+        XCTAssertEqual(model.status, "Finish the current library operation first.")
     }
 
     func testRemoveSelectedLibraryAssetsDeletesMultipleImportedCopies() throws {
