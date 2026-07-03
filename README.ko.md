@@ -54,6 +54,11 @@ Wallpaper Engine 프로젝트를 쓰는 경우:
 5. 지원되는 항목을 선택하고 **Import Selected**를 누릅니다.
 6. **Play on Desktop**을 누릅니다.
 
+스캔 목록은 기본적으로 macOS 폴더 **Date Added** 값을 기준으로 최신순 정렬됩니다.
+Date Added를 읽을 수 없으면 수정일을 fallback으로 사용합니다. 알파벳순으로 보고 싶으면
+정렬을 **Name**으로 바꿀 수 있습니다. Import 이후 새로 복사되어 다음 Scan에서 발견된
+항목에는 **NEW** 배지가 붙습니다.
+
 직접 가진 영상을 쓰려면 Workshop 폴더를 스캔하지 않고 **Add Video File**을 누릅니다.
 
 표시 방식:
