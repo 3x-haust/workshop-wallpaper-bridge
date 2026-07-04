@@ -139,6 +139,7 @@ struct ContentView: View {
                     set: { model.selectLibraryAssets($0) }
                 )
             )
+            sceneAssetsSection
             libraryActions
             Text(
                 "Video wallpapers use a generated video frame for still wallpaper. "
@@ -186,6 +187,31 @@ struct ContentView: View {
                 .keyboardShortcut(.delete, modifiers: [])
                 Spacer()
             }
+        }
+    }
+
+    private var sceneAssetsSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Scene Engine Assets")
+                .font(.subheadline.weight(.semibold))
+            Text(model.sceneAssetsStatus)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+            HStack(spacing: 8) {
+                Button("Choose Assets Folder...") {
+                    model.chooseSceneAssetsFolder()
+                }
+                if !model.sceneAssetsDirectory.isEmpty {
+                    Button("Reset") {
+                        model.clearSceneAssetsFolder()
+                    }
+                }
+                Spacer()
+            }
+            Text("Copy the contents of steamapps/common/wallpaper_engine/assets from your Windows install.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 

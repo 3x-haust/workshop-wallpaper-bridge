@@ -84,7 +84,7 @@ scene 지원은 보수적입니다. 데스크톱 scene 재생은 renderer-first�
 
 외부 GPL scene renderer subprocess가 번들되어 있으면 데스크톱 `scene.pkg` 재생은 그 renderer를 먼저 쓰고, subprocess가 없거나 유효하지 않거나 실행 시작에 실패하면 네이티브 renderer로 fallback합니다. 번들된 macOS 화면 보호기는 아래에 설명한 네이티브/동영상 지원 경로를 계속 사용합니다. 이 프로젝트는 Steam Workshop 항목을 다운로드하지 않고, 제작자 asset을 재배포하지 않고, Steam content를 번들하지 않습니다. renderer binary는 별도 GPL component이며 자체 source notice가 필요합니다.
 
-외부 scene renderer는 사용자가 자기 Windows Wallpaper Engine 설치본에서 복사한 원본 runtime `assets` 폴더도 필요합니다. Workshop Wallpaper Bridge는 이 파일들을 다운로드하거나 함께 배포하지 않습니다. `steamapps/common/wallpaper_engine/assets`를 `~/Library/Application Support/WorkshopWallpaperBridge/wallpaper-engine-assets`에 복사하거나, 앱 실행 전에 `WWB_SCENE_ENGINE_ASSETS_DIR=/path/to/assets`를 설정하세요. renderer binary가 있어도 engine assets가 없거나 불완전하면, 검은 외부 렌더를 실행하지 않고 네이티브 scene fallback을 계속 사용합니다.
+외부 scene renderer는 사용자가 자기 Windows Wallpaper Engine 설치본에서 복사한 원본 runtime `assets` 폴더도 필요합니다. Workshop Wallpaper Bridge는 이 파일들을 다운로드하거나 함께 배포하지 않습니다. 앱의 **Scene Engine Assets** -> **Choose Assets Folder...**에서 복사한 `steamapps/common/wallpaper_engine/assets` 내용 폴더를 선택하세요. CLI/개발 실행에서는 `WWB_SCENE_ENGINE_ASSETS_DIR=/path/to/assets`가 앱 설정보다 우선하며, 그 외에는 `~/Library/Application Support/WorkshopWallpaperBridge/wallpaper-engine-assets`를 확인합니다. renderer binary가 있어도 engine assets가 없거나 불완전하면, 검은 외부 렌더를 실행하지 않고 네이티브 scene fallback을 계속 사용합니다.
 
 `preview.jpg`, `thumbnail.jpg`, `cover.png` 같은 Workshop 미리보기 파일은 썸네일로 취급합니다. 프로젝트에 `scene.pkg`가 있으면 낮은 해상도 미리보기를 늘려 쓰지 않고 패키지 내부 scene 데이터를 읽습니다.
 
@@ -137,7 +137,7 @@ dist/WorkshopWallpaperBridge-macOS-arm64.dmg
 
 선택적인 외부 GPL scene renderer를 로컬 패키지에 포함하려면 `Scripts/package-app.sh`를 실행하기 전에 `SCENE_RENDERER_BINARY=/path/to/wwb-scene-renderer`를 설정하거나 실행 파일을 `ExternalRenderers/wwb-scene-renderer`에 둡니다. 패키지 script는 renderer가 있으면 app resources로 복사하고, [Almamu/linux-wallpaperengine](https://github.com/Almamu/linux-wallpaperengine)의 기본 pinned source ref `b016d7d1fdcf4e5fd2f9c9fa420a8aaa07fee02d`와 source link를 담은 `Renderer Notices/GPL Scene Renderer Notice.txt`를 항상 씁니다. 다른 renderer build를 배포한다면 해당 공개 source에 맞게 `SCENE_RENDERER_SOURCE_URL`과 `SCENE_RENDERER_SOURCE_REF`를 설정하세요.
 
-패키지는 Wallpaper Engine runtime assets를 절대 포함하지 않습니다. 외부 scene 렌더링을 쓰려면 본인의 Windows Wallpaper Engine `steamapps/common/wallpaper_engine/assets` 폴더를 `~/Library/Application Support/WorkshopWallpaperBridge/wallpaper-engine-assets`로 복사하거나, `WWB_SCENE_ENGINE_ASSETS_DIR`가 그 폴더를 가리키게 실행하세요. `swift run wwbctl doctor`로 renderer binary와 필수 engine asset 파일의 사용 가능 여부를 확인할 수 있습니다.
+패키지는 Wallpaper Engine runtime assets를 절대 포함하지 않습니다. 외부 scene 렌더링을 쓰려면 본인의 Windows Wallpaper Engine `steamapps/common/wallpaper_engine/assets` 내용 폴더를 복사한 뒤, 앱의 **Scene Engine Assets** -> **Choose Assets Folder...**에서 선택하세요. CLI/개발 실행에서는 `WWB_SCENE_ENGINE_ASSETS_DIR`가 앱 설정보다 우선하며, 기본 fallback은 `~/Library/Application Support/WorkshopWallpaperBridge/wallpaper-engine-assets`입니다. `swift run wwbctl doctor`로 renderer binary와 필수 engine asset 파일의 사용 가능 여부를 확인할 수 있습니다.
 
 `ffmpeg` 설치:
 

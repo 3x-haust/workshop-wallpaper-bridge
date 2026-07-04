@@ -465,7 +465,7 @@ enum SceneEngineRendererConfiguration {
     }
 
     static func assetsDirectoryURL(environment: [String: String] = ProcessInfo.processInfo.environment) -> URL? {
-        if let path = overrideAssetsPath ?? environment[assetsEnvironmentVariableName],
+        if let path = environment[assetsEnvironmentVariableName] ?? overrideAssetsPath,
            !path.isEmpty {
             let url = URL(filePath: path).standardizedFileURL
             return isValidAssetsDirectory(url) ? url : nil
@@ -497,7 +497,7 @@ enum SceneEngineRendererConfiguration {
             .standardizedFileURL
     }
 
-    private static func isValidAssetsDirectory(_ url: URL) -> Bool {
+    static func isValidAssetsDirectory(_ url: URL) -> Bool {
         guard let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]),
               values.isDirectory == true,
               values.isSymbolicLink != true else {

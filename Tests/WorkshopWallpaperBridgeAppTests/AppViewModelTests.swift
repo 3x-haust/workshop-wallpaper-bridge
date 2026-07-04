@@ -187,6 +187,94 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertFalse(model.autoPauseWhenCovered)
     }
 
+    func testSceneAssetsFolderPersistsAndFeedsRendererResolution() throws {
+        // Given
+        let defaults = try makeUserDefaults()
+        let assetsDirectory = try makeSceneEngineAssetsFixture(in: try makeTempDirectory())
+        let model = AppViewModel(
+            store: LibraryStore(root: try makeTempDirectory()),
+            loginItemController: MockLoginItemController(),
+            userDefaults: defaults
+        )
+
+        // When
+        model.setSceneAssetsFolder(assetsDirectory)
+
+        // Then
+        XCTAssertEqual(model.sceneAssetsDirectory, assetsDirectory.path)
+        XCTAssertEqual(defaults.string(forKey: "sceneEngineAssetsDirectory"), assetsDirectory.path)
+        XCTAssertEqual(SceneEngineRendererConfiguration.assetsDirectoryURL(environment: [:])?.path, assetsDirectory.path)
+        XCTAssertTrue(model.sceneAssetsStatus.contains("ready"))
+    }
+
+    func testInvalidSceneAssetsFolderIsRejectedWithoutChangingPersistedValue() throws {
+        // Given
+        let defaults = try makeUserDefaults()
+        let validAssetsDirectory = try makeSceneEngineAssetsFixture(in: try makeTempDirectory())
+        let invalidDirectory = try makeTempDirectory()
+        defaults.set(validAssetsDirectory.path, forKey: "sceneEngineAssetsDirectory")
+        let model = AppViewModel(
+            store: LibraryStore(root: try makeTempDirectory()),
+            loginItemController: MockLoginItemController(),
+            userDefaults: defaults
+        )
+
+        // When
+        model.setSceneAssetsFolder(invalidDirectory)
+
+        // Then
+        XCTAssertEqual(model.sceneAssetsDirectory, validAssetsDirectory.path)
+        XCTAssertEqual(defaults.string(forKey: "sceneEngineAssetsDirectory"), validAssetsDirectory.path)
+        XCTAssertEqual(SceneEngineRendererConfiguration.assetsDirectoryURL(environment: [:])?.path, validAssetsDirectory.path)
+        XCTAssertTrue(model.status.contains("does not look like a Wallpaper Engine assets folder"))
+        XCTAssertTrue(model.status.contains("materials/"))
+        XCTAssertTrue(model.status.contains("shaders/"))
+    }
+
+    func testSceneAssetsFolderCanBeClearedToDefaultResolution() throws {
+        // Given
+        let defaults = try makeUserDefaults()
+        let assetsDirectory = try makeSceneEngineAssetsFixture(in: try makeTempDirectory())
+        defaults.set(assetsDirectory.path, forKey: "sceneEngineAssetsDirectory")
+        let model = AppViewModel(
+            store: LibraryStore(root: try makeTempDirectory()),
+            loginItemController: MockLoginItemController(),
+            userDefaults: defaults
+        )
+
+        // When
+        model.clearSceneAssetsFolder()
+
+        // Then
+        XCTAssertEqual(model.sceneAssetsDirectory, "")
+        XCTAssertNil(defaults.string(forKey: "sceneEngineAssetsDirectory"))
+        XCTAssertNil(SceneEngineRendererConfiguration.overrideAssetsPath)
+        XCTAssertTrue(model.sceneAssetsStatus.contains("Not set"))
+    }
+
+    func testSceneAssetsEnvironmentOverrideWinsOverUserPreference() throws {
+        // Given
+        let defaults = try makeUserDefaults()
+        let userAssetsDirectory = try makeSceneEngineAssetsFixture(in: try makeTempDirectory())
+        let envAssetsDirectory = try makeSceneEngineAssetsFixture(in: try makeTempDirectory())
+        defaults.set(userAssetsDirectory.path, forKey: "sceneEngineAssetsDirectory")
+        _ = AppViewModel(
+            store: LibraryStore(root: try makeTempDirectory()),
+            loginItemController: MockLoginItemController(),
+            userDefaults: defaults
+        )
+
+        // When
+        let resolved = SceneEngineRendererConfiguration.assetsDirectoryURL(
+            environment: [
+                SceneEngineRendererConfiguration.assetsEnvironmentVariableName: envAssetsDirectory.path
+            ]
+        )
+
+        // Then
+        XCTAssertEqual(resolved?.path, envAssetsDirectory.path)
+    }
+
     func testInitDefaultsToContinuousPlayback() throws {
         // Given
         let defaults = try makeUserDefaults()
@@ -435,6 +523,19 @@ final class AppViewModelTests: XCTestCase {
             redistributionAllowed: false,
             issues: []
         )
+    }
+
+    private func makeSceneEngineAssetsFixture(in root: URL) throws -> URL {
+        let assetsDirectory = root.appending(path: "wallpaper-engine-assets")
+        for relativePath in SceneEngineRendererConfiguration.requiredAssetPaths {
+            let fileURL = assetsDirectory.appending(path: relativePath)
+            try FileManager.default.createDirectory(
+                at: fileURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try "{}\n".write(to: fileURL, atomically: true, encoding: .utf8)
+        }
+        return assetsDirectory
     }
 }
 

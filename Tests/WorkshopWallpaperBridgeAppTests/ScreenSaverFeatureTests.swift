@@ -21,6 +21,19 @@ final class ScreenSaverFeatureTests: XCTestCase {
         XCTAssertFalse(viewModel.contains("Animated Lock Screen"))
     }
 
+    func testSceneAssetsSettingsExposePickerAndReset() throws {
+        let contentView = try String(contentsOfFile: "Sources/WorkshopWallpaperBridgeApp/ContentView.swift")
+        let viewModel = try String(contentsOfFile: "Sources/WorkshopWallpaperBridgeApp/AppViewModel.swift")
+
+        XCTAssertTrue(contentView.contains("Scene Engine Assets"))
+        XCTAssertTrue(contentView.contains("Choose Assets Folder..."))
+        XCTAssertTrue(contentView.contains("model.chooseSceneAssetsFolder()"))
+        XCTAssertTrue(contentView.contains("model.clearSceneAssetsFolder()"))
+        XCTAssertTrue(viewModel.contains("steamapps/common/wallpaper_engine/assets"))
+        XCTAssertTrue(viewModel.contains("materials/"))
+        XCTAssertTrue(viewModel.contains("shaders/"))
+    }
+
     func testScreenSaverViewShowsFallbackInsteadOfBlackOnlyContent() throws {
         let source = try String(
             contentsOfFile: "Sources/WorkshopWallpaperLockScreenSaver/WorkshopWallpaperLockScreenSaverView.m"

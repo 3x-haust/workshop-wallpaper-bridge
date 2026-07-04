@@ -18,6 +18,7 @@ final class AppViewModel: ObservableObject {
     @Published private(set) var selectedLibraryAssetIds: Set<WallpaperAsset.ID> = []
     @Published var status = "Choose a copied Wallpaper Engine Workshop folder to begin."
     @Published var isWorking = false
+    @Published private(set) var sceneAssetsDirectory = ""
     @Published var displayMode: WallpaperDisplayMode = .fit {
         didSet {
             WallpaperPlayer.shared.setDisplayMode(displayMode)
@@ -165,6 +166,23 @@ final class AppViewModel: ObservableObject {
         libraryAssets.filter { selectedLibraryAssetIds.contains($0.id) }
     }
 
+    var sceneAssetsStatus: String {
+        if let envPath = ProcessInfo.processInfo.environment[SceneEngineRendererConfiguration.assetsEnvironmentVariableName],
+           !envPath.isEmpty {
+            let envURL = URL(filePath: envPath).standardizedFileURL
+            return SceneEngineRendererConfiguration.isValidAssetsDirectory(envURL)
+                ? "Using WWB_SCENE_ENGINE_ASSETS_DIR: \(envURL.path)"
+                : "WWB_SCENE_ENGINE_ASSETS_DIR is set, but the assets folder is missing or incomplete."
+        }
+        guard !sceneAssetsDirectory.isEmpty else {
+            return "Not set. The scene renderer will use the default app-support assets folder if it exists."
+        }
+        let url = URL(filePath: sceneAssetsDirectory).standardizedFileURL
+        return SceneEngineRendererConfiguration.isValidAssetsDirectory(url)
+            ? "Scene Engine assets ready: \(url.path)"
+            : "Scene Engine assets folder is missing or incomplete: \(url.path)"
+    }
+
     func selectLibraryAssets(_ ids: Set<WallpaperAsset.ID>) {
         selectedLibraryAssetIds = ids
         normalizeLibrarySelection(allowEmpty: true)
@@ -186,6 +204,37 @@ extension AppViewModel {
             sourcePath = url.path
             scanSource()
         }
+    }
+
+    func chooseSceneAssetsFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.message = "Choose the Wallpaper Engine assets folder contents."
+        if panel.runModal() == .OK, let url = panel.url {
+            setSceneAssetsFolder(url)
+        }
+    }
+
+    func setSceneAssetsFolder(_ url: URL) {
+        let standardizedURL = url.standardizedFileURL
+        guard SceneEngineRendererConfiguration.isValidAssetsDirectory(standardizedURL) else {
+            status = "This does not look like a Wallpaper Engine assets folder. It must contain materials/ "
+                + "and shaders/. Copy the contents of steamapps/common/wallpaper_engine/assets, not the parent folder."
+            return
+        }
+        sceneAssetsDirectory = standardizedURL.path
+        userDefaults.set(sceneAssetsDirectory, forKey: PreferenceKey.sceneEngineAssetsDirectory)
+        SceneEngineRendererConfiguration.overrideAssetsPath = sceneAssetsDirectory
+        status = "Scene Engine assets folder selected."
+    }
+
+    func clearSceneAssetsFolder() {
+        sceneAssetsDirectory = ""
+        userDefaults.removeObject(forKey: PreferenceKey.sceneEngineAssetsDirectory)
+        SceneEngineRendererConfiguration.overrideAssetsPath = nil
+        status = "Scene Engine assets folder reset to the default path."
     }
 
     func scanSource() {
@@ -492,6 +541,8 @@ extension AppViewModel {
         if userDefaults.object(forKey: PreferenceKey.automaticallyCheckForUpdates) != nil {
             automaticallyCheckForUpdates = userDefaults.bool(forKey: PreferenceKey.automaticallyCheckForUpdates)
         }
+        sceneAssetsDirectory = userDefaults.string(forKey: PreferenceKey.sceneEngineAssetsDirectory) ?? ""
+        SceneEngineRendererConfiguration.overrideAssetsPath = sceneAssetsDirectory.isEmpty ? nil : sceneAssetsDirectory
     }
 
     private func playLastWallpaperIfAvailable() {
@@ -623,4 +674,5 @@ private enum PreferenceKey {
     static let lastPlayedAssetId = "lastPlayedAssetId"
     static let automaticallyCheckForUpdates = "automaticallyCheckForUpdates"
     static let lastUpdateCheckAt = "lastUpdateCheckAt"
+    static let sceneEngineAssetsDirectory = "sceneEngineAssetsDirectory"
 }
