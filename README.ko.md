@@ -78,9 +78,13 @@ Wallpaper Engine 프로젝트를 쓰는 경우:
 | `.webm`, `.mkv`, `.avi` 동영상 | 로컬 `ffmpeg`로 변환 후 재생 |
 | `index.html` 웹 월페이퍼 | 제한된 로컬 WebView에서 재생 |
 | `.jpg`, `.png`, `.gif`, `.heic` 이미지 | 정적 데스크톱 레이어로 표시 |
-| `scene.pkg` 씬 월페이퍼 | 로컬 렌더 캐시 비디오가 붙어 있어도 네이티브 scene renderer를 먼저 사용; 패키지 안의 2D image layer, animated sprite-sheet (`texgif`) texture, text-only scene, 일부 text SceneScript `update(value)` snippet, 기본 keyframe 움직임, image-layer와 effect-only layer의 `waterFlow` / `waterWaves` / `waterRipple` / `scroll` shader 움직임, 단순 `shake` / `spin` / `shine` layer effect를 package constant 기반으로 렌더링; 엔진 렌더러 작업에 필요한 shader/effect/script/audio 요구사항 보존 |
+| `scene.pkg` 씬 월페이퍼 | 번들되었거나 설정된 외부 GPL scene renderer가 있으면 먼저 사용하고, 없으면 네이티브 scene renderer를 사용; 붙어 있는 로컬 렌더 캐시 비디오는 계속 진단용으로만 취급; 네이티브 fallback은 패키지 안의 2D image layer, animated sprite-sheet (`texgif`) texture, text-only scene, 일부 text SceneScript `update(value)` snippet, 기본 keyframe 움직임, image-layer와 effect-only layer의 `waterFlow` / `waterWaves` / `waterRipple` / `scroll` shader 움직임, 단순 `shake` / `spin` / `shine` layer effect를 package constant 기반으로 렌더링; 엔진 렌더러 작업에 필요한 shader/effect/script/audio 요구사항 보존 |
 
 scene 지원은 보수적입니다. 데스크톱 scene 재생은 renderer-first이며, 붙어 있는 렌더 캐시 비디오를 scene 구현으로 취급하지 않습니다. `wwbctl attach-scene-video <asset-id> <video-file>`는 진단이나 비교 workflow용 로컬 reference cache만 Mac 전용 라이브러리에 저장합니다. 기본 image-layer와 text-only scene은 동작하며, packed `.tex` texture, LZ4 block, 주요 DXT 형식, text layer, 일부 text SceneScript `update(value)` snippet, position/scale/rotation/opacity keyframe을 처리하고, mirror 모드 keyframe 애니메이션은 ping-pong 루프로 재생합니다. animated sprite-sheet texture는 RePKG에 문서화된 `TEXS0001`-`TEXS0003` frame container(회전된 sheet packing, frame별 재생 시간 포함)를 해석해 Core Animation frame sequence로 재생하며, 내장 MP4 video texture는 여전히 지원하지 않습니다. scene 전체를 덮는 compose layer의 `waterripple` 같은 warp는 아래 layer들로 분배되어, effect snapshot에 가려 layer keyframe 움직임이 멈춰 보이는 문제 없이 살아있는 모션 위에 물결이 적용됩니다. workshop `nitro` 계열 glint effect는 noise 기반 twinkle 근사로 재생되고, 단순 sprite/pulse-ring particle system은 Core Animation emitter로 근사합니다. 복잡한 particle operator는 여전히 생략됩니다. puppet-warp 모델(`MDLV0013` skeleton — Wallpaper Engine이 물고기·캐릭터의 몸을 휘게 하는 포맷)은 mesh/bone/mirror 모드 bone 애니메이션까지 디코드해 CPU skinning으로 재생하므로 puppet 몸체가 뻣뻣하게 미끄러지지 않고 실제로 휘어집니다. `spin`, `shake`, `waterripple`, `waterwaves`, `waterflow`, `scroll`은 scene 패키지에 들어있는 GLSL shader를 Core Image로 그대로 포팅해 실행하며, flow-map 기반 shake 덕분에 지느러미와 꼬리만 움직입니다. 지원되는 text script는 제한된 JavaScriptCore context에서 `Date`, `Math`, `engine.runtime`, `engine.frametime`, `engine.timeOfDay`, 파싱된 `scriptProperties`를 사용할 수 있고, loop, timer, eval/dynamic function, 지원하지 않는 API, 오류를 던지는 script는 기존 text를 유지하는 fail-closed 방식으로 처리합니다. 지원되는 image-layer와 effect-only layer의 `waterFlow`, `waterWaves`, `waterRipple`, `scroll` effect는 임의의 layer drift가 아니라 package shader constant의 speed, axis speed, direction, scale, strength, perspective 값을 사용해 움직이고, 단순 `shake`, `spin`, `shine` layer effect는 안전하게 표현할 수 있을 때 Core Animation으로 매핑합니다. 이제 package analyzer가 effect file, shader file, shader uniform, SceneScript, particle, sound layer, audio-analysis input, video texture 같은 scene runtime 요구사항을 보존하므로 renderer-engine parity 작업을 정확히 겨냥할 수 있습니다. masked effect composition, particle, audio-reactive 또는 object/scene API script, 전체 custom shader pipeline, media integration, video texture 재생은 네이티브 scene engine이 해당 runtime 기능을 구현하기 전까지 여전히 생략되거나 Wallpaper Engine과 다르게 보일 수 있습니다.
+
+외부 GPL scene renderer subprocess가 번들되어 있으면 데스크톱 `scene.pkg` 재생은 그 renderer를 먼저 쓰고, subprocess가 없거나 유효하지 않거나 실행 시작에 실패하면 네이티브 renderer로 fallback합니다. 번들된 macOS 화면 보호기는 아래에 설명한 네이티브/동영상 지원 경로를 계속 사용합니다. 이 프로젝트는 Steam Workshop 항목을 다운로드하지 않고, 제작자 asset을 재배포하지 않고, Steam content를 번들하지 않습니다. renderer binary는 별도 GPL component이며 자체 source notice가 필요합니다.
+
+외부 scene renderer는 사용자가 자기 Windows Wallpaper Engine 설치본에서 복사한 원본 runtime `assets` 폴더도 필요합니다. Workshop Wallpaper Bridge는 이 파일들을 다운로드하거나 함께 배포하지 않습니다. `steamapps/common/wallpaper_engine/assets`를 `~/Library/Application Support/WorkshopWallpaperBridge/wallpaper-engine-assets`에 복사하거나, 앱 실행 전에 `WWB_SCENE_ENGINE_ASSETS_DIR=/path/to/assets`를 설정하세요. renderer binary가 있어도 engine assets가 없거나 불완전하면, 검은 외부 렌더를 실행하지 않고 네이티브 scene fallback을 계속 사용합니다.
 
 `preview.jpg`, `thumbnail.jpg`, `cover.png` 같은 Workshop 미리보기 파일은 썸네일로 취급합니다. 프로젝트에 `scene.pkg`가 있으면 낮은 해상도 미리보기를 늘려 쓰지 않고 패키지 내부 scene 데이터를 읽습니다.
 
@@ -131,6 +135,10 @@ open "dist/Workshop Wallpaper Bridge.app"
 dist/WorkshopWallpaperBridge-macOS-arm64.dmg
 ```
 
+선택적인 외부 GPL scene renderer를 로컬 패키지에 포함하려면 `Scripts/package-app.sh`를 실행하기 전에 `SCENE_RENDERER_BINARY=/path/to/wwb-scene-renderer`를 설정하거나 실행 파일을 `ExternalRenderers/wwb-scene-renderer`에 둡니다. 패키지 script는 renderer가 있으면 app resources로 복사하고, [Almamu/linux-wallpaperengine](https://github.com/Almamu/linux-wallpaperengine)의 기본 pinned source ref `b016d7d1fdcf4e5fd2f9c9fa420a8aaa07fee02d`와 source link를 담은 `Renderer Notices/GPL Scene Renderer Notice.txt`를 항상 씁니다. 다른 renderer build를 배포한다면 해당 공개 source에 맞게 `SCENE_RENDERER_SOURCE_URL`과 `SCENE_RENDERER_SOURCE_REF`를 설정하세요.
+
+패키지는 Wallpaper Engine runtime assets를 절대 포함하지 않습니다. 외부 scene 렌더링을 쓰려면 본인의 Windows Wallpaper Engine `steamapps/common/wallpaper_engine/assets` 폴더를 `~/Library/Application Support/WorkshopWallpaperBridge/wallpaper-engine-assets`로 복사하거나, `WWB_SCENE_ENGINE_ASSETS_DIR`가 그 폴더를 가리키게 실행하세요. `swift run wwbctl doctor`로 renderer binary와 필수 engine asset 파일의 사용 가능 여부를 확인할 수 있습니다.
+
 `ffmpeg` 설치:
 
 ```bash
@@ -150,6 +158,7 @@ swift run wwbctl convert input.webm --out output.mp4
 swift run wwbctl scene-info "/path/to/scene.pkg"
 swift run wwbctl scene-render-info "/path/to/scene.pkg"
 swift run wwbctl scene-engine-info "/path/to/scene.pkg"
+swift run wwbctl scene-parity-check "/path/to/scene.pkg" "/path/to/golden-frames"
 swift run wwbctl doctor
 ```
 
