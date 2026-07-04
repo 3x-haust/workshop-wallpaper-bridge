@@ -36,6 +36,8 @@ struct WWBCtl {
             try sceneRenderInfo(arguments: Array(arguments.dropFirst()))
         case "scene-engine-info":
             try sceneEngineInfo(arguments: Array(arguments.dropFirst()))
+        case "scene-parity-check":
+            try sceneParityCheck(arguments: Array(arguments.dropFirst()))
         case "doctor":
             try doctor()
         case "help", "--help", "-h":
@@ -89,7 +91,7 @@ struct WWBCtl {
         )
         let projectDirectory = URL(filePath: updated.projectDirectory)
         let cache = SceneRenderCache.existingVideoURL(in: projectDirectory)?.path ?? projectDirectory.path
-        print("attached scene reference cache for \(updated.title) at \(cache); desktop scene playback uses the native renderer")
+        print("attached scene reference cache for \(updated.title) at \(cache); desktop scene playback uses the external scene renderer when available, then native fallback")
     }
 
     private static func remove(arguments: [String]) throws {
@@ -173,6 +175,41 @@ struct WWBCtl {
         }
         let features = try SceneRuntimeFeatureAnalyzer().analyze(url: URL(filePath: path))
         let data = try JSONEncoder.cli.encode(features)
+        FileHandle.standardOutput.write(data)
+        print("")
+    }
+
+    private static func sceneParityCheck(arguments: [String]) throws {
+        guard arguments.count >= 2 else {
+            throw CLIError.invalidSceneParityCheckUsage
+        }
+        let packageURL = URL(filePath: arguments[0])
+        let goldenDirectory = URL(filePath: arguments[1])
+        guard try goldenDirectory.isExistingDirectory else {
+            throw CLIError.invalidGoldenDirectory(goldenDirectory.path)
+        }
+
+        let plan = try SceneRenderPlanBuilder().build(url: packageURL)
+        let features = try SceneRuntimeFeatureAnalyzer().analyze(url: packageURL)
+        let goldenFrames = try goldenFrameNames(in: goldenDirectory)
+        let report = SceneParityCheckInfo(
+            packagePath: packageURL.path,
+            goldenDirectory: goldenDirectory.path,
+            goldenFrameCount: goldenFrames.count,
+            goldenFrames: goldenFrames,
+            renderInfo: SceneParityRenderInfo(
+                canvasWidth: plan.canvasSize.width,
+                canvasHeight: plan.canvasSize.height,
+                layerCount: plan.layers.count,
+                textureCount: plan.textures.count,
+                effectLayerCount: plan.layers.filter { !$0.effects.isEmpty }.count,
+                particleLayerCount: plan.particleLayers.count,
+                textLayerCount: plan.layers.filter { $0.text != nil }.count
+            ),
+            runtimeFeatures: features,
+            status: "golden frames indexed; renderer capture comparison is not implemented yet"
+        )
+        let data = try JSONEncoder.cli.encode(report)
         FileHandle.standardOutput.write(data)
         print("")
     }
@@ -338,12 +375,170 @@ struct WWBCtl {
         }
     }
 
+    private struct SceneParityCheckInfo: Codable {
+        let packagePath: String
+        let goldenDirectory: String
+        let goldenFrameCount: Int
+        let goldenFrames: [String]
+        let renderInfo: SceneParityRenderInfo
+        let runtimeFeatures: SceneRuntimeFeatures
+        let status: String
+    }
+
+    private struct SceneParityRenderInfo: Codable {
+        let canvasWidth: Double
+        let canvasHeight: Double
+        let layerCount: Int
+        let textureCount: Int
+        let effectLayerCount: Int
+        let particleLayerCount: Int
+        let textLayerCount: Int
+    }
+
+    private static func goldenFrameNames(in directory: URL) throws -> [String] {
+        try FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        )
+        .filter { url in
+            (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true
+                && url.pathExtension.lowercased() == "png"
+        }
+        .map(\.lastPathComponent)
+        .sorted()
+    }
+
     private static func doctor() throws {
         let store = try LibraryStore.defaultStore()
         let ffmpeg = VideoConverter().ffmpegPath() ?? "not found"
         print("library: \(store.root.path)")
         print("ffmpeg: \(ffmpeg)")
+        print(sceneRendererDiagnosticLine())
+        print(sceneRendererAssetsDiagnosticLine())
         print("platform: \(ProcessInfo.processInfo.operatingSystemVersionString)")
+    }
+
+    private static func sceneRendererDiagnosticLine() -> String {
+        let envVar = "WWB_SCENE_ENGINE_RENDERER"
+        let bundledPath = "Contents/Resources/Renderers/wwb-scene-renderer"
+        let sourceURL = "https://github.com/Almamu/linux-wallpaperengine"
+        let sourceRef = "b016d7d1fdcf4e5fd2f9c9fa420a8aaa07fee02d"
+        let environment = ProcessInfo.processInfo.environment
+
+        if let envPath = environment[envVar], !envPath.isEmpty {
+            let rendererURL = URL(filePath: envPath).standardizedFileURL
+            if isRegularExecutable(rendererURL) {
+                return "Scene renderer: env=\(envVar) path=\(rendererURL.path) bundled=\(bundledPath) "
+                    + "source_url=\(sourceURL) source_ref=\(sourceRef) availability=available fallback=external"
+            }
+            return "Scene renderer: env=\(envVar) path=\(rendererURL.path) bundled=\(bundledPath) "
+                + "source_url=\(sourceURL) source_ref=\(sourceRef) availability=unavailable "
+                + "fallback=native reason=env-path-not-executable"
+        }
+
+        let bundledURL = Bundle.main.bundleURL.appending(path: bundledPath).standardizedFileURL
+        if isRegularExecutable(bundledURL) {
+            return "Scene renderer: env=\(envVar) path=\(bundledURL.path) bundled=\(bundledPath) "
+                + "source_url=\(sourceURL) source_ref=\(sourceRef) availability=available fallback=external"
+        }
+        return "Scene renderer: env=\(envVar) bundled=\(bundledPath) source_url=\(sourceURL) "
+            + "source_ref=\(sourceRef) availability=unavailable fallback=native reason=renderer-not-found"
+    }
+
+    private static func sceneRendererAssetsDiagnosticLine() -> String {
+        let envVar = "WWB_SCENE_ENGINE_ASSETS_DIR"
+        let defaultURL = defaultSceneRendererAssetsDirectoryURL()
+        let defaultPath = defaultURL?.path ?? "unavailable"
+        let environment = ProcessInfo.processInfo.environment
+
+        if let envPath = environment[envVar], !envPath.isEmpty {
+            let assetsURL = URL(filePath: envPath).standardizedFileURL
+            return sceneRendererAssetsDiagnosticLine(
+                envVar: envVar,
+                path: assetsURL.path,
+                defaultPath: defaultPath,
+                missing: missingSceneRendererAssetPaths(in: assetsURL)
+            )
+        }
+
+        guard let defaultURL else {
+            return "Scene renderer assets: env=\(envVar) default=unavailable availability=unavailable "
+                + "fallback=native reason=default-assets-dir-unavailable"
+        }
+        return sceneRendererAssetsDiagnosticLine(
+            envVar: envVar,
+            path: defaultURL.path,
+            defaultPath: defaultPath,
+            missing: missingSceneRendererAssetPaths(in: defaultURL)
+        )
+    }
+
+    private static func sceneRendererAssetsDiagnosticLine(
+        envVar: String,
+        path: String,
+        defaultPath: String,
+        missing: [String]
+    ) -> String {
+        let exists = FileManager.default.fileExists(atPath: path) ? "present" : "missing"
+        let base = "Scene renderer assets: env=\(envVar) path=\(path) default=\(defaultPath) exists=\(exists)"
+        if missing.isEmpty {
+            return "\(base) sentinel=present availability=available fallback=external"
+        }
+        return "\(base) sentinel=missing availability=unavailable fallback=native missing=\(missing.joined(separator: ",")) "
+            + "guidance=\"Copy steamapps/common/wallpaper_engine/assets from your Windows Wallpaper Engine install to this path for your local personal use; the app never downloads or redistributes these files.\""
+    }
+
+    private static let requiredSceneRendererAssetPaths = [
+        "materials/util/composelayer.json",
+        "shaders/"
+    ]
+
+    private static func defaultSceneRendererAssetsDirectoryURL() -> URL? {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+            .appending(path: "WorkshopWallpaperBridge")
+            .appending(path: "wallpaper-engine-assets")
+            .standardizedFileURL
+    }
+
+    private static func missingSceneRendererAssetPaths(in directory: URL) -> [String] {
+        guard let values = try? directory.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]),
+              values.isDirectory == true,
+              values.isSymbolicLink != true else {
+            return ["<assets-dir>"] + requiredSceneRendererAssetPaths
+        }
+        if hasRegularFile(directory.appending(path: "materials/util/composelayer.json"))
+            || hasDirectory(directory.appending(path: "shaders")) {
+            return []
+        }
+        return requiredSceneRendererAssetPaths
+    }
+
+    private static func hasRegularFile(_ url: URL) -> Bool {
+        guard (try? FileManager.default.destinationOfSymbolicLink(atPath: url.path)) == nil,
+              let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey]) else {
+            return false
+        }
+        return values.isRegularFile == true && values.isSymbolicLink != true
+    }
+
+    private static func hasDirectory(_ url: URL) -> Bool {
+        guard (try? FileManager.default.destinationOfSymbolicLink(atPath: url.path)) == nil,
+              let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]) else {
+            return false
+        }
+        return values.isDirectory == true && values.isSymbolicLink != true
+    }
+
+    private static func isRegularExecutable(_ url: URL) -> Bool {
+        if (try? FileManager.default.destinationOfSymbolicLink(atPath: url.path)) != nil {
+            return false
+        }
+        guard FileManager.default.isExecutableFile(atPath: url.path),
+              let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey]) else {
+            return false
+        }
+        return values.isRegularFile == true && values.isSymbolicLink != true
     }
 
     private static func store(from arguments: [String]) throws -> LibraryStore {
@@ -375,6 +570,7 @@ struct WWBCtl {
         wwbctl scene-info <scene.pkg>
         wwbctl scene-render-info <scene.pkg>
         wwbctl scene-engine-info <scene.pkg>
+        wwbctl scene-parity-check <scene.pkg> <golden-dir>
         wwbctl doctor
         """)
     }
@@ -386,6 +582,8 @@ private enum CLIError: Error, LocalizedError {
     case missingAssetId
     case invalidConvertUsage
     case invalidAttachSceneVideoUsage
+    case invalidSceneParityCheckUsage
+    case invalidGoldenDirectory(String)
 
     var errorDescription: String? {
         switch self {
@@ -398,7 +596,27 @@ private enum CLIError: Error, LocalizedError {
         case .invalidConvertUsage:
             return "usage: wwbctl convert <input-video> --out <output.mp4>"
         case .invalidAttachSceneVideoUsage:
-            return "usage: wwbctl attach-scene-video <asset-id> <video-file> [--library <folder>] (stores a reference cache only; desktop scene playback uses the native renderer)"
+            return "usage: wwbctl attach-scene-video <asset-id> <video-file> [--library <folder>] (stores a reference cache only; desktop scene playback uses the external scene renderer when available, then native fallback)"
+        case .invalidSceneParityCheckUsage:
+            return "usage: wwbctl scene-parity-check <scene.pkg> <golden-dir>"
+        case .invalidGoldenDirectory(let path):
+            return "golden frame directory does not exist or is not a directory: \(path)"
+        }
+    }
+}
+
+private extension URL {
+    var isExistingDirectory: Bool {
+        get throws {
+            var isDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) else {
+                return false
+            }
+            guard isDirectory.boolValue else {
+                return false
+            }
+            let values = try resourceValues(forKeys: [.isDirectoryKey])
+            return values.isDirectory == true
         }
     }
 }
