@@ -359,7 +359,8 @@ private final class WallpaperWindow {
             return ImageWallpaperView(image: image, frame: contentFrame, displayMode: displayMode)
         case .scene:
             let previewURL = asset.thumbnail.map { URL(filePath: $0) }
-            return try SceneWallpaperView(
+            return try SceneWallpaperContentFactory.makeSceneContentView(
+                asset: asset,
                 url: url,
                 previewURL: previewURL,
                 frame: contentFrame,
@@ -368,6 +369,277 @@ private final class WallpaperWindow {
         case .unknown:
             throw PlaybackError.notPlayable(asset.kind.rawValue)
         }
+    }
+}
+
+@MainActor
+enum SceneWallpaperContentFactory {
+    static var lastDiagnostic: String?
+
+    static func makeSceneContentView(
+        asset: WallpaperAsset,
+        url: URL,
+        previewURL: URL? = nil,
+        frame: CGRect,
+        displayMode: WallpaperDisplayMode
+    ) throws -> NSView {
+        lastDiagnostic = nil
+        if SceneEngineRendererConfiguration.isScenePackage(url, inside: asset.projectDirectory),
+           let rendererURL = SceneEngineRendererConfiguration.executableURL() {
+            guard let assetsDirectory = SceneEngineRendererConfiguration.assetsDirectoryURL() else {
+                lastDiagnostic = "external scene renderer skipped: Wallpaper Engine assets folder is missing or incomplete"
+                return try SceneWallpaperView(
+                    url: url,
+                    previewURL: previewURL,
+                    frame: frame,
+                    displayMode: displayMode
+                )
+            }
+            do {
+                return try ExternalSceneRendererView(
+                    rendererURL: rendererURL,
+                    assetsDirectory: assetsDirectory,
+                    projectDirectory: URL(filePath: asset.projectDirectory).standardizedFileURL,
+                    sceneURL: url,
+                    frame: frame,
+                    displayMode: displayMode
+                )
+            } catch {
+                lastDiagnostic = "external scene renderer launch failed: \(error.localizedDescription)"
+                return try SceneWallpaperView(
+                    url: url,
+                    previewURL: previewURL,
+                    frame: frame,
+                    displayMode: displayMode
+                )
+            }
+        }
+        return try SceneWallpaperView(
+            url: url,
+            previewURL: previewURL,
+            frame: frame,
+            displayMode: displayMode
+        )
+    }
+}
+
+@MainActor
+enum SceneEngineRendererConfiguration {
+    static let environmentVariableName = "WWB_SCENE_ENGINE_RENDERER"
+    static let assetsEnvironmentVariableName = "WWB_SCENE_ENGINE_ASSETS_DIR"
+    static var overrideExecutablePath: String?
+    static var overrideAssetsPath: String?
+    static var overrideResourceURL: URL?
+
+    nonisolated static let requiredAssetPaths = [
+        "models/util/composelayer.json",
+        "materials/util/composelayer.json",
+        "materials/util/effectpassthrough.json",
+        "materials/util/downsample_quarter_bloom.json",
+        "materials/util/downsample_eighth_blur_v.json",
+        "materials/util/blur_h_bloom.json",
+        "materials/util/combine.json",
+        "shaders/genericimage2.frag",
+        "shaders/genericimage2.vert",
+        "shaders/common_blur.h",
+        "shaders/genericparticle.vert",
+        "shaders/genericparticle.frag"
+    ]
+
+    static func executableURL(environment: [String: String] = ProcessInfo.processInfo.environment) -> URL? {
+        if let path = overrideExecutablePath ?? environment[environmentVariableName],
+           !path.isEmpty {
+            let url = URL(filePath: path).standardizedFileURL
+            if isRegularExecutable(url) {
+                return url
+            }
+        }
+        guard let bundledURL = (overrideResourceURL ?? Bundle.main.resourceURL)?
+            .appending(path: "Renderers")
+            .appending(path: "wwb-scene-renderer")
+            .standardizedFileURL,
+            isRegularExecutable(bundledURL) else {
+                return nil
+        }
+        return bundledURL
+    }
+
+    static func assetsDirectoryURL(environment: [String: String] = ProcessInfo.processInfo.environment) -> URL? {
+        if let path = overrideAssetsPath ?? environment[assetsEnvironmentVariableName],
+           !path.isEmpty {
+            let url = URL(filePath: path).standardizedFileURL
+            return isValidAssetsDirectory(url) ? url : nil
+        }
+        guard let url = defaultAssetsDirectoryURL() else {
+            return nil
+        }
+        return isValidAssetsDirectory(url) ? url : nil
+    }
+
+    static func isScenePackage(_ url: URL, inside projectDirectory: String) -> Bool {
+        guard url.pathExtension.lowercased() == "pkg" else {
+            return false
+        }
+        let project = URL(filePath: projectDirectory).standardizedFileURL.resolvingSymlinksInPath()
+        let scene = url.standardizedFileURL.resolvingSymlinksInPath()
+        let projectComponents = project.pathComponents
+        let sceneComponents = scene.pathComponents
+        guard sceneComponents.count > projectComponents.count else {
+            return false
+        }
+        return Array(sceneComponents.prefix(projectComponents.count)) == projectComponents
+    }
+
+    private static func defaultAssetsDirectoryURL() -> URL? {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+            .appending(path: "WorkshopWallpaperBridge")
+            .appending(path: "wallpaper-engine-assets")
+            .standardizedFileURL
+    }
+
+    private static func isValidAssetsDirectory(_ url: URL) -> Bool {
+        guard let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]),
+              values.isDirectory == true,
+              values.isSymbolicLink != true else {
+            return false
+        }
+        return hasRegularFile(url.appending(path: "materials/util/composelayer.json"))
+            || hasDirectory(url.appending(path: "shaders"))
+    }
+
+    private static func hasRegularFile(_ url: URL) -> Bool {
+        guard (try? FileManager.default.destinationOfSymbolicLink(atPath: url.path)) == nil,
+              let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey]) else {
+            return false
+        }
+        return values.isRegularFile == true && values.isSymbolicLink != true
+    }
+
+    private static func hasDirectory(_ url: URL) -> Bool {
+        guard (try? FileManager.default.destinationOfSymbolicLink(atPath: url.path)) == nil,
+              let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]) else {
+            return false
+        }
+        return values.isDirectory == true && values.isSymbolicLink != true
+    }
+
+    private static func isRegularExecutable(_ url: URL) -> Bool {
+        if (try? FileManager.default.destinationOfSymbolicLink(atPath: url.path)) != nil {
+            return false
+        }
+        guard FileManager.default.isExecutableFile(atPath: url.path),
+              let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey]) else {
+            return false
+        }
+        return values.isRegularFile == true && values.isSymbolicLink != true
+    }
+}
+
+@MainActor
+final class SceneEngineProcessController {
+    static var launchProcess: (URL, [String]) throws -> Process = { executableURL, arguments in
+        let process = Process()
+        process.executableURL = executableURL
+        process.arguments = arguments
+        try process.run()
+        return process
+    }
+
+    private var executableURL: URL?
+    private var arguments: [String] = []
+    private var process: Process?
+
+    func start(rendererURL: URL, assetsDirectory: URL, projectDirectory: URL, frame: CGRect) throws {
+        executableURL = rendererURL
+        arguments = [
+            "--window",
+            Self.windowRectArgument(for: frame),
+            "--silent",
+            "--noautomute",
+            "--no-audio-processing",
+            "--disable-mouse",
+            "--assets-dir",
+            assetsDirectory.path,
+            projectDirectory.path
+        ]
+        try resume()
+    }
+
+    func suspend() {
+        stop()
+    }
+
+    func resume() throws {
+        guard process == nil, let executableURL else {
+            return
+        }
+        process = try Self.launchProcess(executableURL, arguments)
+    }
+
+    func stop() {
+        if let process, process.isRunning {
+            process.terminate()
+        }
+        process = nil
+    }
+
+    private static func windowRectArgument(for frame: CGRect) -> String {
+        let width = max(1, Int(frame.width.rounded()))
+        let height = max(1, Int(frame.height.rounded()))
+        return "0x0x\(width)x\(height)"
+    }
+
+    deinit {
+        if let process, process.isRunning {
+            process.terminate()
+        }
+    }
+}
+
+@MainActor
+final class ExternalSceneRendererView: NSView,
+    PausableWallpaperContent,
+    DisplayModeUpdatableContent,
+    WallpaperContentLifecycle {
+    private let controller = SceneEngineProcessController()
+
+    init(
+        rendererURL: URL,
+        assetsDirectory: URL,
+        projectDirectory: URL,
+        sceneURL: URL,
+        frame: CGRect,
+        displayMode _: WallpaperDisplayMode
+    ) throws {
+        super.init(frame: frame)
+        wantsLayer = true
+        layer = CALayer()
+        layer?.backgroundColor = NSColor.black.cgColor
+        try controller.start(
+            rendererURL: rendererURL,
+            assetsDirectory: assetsDirectory,
+            projectDirectory: projectDirectory,
+            frame: frame
+        )
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is not supported")
+    }
+
+    func setPlaybackSuspended(_ suspended: Bool) {
+        if suspended {
+            controller.suspend()
+        } else {
+            try? controller.resume()
+        }
+    }
+
+    func setDisplayMode(_ displayMode: WallpaperDisplayMode) {}
+
+    func prepareForClose() {
+        controller.stop()
     }
 }
 

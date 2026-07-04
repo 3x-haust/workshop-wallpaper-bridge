@@ -248,9 +248,299 @@ final class WallpaperPlayerSuspensionTests: XCTestCase {
         let sceneBody = String(source[sceneStart.lowerBound..<sceneEnd.lowerBound])
 
         // Then
-        XCTAssertTrue(sceneBody.contains("return try SceneWallpaperView("))
+        XCTAssertTrue(sceneBody.contains("SceneWallpaperContentFactory.makeSceneContentView"))
         XCTAssertFalse(sceneBody.contains("SceneRenderCache.existingVideoURL"))
         XCTAssertFalse(sceneBody.contains("return VideoWallpaperView("))
+    }
+
+    @MainActor
+    func testScenePlaybackUsesExternalRendererWhenExecutableIsConfigured() throws {
+        // Given
+        let root = try Self.makeTempDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: root)
+        }
+        let packageURL = root.appending(path: "scene.pkg")
+        try Self.writeScenePackage(
+            to: packageURL,
+            sceneJSON: #"{"objects":[{"text":{"value":"HELLO"},"size":"320 120"}]}"#
+        )
+        let rendererURL = root.appending(path: "scene-engine-renderer")
+        try "#!/bin/sh\nexit 0\n".write(to: rendererURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: rendererURL.path)
+        let assetsDirectory = try Self.writeSceneEngineAssetsFixture(in: root)
+        let asset = Self.sceneAsset(root: root, entrypoint: packageURL)
+        let previousRendererPath = SceneEngineRendererConfiguration.overrideExecutablePath
+        let previousAssetsPath = SceneEngineRendererConfiguration.overrideAssetsPath
+        let previousLaunch = SceneEngineProcessController.launchProcess
+        var launches: [(URL, [String])] = []
+        SceneEngineRendererConfiguration.overrideExecutablePath = rendererURL.path
+        SceneEngineRendererConfiguration.overrideAssetsPath = assetsDirectory.path
+        SceneEngineProcessController.launchProcess = { executable, arguments in
+            launches.append((executable, arguments))
+            return Process()
+        }
+        defer {
+            SceneEngineRendererConfiguration.overrideExecutablePath = previousRendererPath
+            SceneEngineRendererConfiguration.overrideAssetsPath = previousAssetsPath
+            SceneEngineProcessController.launchProcess = previousLaunch
+        }
+
+        // When
+        let view = try SceneWallpaperContentFactory.makeSceneContentView(
+            asset: asset,
+            url: packageURL,
+            frame: CGRect(x: 0, y: 0, width: 640, height: 360),
+            displayMode: .fit
+        )
+        (view as? WallpaperContentLifecycle)?.prepareForClose()
+
+        // Then
+        XCTAssertTrue(view is ExternalSceneRendererView)
+        XCTAssertEqual(launches.count, 1)
+        XCTAssertEqual(launches.first?.0.path, rendererURL.path)
+        XCTAssertEqual(launches.first?.1, [
+            "--window",
+            "0x0x640x360",
+            "--silent",
+            "--noautomute",
+            "--no-audio-processing",
+            "--disable-mouse",
+            "--assets-dir",
+            assetsDirectory.path,
+            root.path
+        ])
+    }
+
+    @MainActor
+    func testScenePlaybackAcceptsAssetsDirectoryWithShadersSentinel() throws {
+        // Given
+        let root = try Self.makeTempDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: root)
+        }
+        let packageURL = root.appending(path: "scene.pkg")
+        try Self.writeScenePackage(
+            to: packageURL,
+            sceneJSON: #"{"objects":[{"text":{"value":"HELLO"},"size":"320 120"}]}"#
+        )
+        let rendererURL = root.appending(path: "scene-engine-renderer")
+        try "#!/bin/sh\nexit 0\n".write(to: rendererURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: rendererURL.path)
+        let assetsDirectory = root.appending(path: "wallpaper-engine-assets")
+        try FileManager.default.createDirectory(
+            at: assetsDirectory.appending(path: "shaders"),
+            withIntermediateDirectories: true
+        )
+        let asset = Self.sceneAsset(root: root, entrypoint: packageURL)
+        let previousRendererPath = SceneEngineRendererConfiguration.overrideExecutablePath
+        let previousAssetsPath = SceneEngineRendererConfiguration.overrideAssetsPath
+        let previousLaunch = SceneEngineProcessController.launchProcess
+        var launches: [(URL, [String])] = []
+        SceneEngineRendererConfiguration.overrideExecutablePath = rendererURL.path
+        SceneEngineRendererConfiguration.overrideAssetsPath = assetsDirectory.path
+        SceneEngineProcessController.launchProcess = { executable, arguments in
+            launches.append((executable, arguments))
+            return Process()
+        }
+        defer {
+            SceneEngineRendererConfiguration.overrideExecutablePath = previousRendererPath
+            SceneEngineRendererConfiguration.overrideAssetsPath = previousAssetsPath
+            SceneEngineProcessController.launchProcess = previousLaunch
+        }
+
+        // When
+        let view = try SceneWallpaperContentFactory.makeSceneContentView(
+            asset: asset,
+            url: packageURL,
+            frame: CGRect(x: 0, y: 0, width: 640, height: 360),
+            displayMode: .fit
+        )
+        (view as? WallpaperContentLifecycle)?.prepareForClose()
+
+        // Then
+        XCTAssertTrue(view is ExternalSceneRendererView)
+        let arguments = try XCTUnwrap(launches.first?.1)
+        let assetsFlagIndex = try XCTUnwrap(arguments.firstIndex(of: "--assets-dir"))
+        XCTAssertEqual(arguments[assetsFlagIndex + 1], assetsDirectory.path)
+    }
+
+    @MainActor
+    func testScenePlaybackFallsBackToNativeWhenSceneEngineAssetsAreMissing() throws {
+        // Given
+        let root = try Self.makeTempDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: root)
+        }
+        let packageURL = root.appending(path: "scene.pkg")
+        try Self.writeScenePackage(
+            to: packageURL,
+            sceneJSON: #"{"objects":[{"text":{"value":"HELLO"},"size":"320 120"}]}"#
+        )
+        let rendererURL = root.appending(path: "scene-engine-renderer")
+        try "#!/bin/sh\nexit 0\n".write(to: rendererURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: rendererURL.path)
+        let asset = Self.sceneAsset(root: root, entrypoint: packageURL)
+        let previousRendererPath = SceneEngineRendererConfiguration.overrideExecutablePath
+        let previousAssetsPath = SceneEngineRendererConfiguration.overrideAssetsPath
+        let previousLaunch = SceneEngineProcessController.launchProcess
+        var launchCount = 0
+        SceneEngineRendererConfiguration.overrideExecutablePath = rendererURL.path
+        SceneEngineRendererConfiguration.overrideAssetsPath = root.appending(path: "missing-assets").path
+        SceneEngineProcessController.launchProcess = { _, _ in
+            launchCount += 1
+            return Process()
+        }
+        defer {
+            SceneEngineRendererConfiguration.overrideExecutablePath = previousRendererPath
+            SceneEngineRendererConfiguration.overrideAssetsPath = previousAssetsPath
+            SceneEngineProcessController.launchProcess = previousLaunch
+        }
+
+        // When
+        let view = try SceneWallpaperContentFactory.makeSceneContentView(
+            asset: asset,
+            url: packageURL,
+            frame: CGRect(x: 0, y: 0, width: 640, height: 360),
+            displayMode: .fit
+        )
+        (view as? WallpaperContentLifecycle)?.prepareForClose()
+
+        // Then
+        XCTAssertTrue(view is SceneWallpaperView)
+        XCTAssertEqual(launchCount, 0)
+        XCTAssertEqual(
+            SceneWallpaperContentFactory.lastDiagnostic,
+            "external scene renderer skipped: Wallpaper Engine assets folder is missing or incomplete"
+        )
+    }
+
+    @MainActor
+    func testScenePlaybackFallsBackToNativeWhenRendererIsMissingOrNotExecutable() throws {
+        // Given
+        let root = try Self.makeTempDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: root)
+        }
+        let packageURL = root.appending(path: "scene.pkg")
+        try Self.writeScenePackage(
+            to: packageURL,
+            sceneJSON: #"{"objects":[{"text":{"value":"HELLO"},"size":"320 120"}]}"#
+        )
+        let missingRendererURL = root.appending(path: "missing-renderer")
+        let rendererURL = root.appending(path: "scene-engine-renderer")
+        try "#!/bin/sh\nexit 0\n".write(to: rendererURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: rendererURL.path)
+        let asset = Self.sceneAsset(root: root, entrypoint: packageURL)
+        let previousRendererPath = SceneEngineRendererConfiguration.overrideExecutablePath
+        let previousLaunch = SceneEngineProcessController.launchProcess
+        var launchCount = 0
+        SceneEngineProcessController.launchProcess = { _, _ in
+            launchCount += 1
+            return Process()
+        }
+        defer {
+            SceneEngineRendererConfiguration.overrideExecutablePath = previousRendererPath
+            SceneEngineProcessController.launchProcess = previousLaunch
+        }
+
+        // When
+        SceneEngineRendererConfiguration.overrideExecutablePath = missingRendererURL.path
+        let missingView = try SceneWallpaperContentFactory.makeSceneContentView(
+            asset: asset,
+            url: packageURL,
+            frame: CGRect(x: 0, y: 0, width: 640, height: 360),
+            displayMode: .fit
+        )
+        (missingView as? WallpaperContentLifecycle)?.prepareForClose()
+        SceneEngineRendererConfiguration.overrideExecutablePath = rendererURL.path
+        let nonExecutableView = try SceneWallpaperContentFactory.makeSceneContentView(
+            asset: asset,
+            url: packageURL,
+            frame: CGRect(x: 0, y: 0, width: 640, height: 360),
+            displayMode: .fit
+        )
+        (nonExecutableView as? WallpaperContentLifecycle)?.prepareForClose()
+
+        // Then
+        XCTAssertTrue(missingView is SceneWallpaperView)
+        XCTAssertTrue(nonExecutableView is SceneWallpaperView)
+        XCTAssertEqual(launchCount, 0)
+    }
+
+    @MainActor
+    func testScenePlaybackFallsBackToNativeWhenExternalRendererLaunchFails() throws {
+        // Given
+        let root = try Self.makeTempDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: root)
+        }
+        let packageURL = root.appending(path: "scene.pkg")
+        try Self.writeScenePackage(
+            to: packageURL,
+            sceneJSON: #"{"objects":[{"text":{"value":"HELLO"},"size":"320 120"}]}"#
+        )
+        let rendererURL = root.appending(path: "scene-engine-renderer")
+        try "#!/bin/sh\nexit 0\n".write(to: rendererURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: rendererURL.path)
+        let assetsDirectory = try Self.writeSceneEngineAssetsFixture(in: root)
+        let asset = Self.sceneAsset(root: root, entrypoint: packageURL)
+        let previousRendererPath = SceneEngineRendererConfiguration.overrideExecutablePath
+        let previousAssetsPath = SceneEngineRendererConfiguration.overrideAssetsPath
+        let previousLaunch = SceneEngineProcessController.launchProcess
+        var launchCount = 0
+        SceneEngineRendererConfiguration.overrideExecutablePath = rendererURL.path
+        SceneEngineRendererConfiguration.overrideAssetsPath = assetsDirectory.path
+        SceneEngineProcessController.launchProcess = { _, _ in
+            launchCount += 1
+            throw SceneRendererLaunchTestError.expected
+        }
+        defer {
+            SceneEngineRendererConfiguration.overrideExecutablePath = previousRendererPath
+            SceneEngineRendererConfiguration.overrideAssetsPath = previousAssetsPath
+            SceneEngineProcessController.launchProcess = previousLaunch
+        }
+
+        // When
+        let view = try SceneWallpaperContentFactory.makeSceneContentView(
+            asset: asset,
+            url: packageURL,
+            frame: CGRect(x: 0, y: 0, width: 640, height: 360),
+            displayMode: .fit
+        )
+        (view as? WallpaperContentLifecycle)?.prepareForClose()
+
+        // Then
+        XCTAssertTrue(view is SceneWallpaperView)
+        XCTAssertEqual(launchCount, 1)
+    }
+
+    @MainActor
+    func testSceneEngineRendererFallsBackToBundledExecutablePath() throws {
+        // Given
+        let root = try Self.makeTempDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: root)
+        }
+        let rendererDirectory = root.appending(path: "Renderers")
+        try FileManager.default.createDirectory(at: rendererDirectory, withIntermediateDirectories: true)
+        let bundledRendererURL = rendererDirectory.appending(path: "wwb-scene-renderer")
+        try "#!/bin/sh\nexit 0\n".write(to: bundledRendererURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bundledRendererURL.path)
+        let previousRendererPath = SceneEngineRendererConfiguration.overrideExecutablePath
+        let previousResourceURL = SceneEngineRendererConfiguration.overrideResourceURL
+        SceneEngineRendererConfiguration.overrideExecutablePath = nil
+        SceneEngineRendererConfiguration.overrideResourceURL = root
+        defer {
+            SceneEngineRendererConfiguration.overrideExecutablePath = previousRendererPath
+            SceneEngineRendererConfiguration.overrideResourceURL = previousResourceURL
+        }
+
+        // When
+        let resolved = SceneEngineRendererConfiguration.executableURL(environment: [:])
+
+        // Then
+        XCTAssertEqual(resolved?.path, bundledRendererURL.path)
     }
 
     @MainActor
@@ -577,6 +867,35 @@ final class WallpaperPlayerSuspensionTests: XCTestCase {
         data.append(Data(sceneJSON.utf8))
         try data.write(to: url, options: [.atomic])
     }
+
+    private static func writeSceneEngineAssetsFixture(in root: URL) throws -> URL {
+        let assetsDirectory = root.appending(path: "wallpaper-engine-assets")
+        for relativePath in SceneEngineRendererConfiguration.requiredAssetPaths {
+            let fileURL = assetsDirectory.appending(path: relativePath)
+            try FileManager.default.createDirectory(
+                at: fileURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try "{}\n".write(to: fileURL, atomically: true, encoding: .utf8)
+        }
+        return assetsDirectory
+    }
+
+    private static func sceneAsset(root: URL, entrypoint: URL) -> WallpaperAsset {
+        WallpaperAsset(
+            id: root.lastPathComponent,
+            title: "Scene",
+            kind: .scene,
+            supportStatus: .playable,
+            source: .localSteamWorkshop,
+            projectDirectory: root.path,
+            entrypoint: entrypoint.path,
+            thumbnail: nil,
+            workshopId: nil,
+            redistributionAllowed: false,
+            issues: []
+        )
+    }
 }
 
 @MainActor
@@ -645,4 +964,8 @@ private extension Data {
         appendInt32(bytes.count)
         append(bytes)
     }
+}
+
+private enum SceneRendererLaunchTestError: Error {
+    case expected
 }
