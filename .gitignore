@@ -5,4 +5,7 @@ DerivedData/
 .DS_Store
 Package.resolved
 .omo
+.omc
 plans/
+.tmp/
+ExternalRenderers/
