@@ -103,7 +103,11 @@ enum SceneVideoCache {
     /// v3: default record duration increased from 10s to 20s so the loop
     /// point is reached less often, making the seam where playback jumps
     /// back to the start less noticeable.
-    static let cacheVersion = 3
+    ///
+    /// v4: the encode now crossfades the recorded clip's tail into its head
+    /// (see `SceneVideoLoopCrossfade`), so the loop seam itself is blended
+    /// away instead of merely being made less frequent.
+    static let cacheVersion = 4
 
     nonisolated(unsafe) static var overrideCacheDirectoryURL: URL?
 
@@ -145,6 +149,73 @@ enum SceneVideoCache {
     static func freshCachedVideoURL(assetId: String, sourceURL: URL) -> URL? {
         let url = cachedVideoURL(assetId: assetId)
         return isFresh(cacheURL: url, sourceURL: sourceURL) ? url : nil
+    }
+}
+
+/// Pure math for turning a recorded (non-tiling) clip into a seamlessly
+/// looping one by crossfading its tail into its head at encode time,
+/// factored out of `SceneVideoRenderer.ffmpegArguments` so the frame/offset
+/// arithmetic can be unit tested without invoking ffmpeg.
+///
+/// Given a recorded clip of `totalFrameCount` frames at `fps`, the output is
+/// built from two views of the same frame sequence:
+/// - `main` = frames `[crossfadeFrameCount, totalFrameCount)`, i.e. the clip
+///   with its first `crossfadeFrameCount` frames trimmed off, re-based to
+///   start at t=0.
+/// - `head` = frames `[0, crossfadeFrameCount)`, i.e. just the clip's head.
+///
+/// ffmpeg's `xfade` filter is applied as `xfade(main, head)`: it plays
+/// `main` unblended for `offsetSeconds`, then blends `main`'s next
+/// `crossfadeSeconds` (which is exactly the *original* clip's tail, since
+/// `main` is `main`'s local time + the trimmed head duration) with `head`'s
+/// full duration (the *original* clip's head). Because `xfade`'s total output
+/// duration is `offset + duration(head)`, and `duration(head) ==
+/// crossfadeSeconds`, the result is exactly `totalSeconds - crossfadeSeconds`
+/// long, with the seam itself replaced by a blend of the original tail and
+/// head instead of a hard cut between them.
+enum SceneVideoLoopCrossfade {
+    /// The recommended crossfade window: long enough to hide a swimming/
+    /// drifting scene's seam, short enough not to noticeably shorten the
+    /// loop or blur fast motion.
+    static let defaultSeconds: Double = 1.2
+
+    /// How many frames the crossfade should span, clamped so recordings that
+    /// are too short to crossfade (mainly small fixtures in tests) fall back
+    /// to a plain (non-crossfaded) encode rather than producing invalid
+    /// ffmpeg filter arguments.
+    ///
+    /// Crossfading requires an unblended `main` body of positive length
+    /// before the transition starts, i.e. `totalFrameCount > 2 *
+    /// crossfadeFrameCount`; when the recording is too short for that
+    /// (mainly small fixtures in tests), this returns 0 to signal "disable
+    /// crossfading".
+    static func frameCount(totalFrameCount: Int, fps: Int, seconds: Double = defaultSeconds) -> Int {
+        guard totalFrameCount > 0, fps > 0 else {
+            return 0
+        }
+        let desired = max(1, Int((seconds * Double(fps)).rounded()))
+        guard totalFrameCount > desired * 2 else {
+            return 0
+        }
+        return desired
+    }
+
+    /// Seconds of unblended `main` playback before the crossfade transition
+    /// begins. This is also the `offset` argument to ffmpeg's `xfade` filter.
+    static func offsetSeconds(totalFrameCount: Int, crossfadeFrameCount: Int, fps: Int) -> Double {
+        guard fps > 0 else {
+            return 0
+        }
+        return Double(totalFrameCount - 2 * crossfadeFrameCount) / Double(fps)
+    }
+
+    /// The final output duration: the recorded clip's length minus one
+    /// crossfade window.
+    static func outputSeconds(totalFrameCount: Int, crossfadeFrameCount: Int, fps: Int) -> Double {
+        guard fps > 0 else {
+            return 0
+        }
+        return Double(totalFrameCount - crossfadeFrameCount) / Double(fps)
     }
 }
 
@@ -200,17 +271,64 @@ enum SceneVideoRenderer {
         ]
     }
 
-    static func ffmpegArguments(framesDirectory: URL, fps: Int, outputURL: URL) -> [String] {
-        [
+    /// Builds the ffmpeg invocation that encodes the recorded frame sequence
+    /// into the cached mp4. `recordedFrameCount` is the number of frames
+    /// actually written by the renderer (not the requested `fps * seconds`
+    /// target, which the renderer may fall short of or exceed slightly).
+    ///
+    /// When there are enough frames, the clip's tail is crossfaded into its
+    /// head (see `SceneVideoLoopCrossfade`) so the encoded video loops
+    /// seamlessly instead of jump-cutting back to frame 0. Short recordings
+    /// (mainly test fixtures) fall back to a plain single-pass encode.
+    static func ffmpegArguments(
+        framesDirectory: URL,
+        fps: Int,
+        recordedFrameCount: Int,
+        outputURL: URL
+    ) -> [String] {
+        let framePattern = framesDirectory.appending(path: "frame_%05d.png").path
+        let crossfadeFrameCount = SceneVideoLoopCrossfade.frameCount(totalFrameCount: recordedFrameCount, fps: fps)
+        guard crossfadeFrameCount > 0 else {
+            return [
+                "-y",
+                "-framerate", String(fps),
+                "-i", framePattern,
+                "-c:v", "libx264",
+                "-pix_fmt", "yuv420p",
+                "-crf", "18",
+                "-movflags", "+faststart",
+                outputURL.path
+            ]
+        }
+
+        let offsetSeconds = SceneVideoLoopCrossfade.offsetSeconds(
+            totalFrameCount: recordedFrameCount,
+            crossfadeFrameCount: crossfadeFrameCount,
+            fps: fps
+        )
+        let crossfadeSeconds = Double(crossfadeFrameCount) / Double(fps)
+        let filterComplex = "[0:v]trim=start_frame=\(crossfadeFrameCount),setpts=PTS-STARTPTS[main];"
+            + "[1:v]trim=end_frame=\(crossfadeFrameCount),setpts=PTS-STARTPTS[head];"
+            + "[main][head]xfade=transition=fade:duration=\(formatSeconds(crossfadeSeconds)):offset=\(formatSeconds(offsetSeconds))[out]"
+
+        return [
             "-y",
             "-framerate", String(fps),
-            "-i", framesDirectory.appending(path: "frame_%05d.png").path,
+            "-i", framePattern,
+            "-framerate", String(fps),
+            "-i", framePattern,
+            "-filter_complex", filterComplex,
+            "-map", "[out]",
             "-c:v", "libx264",
             "-pix_fmt", "yuv420p",
             "-crf", "18",
             "-movflags", "+faststart",
             outputURL.path
         ]
+    }
+
+    private static func formatSeconds(_ value: Double) -> String {
+        String(format: "%.3f", value)
     }
 
     /// Runs the renderer to capture offscreen frames, encodes them with
@@ -260,7 +378,12 @@ enum SceneVideoRenderer {
         let temporaryOutputURL = tempDirectory.appending(path: "scene-render-output.mp4")
         try runProcess(
             URL(filePath: ffmpegPath),
-            ffmpegArguments(framesDirectory: tempDirectory, fps: configuration.fps, outputURL: temporaryOutputURL)
+            ffmpegArguments(
+                framesDirectory: tempDirectory,
+                fps: configuration.fps,
+                recordedFrameCount: recordedFrameCount,
+                outputURL: temporaryOutputURL
+            )
         )
 
         let cacheDirectory = SceneVideoCache.cacheDirectoryURL()

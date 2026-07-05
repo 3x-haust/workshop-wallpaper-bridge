@@ -459,9 +459,13 @@ final class WallpaperPlayerSuspensionTests: XCTestCase {
             recordDirectory: recordDirectory,
             configuration: configuration
         )
+        // 10s @ 30fps = 300 frames, comfortably more than the 2*36 = 72
+        // frames the default 1.2s crossfade needs, so this exercises the
+        // crossfade branch.
         let ffmpegArguments = SceneVideoRenderer.ffmpegArguments(
             framesDirectory: recordDirectory,
             fps: configuration.fps,
+            recordedFrameCount: 300,
             outputURL: URL(filePath: "/tmp/scene-record/output.mp4")
         )
 
@@ -483,6 +487,50 @@ final class WallpaperPlayerSuspensionTests: XCTestCase {
             "/tmp/wallpaper-engine-assets",
             "/tmp/scene-project"
         ])
+        // K = round(1.2 * 30) = 36 crossfade frames.
+        // offset = (300 - 2*36) / 30 = 228 / 30 = 7.6s.
+        // duration = 36 / 30 = 1.2s.
+        // output length = offset + duration = 8.8s = (300 - 36) / 30. ✓
+        XCTAssertEqual(ffmpegArguments, [
+            "-y",
+            "-framerate",
+            "30",
+            "-i",
+            "/tmp/scene-record/frame_%05d.png",
+            "-framerate",
+            "30",
+            "-i",
+            "/tmp/scene-record/frame_%05d.png",
+            "-filter_complex",
+            "[0:v]trim=start_frame=36,setpts=PTS-STARTPTS[main];"
+                + "[1:v]trim=end_frame=36,setpts=PTS-STARTPTS[head];"
+                + "[main][head]xfade=transition=fade:duration=1.200:offset=7.600[out]",
+            "-map",
+            "[out]",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-crf",
+            "18",
+            "-movflags",
+            "+faststart",
+            "/tmp/scene-record/output.mp4"
+        ])
+    }
+
+    func testSceneVideoFfmpegArgumentsFallsBackToPlainEncodeWhenTooShortToCrossfade() {
+        // Given: only 4 recorded frames, far too few for the default 1.2s
+        // (36-frame @ 30fps) crossfade window to fit twice over.
+        let ffmpegArguments = SceneVideoRenderer.ffmpegArguments(
+            framesDirectory: URL(filePath: "/tmp/scene-record"),
+            fps: 30,
+            recordedFrameCount: 4,
+            outputURL: URL(filePath: "/tmp/scene-record/output.mp4")
+        )
+
+        // Then: falls back to a single-input, filter-free encode rather than
+        // building an invalid (negative-offset) xfade graph.
         XCTAssertEqual(ffmpegArguments, [
             "-y",
             "-framerate",
@@ -499,6 +547,40 @@ final class WallpaperPlayerSuspensionTests: XCTestCase {
             "+faststart",
             "/tmp/scene-record/output.mp4"
         ])
+    }
+
+    func testSceneVideoLoopCrossfadeMathProducesSeamlessLoopDuration() {
+        // Given: a 20s @ 30fps recording (the app's default configuration).
+        let fps = 30
+        let totalFrameCount = 600
+
+        // When
+        let crossfadeFrameCount = SceneVideoLoopCrossfade.frameCount(totalFrameCount: totalFrameCount, fps: fps)
+        let offsetSeconds = SceneVideoLoopCrossfade.offsetSeconds(
+            totalFrameCount: totalFrameCount,
+            crossfadeFrameCount: crossfadeFrameCount,
+            fps: fps
+        )
+        let outputSeconds = SceneVideoLoopCrossfade.outputSeconds(
+            totalFrameCount: totalFrameCount,
+            crossfadeFrameCount: crossfadeFrameCount,
+            fps: fps
+        )
+
+        // Then
+        XCTAssertEqual(crossfadeFrameCount, 36) // round(1.2 * 30)
+        XCTAssertEqual(offsetSeconds, (600.0 - 72.0) / 30.0, accuracy: 0.0001)
+        // The crossfade's own output duration formula (offset + duration of
+        // the transition) must equal totalSeconds - crossfadeSeconds, i.e.
+        // the recorded clip minus exactly one crossfade window.
+        let crossfadeSeconds = Double(crossfadeFrameCount) / Double(fps)
+        XCTAssertEqual(offsetSeconds + crossfadeSeconds, outputSeconds, accuracy: 0.0001)
+        XCTAssertEqual(outputSeconds, 20.0 - 1.2, accuracy: 0.0001)
+
+        // Too-short recordings disable crossfading rather than producing a
+        // negative offset.
+        XCTAssertEqual(SceneVideoLoopCrossfade.frameCount(totalFrameCount: 2, fps: 2), 0)
+        XCTAssertEqual(SceneVideoLoopCrossfade.frameCount(totalFrameCount: 0, fps: 30), 0)
     }
 
     func testSceneVideoRenderConfigurationDefaultsToTwentySecondsForLessFrequentLoopSeam() {
