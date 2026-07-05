@@ -9,7 +9,9 @@ final class VideoWallpaperView: NSView,
     private let player: AVQueuePlayer
     private let looper: AVPlayerLooper
     private let fallbackLayer = CALayer()
-    private let playerLayer: AVPlayerLayer
+    // Not private so tests can assert on the configured video gravity
+    // (e.g. that scene-rendered wallpaper videos are forced to fill).
+    let playerLayer: AVPlayerLayer
 
     init(url: URL, fallbackImageURL: URL?, frame: CGRect, displayMode: WallpaperDisplayMode) {
         let item = AVPlayerItem(url: url)

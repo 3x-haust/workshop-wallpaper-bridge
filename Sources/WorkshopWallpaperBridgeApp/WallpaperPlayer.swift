@@ -60,6 +60,15 @@ final class WallpaperPlayer {
         updateVisibilityState()
     }
 
+    /// Called once a scene->video render finishes so the newly cached video
+    /// swaps in for the still-live native scene fallback.
+    func refreshIfNeeded(afterSceneVideoRenderFor assetId: String) {
+        guard let activeAsset, activeAsset.id == assetId, activeAsset.kind == .scene else {
+            return
+        }
+        try? reopen(asset: activeAsset)
+    }
+
     func restoreVisibleWindowsAfterAppWindowChange() {
         updateVisibilityState()
         guard !isSuspended else {
@@ -375,6 +384,8 @@ private final class WallpaperWindow {
 @MainActor
 enum SceneWallpaperContentFactory {
     static var lastDiagnostic: String?
+    static var statusHandler: ((String) -> Void)?
+    private static var pendingRenderAssetIDs = Set<String>()
 
     static func makeSceneContentView(
         asset: WallpaperAsset,
@@ -384,42 +395,112 @@ enum SceneWallpaperContentFactory {
         displayMode: WallpaperDisplayMode
     ) throws -> NSView {
         lastDiagnostic = nil
-        if SceneEngineRendererConfiguration.isScenePackage(url, inside: asset.projectDirectory),
-           let rendererURL = SceneEngineRendererConfiguration.executableURL() {
-            guard let assetsDirectory = SceneEngineRendererConfiguration.assetsDirectoryURL() else {
-                lastDiagnostic = "external scene renderer skipped: Wallpaper Engine assets folder is missing or incomplete"
-                return try SceneWallpaperView(
-                    url: url,
-                    previewURL: previewURL,
-                    frame: frame,
-                    displayMode: displayMode
-                )
-            }
-            do {
-                return try ExternalSceneRendererView(
-                    rendererURL: rendererURL,
-                    assetsDirectory: assetsDirectory,
-                    projectDirectory: URL(filePath: asset.projectDirectory).standardizedFileURL,
-                    sceneURL: url,
-                    frame: frame,
-                    displayMode: displayMode
-                )
-            } catch {
-                lastDiagnostic = "external scene renderer launch failed: \(error.localizedDescription)"
-                return try SceneWallpaperView(
-                    url: url,
-                    previewURL: previewURL,
-                    frame: frame,
-                    displayMode: displayMode
-                )
-            }
+        guard SceneEngineRendererConfiguration.isScenePackage(url, inside: asset.projectDirectory) else {
+            return try SceneWallpaperView(
+                url: url,
+                previewURL: previewURL,
+                frame: frame,
+                displayMode: displayMode
+            )
         }
+        if let cachedVideoURL = SceneVideoCache.freshCachedVideoURL(assetId: asset.id, sourceURL: url) {
+            // Scene videos are a rendered wallpaper loop, not a user-picked
+            // video file: they should always cover the whole desktop
+            // regardless of the app's general fit/fill/stretch preference,
+            // so the display mode is fixed to `.fill` here rather than
+            // forwarding the caller's `displayMode`.
+            return VideoWallpaperView(
+                url: cachedVideoURL,
+                fallbackImageURL: previewURL,
+                frame: frame,
+                displayMode: .fill
+            )
+        }
+        guard let rendererURL = SceneEngineRendererConfiguration.executableURL(),
+              let assetsDirectory = SceneEngineRendererConfiguration.assetsDirectoryURL(),
+              let ffmpegPath = VideoConverter().ffmpegPath() else {
+            lastDiagnostic = "scene video rendering skipped: \(missingRenderingComponentDescription())"
+            return try SceneWallpaperView(
+                url: url,
+                previewURL: previewURL,
+                frame: frame,
+                displayMode: displayMode
+            )
+        }
+        scheduleSceneVideoRender(
+            asset: asset,
+            sceneURL: url,
+            rendererURL: rendererURL,
+            assetsDirectory: assetsDirectory,
+            ffmpegPath: ffmpegPath,
+            frame: frame
+        )
+        lastDiagnostic = "scene video rendering in progress"
+        statusHandler?("Rendering scene to video…")
         return try SceneWallpaperView(
             url: url,
             previewURL: previewURL,
             frame: frame,
             displayMode: displayMode
         )
+    }
+
+    private static func missingRenderingComponentDescription() -> String {
+        var missing: [String] = []
+        if SceneEngineRendererConfiguration.executableURL() == nil {
+            missing.append("scene renderer binary")
+        }
+        if SceneEngineRendererConfiguration.assetsDirectoryURL() == nil {
+            missing.append("Wallpaper Engine assets folder")
+        }
+        if VideoConverter().ffmpegPath() == nil {
+            missing.append("ffmpeg")
+        }
+        return missing.isEmpty ? "unknown reason" : missing.joined(separator: ", ")
+    }
+
+    private static func scheduleSceneVideoRender(
+        asset: WallpaperAsset,
+        sceneURL: URL,
+        rendererURL: URL,
+        assetsDirectory: URL,
+        ffmpegPath: String,
+        frame: CGRect
+    ) {
+        guard !pendingRenderAssetIDs.contains(asset.id) else {
+            return
+        }
+        pendingRenderAssetIDs.insert(asset.id)
+        // Record at a clamped size derived from the display's logical
+        // (point) size, not its physical/backing pixel size: recording at
+        // full retina resolution produces multi-hundred-megabyte clips that
+        // take minutes to render for no visible benefit on a wallpaper
+        // viewed from normal desktop distance.
+        let recordSize = SceneVideoRecordSize.clampedRecordSize(forLogicalSize: frame.size)
+        let configuration = SceneVideoRenderConfiguration(
+            assetId: asset.id,
+            projectDirectory: URL(filePath: asset.projectDirectory).standardizedFileURL,
+            assetsDirectory: assetsDirectory,
+            rendererURL: rendererURL,
+            size: recordSize
+        )
+        let assetId = asset.id
+        Task.detached(priority: .utility) {
+            do {
+                _ = try SceneVideoRenderer.render(configuration: configuration, ffmpegPath: ffmpegPath)
+                await MainActor.run {
+                    pendingRenderAssetIDs.remove(assetId)
+                    statusHandler?("Playing")
+                    WallpaperPlayer.shared.refreshIfNeeded(afterSceneVideoRenderFor: assetId)
+                }
+            } catch {
+                await MainActor.run {
+                    pendingRenderAssetIDs.remove(assetId)
+                    lastDiagnostic = "scene video render failed: \(error.localizedDescription)"
+                    statusHandler?("Scene video render failed: \(error.localizedDescription)")
+                }
+            }
+        }
     }
 }
 
@@ -430,6 +511,7 @@ enum SceneEngineRendererConfiguration {
     static var overrideExecutablePath: String?
     static var overrideAssetsPath: String?
     static var overrideResourceURL: URL?
+    static var overrideDefaultAssetsDirectoryURL: URL?
 
     nonisolated static let requiredAssetPaths = [
         "models/util/composelayer.json",
@@ -490,8 +572,11 @@ enum SceneEngineRendererConfiguration {
         return Array(sceneComponents.prefix(projectComponents.count)) == projectComponents
     }
 
-    private static func defaultAssetsDirectoryURL() -> URL? {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+    static func defaultAssetsDirectoryURL() -> URL? {
+        if let overrideDefaultAssetsDirectoryURL {
+            return overrideDefaultAssetsDirectoryURL.standardizedFileURL
+        }
+        return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
             .appending(path: "WorkshopWallpaperBridge")
             .appending(path: "wallpaper-engine-assets")
             .standardizedFileURL
@@ -532,114 +617,6 @@ enum SceneEngineRendererConfiguration {
             return false
         }
         return values.isRegularFile == true && values.isSymbolicLink != true
-    }
-}
-
-@MainActor
-final class SceneEngineProcessController {
-    static var launchProcess: (URL, [String]) throws -> Process = { executableURL, arguments in
-        let process = Process()
-        process.executableURL = executableURL
-        process.arguments = arguments
-        try process.run()
-        return process
-    }
-
-    private var executableURL: URL?
-    private var arguments: [String] = []
-    private var process: Process?
-
-    func start(rendererURL: URL, assetsDirectory: URL, projectDirectory: URL, frame: CGRect) throws {
-        executableURL = rendererURL
-        arguments = [
-            "--window",
-            Self.windowRectArgument(for: frame),
-            "--silent",
-            "--noautomute",
-            "--no-audio-processing",
-            "--disable-mouse",
-            "--assets-dir",
-            assetsDirectory.path,
-            projectDirectory.path
-        ]
-        try resume()
-    }
-
-    func suspend() {
-        stop()
-    }
-
-    func resume() throws {
-        guard process == nil, let executableURL else {
-            return
-        }
-        process = try Self.launchProcess(executableURL, arguments)
-    }
-
-    func stop() {
-        if let process, process.isRunning {
-            process.terminate()
-        }
-        process = nil
-    }
-
-    private static func windowRectArgument(for frame: CGRect) -> String {
-        let width = max(1, Int(frame.width.rounded()))
-        let height = max(1, Int(frame.height.rounded()))
-        return "0x0x\(width)x\(height)"
-    }
-
-    deinit {
-        if let process, process.isRunning {
-            process.terminate()
-        }
-    }
-}
-
-@MainActor
-final class ExternalSceneRendererView: NSView,
-    PausableWallpaperContent,
-    DisplayModeUpdatableContent,
-    WallpaperContentLifecycle {
-    private let controller = SceneEngineProcessController()
-
-    init(
-        rendererURL: URL,
-        assetsDirectory: URL,
-        projectDirectory: URL,
-        sceneURL: URL,
-        frame: CGRect,
-        displayMode _: WallpaperDisplayMode
-    ) throws {
-        super.init(frame: frame)
-        wantsLayer = true
-        layer = CALayer()
-        layer?.backgroundColor = NSColor.black.cgColor
-        try controller.start(
-            rendererURL: rendererURL,
-            assetsDirectory: assetsDirectory,
-            projectDirectory: projectDirectory,
-            frame: frame
-        )
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) is not supported")
-    }
-
-    func setPlaybackSuspended(_ suspended: Bool) {
-        if suspended {
-            controller.suspend()
-        } else {
-            try? controller.resume()
-        }
-    }
-
-    func setDisplayMode(_ displayMode: WallpaperDisplayMode) {}
-
-    func prepareForClose() {
-        controller.stop()
     }
 }
 

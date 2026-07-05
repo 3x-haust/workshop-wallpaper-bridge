@@ -99,6 +99,9 @@ final class AppViewModel: ObservableObject {
         }
         syncLaunchAtLoginStatus()
         scheduleAutomaticUpdateCheck()
+        SceneWallpaperContentFactory.statusHandler = { [weak self] message in
+            self?.status = message
+        }
     }
 
     init(
@@ -224,10 +227,17 @@ extension AppViewModel {
                 + "and shaders/. Copy the contents of steamapps/common/wallpaper_engine/assets, not the parent folder."
             return
         }
-        sceneAssetsDirectory = standardizedURL.path
+        let localURL: URL
+        do {
+            localURL = try copySceneAssetsToDefaultLocation(from: standardizedURL)
+        } catch {
+            status = "Could not copy Scene Engine assets into app support: \(error.localizedDescription)"
+            return
+        }
+        sceneAssetsDirectory = localURL.path
         userDefaults.set(sceneAssetsDirectory, forKey: PreferenceKey.sceneEngineAssetsDirectory)
         SceneEngineRendererConfiguration.overrideAssetsPath = sceneAssetsDirectory
-        status = "Scene Engine assets folder selected."
+        status = "Scene Engine assets copied into app support."
     }
 
     func clearSceneAssetsFolder() {
@@ -235,6 +245,36 @@ extension AppViewModel {
         userDefaults.removeObject(forKey: PreferenceKey.sceneEngineAssetsDirectory)
         SceneEngineRendererConfiguration.overrideAssetsPath = nil
         status = "Scene Engine assets folder reset to the default path."
+    }
+
+    private func copySceneAssetsToDefaultLocation(from sourceURL: URL) throws -> URL {
+        guard let destinationURL = SceneEngineRendererConfiguration.defaultAssetsDirectoryURL() else {
+            throw CocoaError(.fileNoSuchFile)
+        }
+        if sourceURL.standardizedFileURL.resolvingSymlinksInPath().path
+            == destinationURL.standardizedFileURL.resolvingSymlinksInPath().path {
+            return destinationURL
+        }
+
+        let fileManager = FileManager.default
+        let parentURL = destinationURL.deletingLastPathComponent()
+        try fileManager.createDirectory(at: parentURL, withIntermediateDirectories: true)
+
+        let tempURL = parentURL.appending(
+            path: ".wallpaper-engine-assets-\(UUID().uuidString)",
+            directoryHint: .isDirectory
+        )
+        try fileManager.copyItem(at: sourceURL, to: tempURL)
+        do {
+            if fileManager.fileExists(atPath: destinationURL.path) {
+                try fileManager.removeItem(at: destinationURL)
+            }
+            try fileManager.moveItem(at: tempURL, to: destinationURL)
+        } catch {
+            try? fileManager.removeItem(at: tempURL)
+            throw error
+        }
+        return destinationURL.standardizedFileURL
     }
 
     func scanSource() {
@@ -541,8 +581,26 @@ extension AppViewModel {
         if userDefaults.object(forKey: PreferenceKey.automaticallyCheckForUpdates) != nil {
             automaticallyCheckForUpdates = userDefaults.bool(forKey: PreferenceKey.automaticallyCheckForUpdates)
         }
-        sceneAssetsDirectory = userDefaults.string(forKey: PreferenceKey.sceneEngineAssetsDirectory) ?? ""
+        sceneAssetsDirectory = restoredSceneAssetsDirectory()
         SceneEngineRendererConfiguration.overrideAssetsPath = sceneAssetsDirectory.isEmpty ? nil : sceneAssetsDirectory
+    }
+
+    private func restoredSceneAssetsDirectory() -> String {
+        guard let storedPath = userDefaults.string(forKey: PreferenceKey.sceneEngineAssetsDirectory),
+              !storedPath.isEmpty else {
+            return ""
+        }
+        let storedURL = URL(filePath: storedPath).standardizedFileURL
+        guard SceneEngineRendererConfiguration.isValidAssetsDirectory(storedURL) else {
+            return storedPath
+        }
+        do {
+            let localURL = try copySceneAssetsToDefaultLocation(from: storedURL)
+            userDefaults.set(localURL.path, forKey: PreferenceKey.sceneEngineAssetsDirectory)
+            return localURL.path
+        } catch {
+            return storedPath
+        }
     }
 
     private func playLastWallpaperIfAvailable() {

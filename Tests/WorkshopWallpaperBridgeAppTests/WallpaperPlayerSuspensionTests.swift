@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import XCTest
 import WorkshopWallpaperCore
@@ -253,67 +254,18 @@ final class WallpaperPlayerSuspensionTests: XCTestCase {
         XCTAssertFalse(sceneBody.contains("return VideoWallpaperView("))
     }
 
-    @MainActor
-    func testScenePlaybackUsesExternalRendererWhenExecutableIsConfigured() throws {
+    func testScenePlaybackRealtimeRendererWindowCodeHasBeenRemoved() throws {
         // Given
-        let root = try Self.makeTempDirectory()
-        defer {
-            try? FileManager.default.removeItem(at: root)
-        }
-        let packageURL = root.appending(path: "scene.pkg")
-        try Self.writeScenePackage(
-            to: packageURL,
-            sceneJSON: #"{"objects":[{"text":{"value":"HELLO"},"size":"320 120"}]}"#
-        )
-        let rendererURL = root.appending(path: "scene-engine-renderer")
-        try "#!/bin/sh\nexit 0\n".write(to: rendererURL, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: rendererURL.path)
-        let assetsDirectory = try Self.writeSceneEngineAssetsFixture(in: root)
-        let asset = Self.sceneAsset(root: root, entrypoint: packageURL)
-        let previousRendererPath = SceneEngineRendererConfiguration.overrideExecutablePath
-        let previousAssetsPath = SceneEngineRendererConfiguration.overrideAssetsPath
-        let previousLaunch = SceneEngineProcessController.launchProcess
-        var launches: [(URL, [String])] = []
-        SceneEngineRendererConfiguration.overrideExecutablePath = rendererURL.path
-        SceneEngineRendererConfiguration.overrideAssetsPath = assetsDirectory.path
-        SceneEngineProcessController.launchProcess = { executable, arguments in
-            launches.append((executable, arguments))
-            return Process()
-        }
-        defer {
-            SceneEngineRendererConfiguration.overrideExecutablePath = previousRendererPath
-            SceneEngineRendererConfiguration.overrideAssetsPath = previousAssetsPath
-            SceneEngineProcessController.launchProcess = previousLaunch
-        }
-
-        // When
-        let view = try SceneWallpaperContentFactory.makeSceneContentView(
-            asset: asset,
-            url: packageURL,
-            frame: CGRect(x: 0, y: 0, width: 640, height: 360),
-            displayMode: .fit
-        )
-        (view as? WallpaperContentLifecycle)?.prepareForClose()
+        let source = try String(contentsOfFile: "Sources/WorkshopWallpaperBridgeApp/WallpaperPlayer.swift")
 
         // Then
-        XCTAssertTrue(view is ExternalSceneRendererView)
-        XCTAssertEqual(launches.count, 1)
-        XCTAssertEqual(launches.first?.0.path, rendererURL.path)
-        XCTAssertEqual(launches.first?.1, [
-            "--window",
-            "0x0x640x360",
-            "--silent",
-            "--noautomute",
-            "--no-audio-processing",
-            "--disable-mouse",
-            "--assets-dir",
-            assetsDirectory.path,
-            root.path
-        ])
+        XCTAssertFalse(source.contains("ExternalSceneRendererView"))
+        XCTAssertFalse(source.contains("SceneEngineProcessController"))
+        XCTAssertFalse(source.contains("--macos-wallpaper-window"))
     }
 
     @MainActor
-    func testScenePlaybackAcceptsAssetsDirectoryWithShadersSentinel() throws {
+    func testScenePlaybackUsesFreshCachedVideoWhenAvailable() throws {
         // Given
         let root = try Self.makeTempDirectory()
         defer {
@@ -324,29 +276,15 @@ final class WallpaperPlayerSuspensionTests: XCTestCase {
             to: packageURL,
             sceneJSON: #"{"objects":[{"text":{"value":"HELLO"},"size":"320 120"}]}"#
         )
-        let rendererURL = root.appending(path: "scene-engine-renderer")
-        try "#!/bin/sh\nexit 0\n".write(to: rendererURL, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: rendererURL.path)
-        let assetsDirectory = root.appending(path: "wallpaper-engine-assets")
-        try FileManager.default.createDirectory(
-            at: assetsDirectory.appending(path: "shaders"),
-            withIntermediateDirectories: true
-        )
         let asset = Self.sceneAsset(root: root, entrypoint: packageURL)
-        let previousRendererPath = SceneEngineRendererConfiguration.overrideExecutablePath
-        let previousAssetsPath = SceneEngineRendererConfiguration.overrideAssetsPath
-        let previousLaunch = SceneEngineProcessController.launchProcess
-        var launches: [(URL, [String])] = []
-        SceneEngineRendererConfiguration.overrideExecutablePath = rendererURL.path
-        SceneEngineRendererConfiguration.overrideAssetsPath = assetsDirectory.path
-        SceneEngineProcessController.launchProcess = { executable, arguments in
-            launches.append((executable, arguments))
-            return Process()
-        }
+        let cacheDirectory = root.appending(path: "SceneVideoCache")
+        try FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
+        let cachedVideoURL = cacheDirectory.appending(path: "\(asset.id).mp4")
+        try "fake-cached-video".write(to: cachedVideoURL, atomically: true, encoding: .utf8)
+        let previousCacheDirectory = SceneVideoCache.overrideCacheDirectoryURL
+        SceneVideoCache.overrideCacheDirectoryURL = cacheDirectory
         defer {
-            SceneEngineRendererConfiguration.overrideExecutablePath = previousRendererPath
-            SceneEngineRendererConfiguration.overrideAssetsPath = previousAssetsPath
-            SceneEngineProcessController.launchProcess = previousLaunch
+            SceneVideoCache.overrideCacheDirectoryURL = previousCacheDirectory
         }
 
         // When
@@ -359,10 +297,51 @@ final class WallpaperPlayerSuspensionTests: XCTestCase {
         (view as? WallpaperContentLifecycle)?.prepareForClose()
 
         // Then
-        XCTAssertTrue(view is ExternalSceneRendererView)
-        let arguments = try XCTUnwrap(launches.first?.1)
-        let assetsFlagIndex = try XCTUnwrap(arguments.firstIndex(of: "--assets-dir"))
-        XCTAssertEqual(arguments[assetsFlagIndex + 1], assetsDirectory.path)
+        XCTAssertTrue(view is VideoWallpaperView)
+        XCTAssertNil(SceneWallpaperContentFactory.lastDiagnostic)
+    }
+
+    /// Scene wallpapers are a rendered loop meant to cover the whole
+    /// desktop, so cached scene videos must always play with fill/aspect-
+    /// fill gravity, even when the app's general display-mode preference is
+    /// set to `.fit` (as passed in below).
+    @MainActor
+    func testScenePlaybackForcesFillGravityForCachedVideoRegardlessOfDisplayMode() throws {
+        // Given
+        let root = try Self.makeTempDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: root)
+        }
+        let packageURL = root.appending(path: "scene.pkg")
+        try Self.writeScenePackage(
+            to: packageURL,
+            sceneJSON: #"{"objects":[{"text":{"value":"HELLO"},"size":"320 120"}]}"#
+        )
+        let asset = Self.sceneAsset(root: root, entrypoint: packageURL)
+        let cacheDirectory = root.appending(path: "SceneVideoCache")
+        try FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
+        let cachedVideoURL = cacheDirectory.appending(path: "\(asset.id).mp4")
+        try "fake-cached-video".write(to: cachedVideoURL, atomically: true, encoding: .utf8)
+        let previousCacheDirectory = SceneVideoCache.overrideCacheDirectoryURL
+        SceneVideoCache.overrideCacheDirectoryURL = cacheDirectory
+        defer {
+            SceneVideoCache.overrideCacheDirectoryURL = previousCacheDirectory
+        }
+
+        // When
+        let view = try SceneWallpaperContentFactory.makeSceneContentView(
+            asset: asset,
+            url: packageURL,
+            frame: CGRect(x: 0, y: 0, width: 640, height: 360),
+            displayMode: .fit
+        )
+        defer {
+            (view as? WallpaperContentLifecycle)?.prepareForClose()
+        }
+
+        // Then
+        let videoView = try XCTUnwrap(view as? VideoWallpaperView)
+        XCTAssertEqual(videoView.playerLayer.videoGravity, .resizeAspectFill)
     }
 
     @MainActor
@@ -383,18 +362,14 @@ final class WallpaperPlayerSuspensionTests: XCTestCase {
         let asset = Self.sceneAsset(root: root, entrypoint: packageURL)
         let previousRendererPath = SceneEngineRendererConfiguration.overrideExecutablePath
         let previousAssetsPath = SceneEngineRendererConfiguration.overrideAssetsPath
-        let previousLaunch = SceneEngineProcessController.launchProcess
-        var launchCount = 0
+        let previousCacheDirectory = SceneVideoCache.overrideCacheDirectoryURL
         SceneEngineRendererConfiguration.overrideExecutablePath = rendererURL.path
         SceneEngineRendererConfiguration.overrideAssetsPath = root.appending(path: "missing-assets").path
-        SceneEngineProcessController.launchProcess = { _, _ in
-            launchCount += 1
-            return Process()
-        }
+        SceneVideoCache.overrideCacheDirectoryURL = root.appending(path: "SceneVideoCache")
         defer {
             SceneEngineRendererConfiguration.overrideExecutablePath = previousRendererPath
             SceneEngineRendererConfiguration.overrideAssetsPath = previousAssetsPath
-            SceneEngineProcessController.launchProcess = previousLaunch
+            SceneVideoCache.overrideCacheDirectoryURL = previousCacheDirectory
         }
 
         // When
@@ -408,10 +383,9 @@ final class WallpaperPlayerSuspensionTests: XCTestCase {
 
         // Then
         XCTAssertTrue(view is SceneWallpaperView)
-        XCTAssertEqual(launchCount, 0)
         XCTAssertEqual(
             SceneWallpaperContentFactory.lastDiagnostic,
-            "external scene renderer skipped: Wallpaper Engine assets folder is missing or incomplete"
+            "scene video rendering skipped: Wallpaper Engine assets folder"
         )
     }
 
@@ -431,17 +405,17 @@ final class WallpaperPlayerSuspensionTests: XCTestCase {
         let rendererURL = root.appending(path: "scene-engine-renderer")
         try "#!/bin/sh\nexit 0\n".write(to: rendererURL, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: rendererURL.path)
+        let assetsDirectory = try Self.writeSceneEngineAssetsFixture(in: root)
         let asset = Self.sceneAsset(root: root, entrypoint: packageURL)
         let previousRendererPath = SceneEngineRendererConfiguration.overrideExecutablePath
-        let previousLaunch = SceneEngineProcessController.launchProcess
-        var launchCount = 0
-        SceneEngineProcessController.launchProcess = { _, _ in
-            launchCount += 1
-            return Process()
-        }
+        let previousAssetsPath = SceneEngineRendererConfiguration.overrideAssetsPath
+        let previousCacheDirectory = SceneVideoCache.overrideCacheDirectoryURL
+        SceneEngineRendererConfiguration.overrideAssetsPath = assetsDirectory.path
+        SceneVideoCache.overrideCacheDirectoryURL = root.appending(path: "SceneVideoCache")
         defer {
             SceneEngineRendererConfiguration.overrideExecutablePath = previousRendererPath
-            SceneEngineProcessController.launchProcess = previousLaunch
+            SceneEngineRendererConfiguration.overrideAssetsPath = previousAssetsPath
+            SceneVideoCache.overrideCacheDirectoryURL = previousCacheDirectory
         }
 
         // When
@@ -465,54 +439,198 @@ final class WallpaperPlayerSuspensionTests: XCTestCase {
         // Then
         XCTAssertTrue(missingView is SceneWallpaperView)
         XCTAssertTrue(nonExecutableView is SceneWallpaperView)
-        XCTAssertEqual(launchCount, 0)
     }
 
-    @MainActor
-    func testScenePlaybackFallsBackToNativeWhenExternalRendererLaunchFails() throws {
+    func testSceneVideoRendererBuildsRecordingAndFfmpegArguments() {
+        // Given
+        let configuration = SceneVideoRenderConfiguration(
+            assetId: "MjQ2ODQ4OTIyMw",
+            projectDirectory: URL(filePath: "/tmp/scene-project"),
+            assetsDirectory: URL(filePath: "/tmp/wallpaper-engine-assets"),
+            rendererURL: URL(filePath: "/tmp/wwb-scene-renderer"),
+            size: CGSize(width: 1920, height: 1080),
+            fps: 30,
+            seconds: 10
+        )
+        let recordDirectory = URL(filePath: "/tmp/scene-record")
+
+        // When
+        let recordingArguments = SceneVideoRenderer.recordingArguments(
+            recordDirectory: recordDirectory,
+            configuration: configuration
+        )
+        let ffmpegArguments = SceneVideoRenderer.ffmpegArguments(
+            framesDirectory: recordDirectory,
+            fps: configuration.fps,
+            outputURL: URL(filePath: "/tmp/scene-record/output.mp4")
+        )
+
+        // Then
+        XCTAssertEqual(recordingArguments, [
+            "--window",
+            "0x0x1920x1080",
+            "--silent",
+            "--noautomute",
+            "--no-audio-processing",
+            "--disable-mouse",
+            "--record-dir",
+            "/tmp/scene-record",
+            "--record-seconds",
+            "10",
+            "--record-fps",
+            "30",
+            "--assets-dir",
+            "/tmp/wallpaper-engine-assets",
+            "/tmp/scene-project"
+        ])
+        XCTAssertEqual(ffmpegArguments, [
+            "-y",
+            "-framerate",
+            "30",
+            "-i",
+            "/tmp/scene-record/frame_%05d.png",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-crf",
+            "18",
+            "-movflags",
+            "+faststart",
+            "/tmp/scene-record/output.mp4"
+        ])
+    }
+
+    func testSceneVideoRecordSizeClampsLongEdgeAndPreservesAspectRatio() {
+        // A logical size below the cap is used as-is (already even).
+        XCTAssertEqual(
+            SceneVideoRecordSize.clampedRecordSize(forLogicalSize: CGSize(width: 1512, height: 982)),
+            CGSize(width: 1512, height: 982)
+        )
+
+        // A retina display's *physical* pixel size (e.g. doubled 3024x1964)
+        // is exactly the case this guards against: it must be clamped down,
+        // not recorded at full size.
+        let clampedRetina = SceneVideoRecordSize.clampedRecordSize(forLogicalSize: CGSize(width: 3024, height: 1964))
+        XCTAssertLessThanOrEqual(max(clampedRetina.width, clampedRetina.height), SceneVideoRecordSize.defaultMaxLongEdge)
+        XCTAssertEqual(clampedRetina.width.truncatingRemainder(dividingBy: 2), 0)
+        XCTAssertEqual(clampedRetina.height.truncatingRemainder(dividingBy: 2), 0)
+        // Aspect ratio should be preserved (within rounding to even pixels).
+        XCTAssertEqual(clampedRetina.width / clampedRetina.height, 3024.0 / 1964.0, accuracy: 0.01)
+
+        // A custom cap is honored.
+        let clampedCustom = SceneVideoRecordSize.clampedRecordSize(
+            forLogicalSize: CGSize(width: 2560, height: 1440),
+            maxLongEdge: 1920
+        )
+        XCTAssertEqual(clampedCustom, CGSize(width: 1920, height: 1080))
+
+        // Degenerate input falls back to a square using the cap.
+        XCTAssertEqual(
+            SceneVideoRecordSize.clampedRecordSize(forLogicalSize: .zero),
+            CGSize(width: SceneVideoRecordSize.defaultMaxLongEdge, height: SceneVideoRecordSize.defaultMaxLongEdge)
+        )
+    }
+
+    func testSceneVideoCacheDirectoryIsVersionedToInvalidateStaleRenders() {
+        // Given
+        let previousOverride = SceneVideoCache.overrideCacheDirectoryURL
+        SceneVideoCache.overrideCacheDirectoryURL = nil
+        defer {
+            SceneVideoCache.overrideCacheDirectoryURL = previousOverride
+        }
+
+        // When
+        let cacheDirectory = SceneVideoCache.cacheDirectoryURL()
+
+        // Then: the cache lives under a version-numbered subdirectory, so
+        // bumping `cacheVersion` (done when the render pipeline changes in a
+        // way that invalidates old clips, e.g. the record-size fix) causes
+        // every previously cached video to simply never be found again.
+        XCTAssertEqual(cacheDirectory.lastPathComponent, "v\(SceneVideoCache.cacheVersion)")
+        XCTAssertGreaterThanOrEqual(SceneVideoCache.cacheVersion, 2)
+    }
+
+    func testSceneVideoCacheFreshnessComparesModificationDates() throws {
         // Given
         let root = try Self.makeTempDirectory()
         defer {
             try? FileManager.default.removeItem(at: root)
         }
-        let packageURL = root.appending(path: "scene.pkg")
-        try Self.writeScenePackage(
-            to: packageURL,
-            sceneJSON: #"{"objects":[{"text":{"value":"HELLO"},"size":"320 120"}]}"#
-        )
-        let rendererURL = root.appending(path: "scene-engine-renderer")
-        try "#!/bin/sh\nexit 0\n".write(to: rendererURL, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: rendererURL.path)
-        let assetsDirectory = try Self.writeSceneEngineAssetsFixture(in: root)
-        let asset = Self.sceneAsset(root: root, entrypoint: packageURL)
-        let previousRendererPath = SceneEngineRendererConfiguration.overrideExecutablePath
-        let previousAssetsPath = SceneEngineRendererConfiguration.overrideAssetsPath
-        let previousLaunch = SceneEngineProcessController.launchProcess
-        var launchCount = 0
-        SceneEngineRendererConfiguration.overrideExecutablePath = rendererURL.path
-        SceneEngineRendererConfiguration.overrideAssetsPath = assetsDirectory.path
-        SceneEngineProcessController.launchProcess = { _, _ in
-            launchCount += 1
-            throw SceneRendererLaunchTestError.expected
-        }
-        defer {
-            SceneEngineRendererConfiguration.overrideExecutablePath = previousRendererPath
-            SceneEngineRendererConfiguration.overrideAssetsPath = previousAssetsPath
-            SceneEngineProcessController.launchProcess = previousLaunch
-        }
-
-        // When
-        let view = try SceneWallpaperContentFactory.makeSceneContentView(
-            asset: asset,
-            url: packageURL,
-            frame: CGRect(x: 0, y: 0, width: 640, height: 360),
-            displayMode: .fit
-        )
-        (view as? WallpaperContentLifecycle)?.prepareForClose()
+        let sourceURL = root.appending(path: "scene.pkg")
+        try "scene".write(to: sourceURL, atomically: true, encoding: .utf8)
+        let cacheURL = root.appending(path: "cached.mp4")
 
         // Then
-        XCTAssertTrue(view is SceneWallpaperView)
-        XCTAssertEqual(launchCount, 1)
+        XCTAssertNil(SceneVideoCache.freshCachedVideoURL(assetId: "missing", sourceURL: sourceURL))
+
+        // When the cache is written after the source, it is fresh.
+        try "video".write(to: cacheURL, atomically: true, encoding: .utf8)
+        XCTAssertTrue(SceneVideoCache.isFresh(cacheURL: cacheURL, sourceURL: sourceURL))
+
+        // When the source is modified after the cache, it is stale.
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date().addingTimeInterval(3600)],
+            ofItemAtPath: sourceURL.path
+        )
+        XCTAssertFalse(SceneVideoCache.isFresh(cacheURL: cacheURL, sourceURL: sourceURL))
+    }
+
+    func testSceneVideoRendererEncodesRecordedFramesIntoCachedMp4() throws {
+        guard let ffmpegPath = VideoConverter().ffmpegPath() else {
+            throw XCTSkip("ffmpeg is required to encode the scene render fixture.")
+        }
+
+        // Given
+        let root = try Self.makeTempDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: root)
+        }
+        let previousCacheDirectory = SceneVideoCache.overrideCacheDirectoryURL
+        let cacheDirectory = root.appending(path: "SceneVideoCache")
+        SceneVideoCache.overrideCacheDirectoryURL = cacheDirectory
+        defer {
+            SceneVideoCache.overrideCacheDirectoryURL = previousCacheDirectory
+        }
+
+        // A fake renderer script that drops two solid-color PNG frames into
+        // the --record-dir it is given, standing in for the real
+        // wwb-scene-renderer binary.
+        let rendererURL = root.appending(path: "fake-scene-renderer")
+        let frameImageURL = try Self.writeSolidColorPNG(size: CGSize(width: 32, height: 32))
+        let rendererScript = """
+        #!/bin/sh
+        set -e
+        record_dir=""
+        while [ "$#" -gt 0 ]; do
+          if [ "$1" = "--record-dir" ]; then
+            record_dir="$2"
+          fi
+          shift
+        done
+        cp "\(frameImageURL.path)" "$record_dir/frame_00001.png"
+        cp "\(frameImageURL.path)" "$record_dir/frame_00002.png"
+        """
+        try rendererScript.write(to: rendererURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: rendererURL.path)
+
+        let configuration = SceneVideoRenderConfiguration(
+            assetId: "MjQ2ODQ4OTIyMw",
+            projectDirectory: root,
+            assetsDirectory: root,
+            rendererURL: rendererURL,
+            size: CGSize(width: 32, height: 32),
+            fps: 2,
+            seconds: 1
+        )
+
+        // When
+        let outputURL = try SceneVideoRenderer.render(configuration: configuration, ffmpegPath: ffmpegPath)
+
+        // Then
+        XCTAssertEqual(outputURL, SceneVideoCache.cachedVideoURL(assetId: configuration.assetId))
+        let attributes = try FileManager.default.attributesOfItem(atPath: outputURL.path)
+        XCTAssertGreaterThan((attributes[.size] as? Int) ?? 0, 0)
     }
 
     @MainActor
@@ -857,6 +975,22 @@ final class WallpaperPlayerSuspensionTests: XCTestCase {
         return root
     }
 
+    private static func writeSolidColorPNG(size: CGSize) throws -> URL {
+        let image = NSImage(size: size)
+        image.lockFocus()
+        NSColor.systemBlue.setFill()
+        CGRect(origin: .zero, size: size).fill()
+        image.unlockFocus()
+        guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil),
+              let data = NSBitmapImageRep(cgImage: cgImage).representation(using: .png, properties: [:]) else {
+            throw XCTSkip("Could not render a PNG fixture frame.")
+        }
+        let url = FileManager.default.temporaryDirectory
+            .appending(path: "wwb-frame-\(UUID().uuidString).png")
+        try data.write(to: url)
+        return url
+    }
+
     private static func writeScenePackage(to url: URL, sceneJSON: String) throws {
         var data = Data()
         data.appendLengthPrefixedString("PKGV0007")
@@ -964,8 +1098,4 @@ private extension Data {
         appendInt32(bytes.count)
         append(bytes)
     }
-}
-
-private enum SceneRendererLaunchTestError: Error {
-    case expected
 }

@@ -190,7 +190,17 @@ final class AppViewModelTests: XCTestCase {
     func testSceneAssetsFolderPersistsAndFeedsRendererResolution() throws {
         // Given
         let defaults = try makeUserDefaults()
-        let assetsDirectory = try makeSceneEngineAssetsFixture(in: try makeTempDirectory())
+        let root = try makeTempDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: root)
+        }
+        let assetsDirectory = try makeSceneEngineAssetsFixture(in: root.appending(path: "source"))
+        let appSupportAssetsDirectory = root.appending(path: "app-support-assets")
+        let previousDefaultAssetsDirectory = SceneEngineRendererConfiguration.overrideDefaultAssetsDirectoryURL
+        SceneEngineRendererConfiguration.overrideDefaultAssetsDirectoryURL = appSupportAssetsDirectory
+        defer {
+            SceneEngineRendererConfiguration.overrideDefaultAssetsDirectoryURL = previousDefaultAssetsDirectory
+        }
         let model = AppViewModel(
             store: LibraryStore(root: try makeTempDirectory()),
             loginItemController: MockLoginItemController(),
@@ -201,18 +211,32 @@ final class AppViewModelTests: XCTestCase {
         model.setSceneAssetsFolder(assetsDirectory)
 
         // Then
-        XCTAssertEqual(model.sceneAssetsDirectory, assetsDirectory.path)
-        XCTAssertEqual(defaults.string(forKey: "sceneEngineAssetsDirectory"), assetsDirectory.path)
-        XCTAssertEqual(SceneEngineRendererConfiguration.assetsDirectoryURL(environment: [:])?.path, assetsDirectory.path)
+        XCTAssertEqual(model.sceneAssetsDirectory, appSupportAssetsDirectory.path)
+        XCTAssertEqual(defaults.string(forKey: "sceneEngineAssetsDirectory"), appSupportAssetsDirectory.path)
+        XCTAssertEqual(SceneEngineRendererConfiguration.assetsDirectoryURL(environment: [:])?.path, appSupportAssetsDirectory.path)
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: appSupportAssetsDirectory.appending(path: "materials/util/composelayer.json").path
+        ))
         XCTAssertTrue(model.sceneAssetsStatus.contains("ready"))
     }
 
     func testInvalidSceneAssetsFolderIsRejectedWithoutChangingPersistedValue() throws {
         // Given
         let defaults = try makeUserDefaults()
-        let validAssetsDirectory = try makeSceneEngineAssetsFixture(in: try makeTempDirectory())
-        let invalidDirectory = try makeTempDirectory()
+        let root = try makeTempDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: root)
+        }
+        let validAssetsDirectory = try makeSceneEngineAssetsFixture(in: root.appending(path: "stored"))
+        let invalidDirectory = root.appending(path: "invalid")
+        try FileManager.default.createDirectory(at: invalidDirectory, withIntermediateDirectories: true)
+        let appSupportAssetsDirectory = root.appending(path: "app-support-assets")
         defaults.set(validAssetsDirectory.path, forKey: "sceneEngineAssetsDirectory")
+        let previousDefaultAssetsDirectory = SceneEngineRendererConfiguration.overrideDefaultAssetsDirectoryURL
+        SceneEngineRendererConfiguration.overrideDefaultAssetsDirectoryURL = appSupportAssetsDirectory
+        defer {
+            SceneEngineRendererConfiguration.overrideDefaultAssetsDirectoryURL = previousDefaultAssetsDirectory
+        }
         let model = AppViewModel(
             store: LibraryStore(root: try makeTempDirectory()),
             loginItemController: MockLoginItemController(),
@@ -223,19 +247,61 @@ final class AppViewModelTests: XCTestCase {
         model.setSceneAssetsFolder(invalidDirectory)
 
         // Then
-        XCTAssertEqual(model.sceneAssetsDirectory, validAssetsDirectory.path)
-        XCTAssertEqual(defaults.string(forKey: "sceneEngineAssetsDirectory"), validAssetsDirectory.path)
-        XCTAssertEqual(SceneEngineRendererConfiguration.assetsDirectoryURL(environment: [:])?.path, validAssetsDirectory.path)
+        XCTAssertEqual(model.sceneAssetsDirectory, appSupportAssetsDirectory.path)
+        XCTAssertEqual(defaults.string(forKey: "sceneEngineAssetsDirectory"), appSupportAssetsDirectory.path)
+        XCTAssertEqual(SceneEngineRendererConfiguration.assetsDirectoryURL(environment: [:])?.path, appSupportAssetsDirectory.path)
         XCTAssertTrue(model.status.contains("does not look like a Wallpaper Engine assets folder"))
         XCTAssertTrue(model.status.contains("materials/"))
         XCTAssertTrue(model.status.contains("shaders/"))
     }
 
+    func testStoredSceneAssetsFolderMigratesToDefaultAppSupportLocation() throws {
+        // Given
+        let defaults = try makeUserDefaults()
+        let root = try makeTempDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: root)
+        }
+        let storedAssetsDirectory = try makeSceneEngineAssetsFixture(in: root.appending(path: "stored"))
+        let appSupportAssetsDirectory = root.appending(path: "app-support-assets")
+        defaults.set(storedAssetsDirectory.path, forKey: "sceneEngineAssetsDirectory")
+        let previousDefaultAssetsDirectory = SceneEngineRendererConfiguration.overrideDefaultAssetsDirectoryURL
+        SceneEngineRendererConfiguration.overrideDefaultAssetsDirectoryURL = appSupportAssetsDirectory
+        defer {
+            SceneEngineRendererConfiguration.overrideDefaultAssetsDirectoryURL = previousDefaultAssetsDirectory
+        }
+
+        // When
+        let model = AppViewModel(
+            store: LibraryStore(root: try makeTempDirectory()),
+            loginItemController: MockLoginItemController(),
+            userDefaults: defaults
+        )
+
+        // Then
+        XCTAssertEqual(model.sceneAssetsDirectory, appSupportAssetsDirectory.path)
+        XCTAssertEqual(defaults.string(forKey: "sceneEngineAssetsDirectory"), appSupportAssetsDirectory.path)
+        XCTAssertEqual(SceneEngineRendererConfiguration.assetsDirectoryURL(environment: [:])?.path, appSupportAssetsDirectory.path)
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: appSupportAssetsDirectory.appending(path: "materials/util/composelayer.json").path
+        ))
+    }
+
     func testSceneAssetsFolderCanBeClearedToDefaultResolution() throws {
         // Given
         let defaults = try makeUserDefaults()
-        let assetsDirectory = try makeSceneEngineAssetsFixture(in: try makeTempDirectory())
+        let root = try makeTempDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: root)
+        }
+        let assetsDirectory = try makeSceneEngineAssetsFixture(in: root.appending(path: "stored"))
+        let appSupportAssetsDirectory = root.appending(path: "app-support-assets")
         defaults.set(assetsDirectory.path, forKey: "sceneEngineAssetsDirectory")
+        let previousDefaultAssetsDirectory = SceneEngineRendererConfiguration.overrideDefaultAssetsDirectoryURL
+        SceneEngineRendererConfiguration.overrideDefaultAssetsDirectoryURL = appSupportAssetsDirectory
+        defer {
+            SceneEngineRendererConfiguration.overrideDefaultAssetsDirectoryURL = previousDefaultAssetsDirectory
+        }
         let model = AppViewModel(
             store: LibraryStore(root: try makeTempDirectory()),
             loginItemController: MockLoginItemController(),
@@ -255,9 +321,19 @@ final class AppViewModelTests: XCTestCase {
     func testSceneAssetsEnvironmentOverrideWinsOverUserPreference() throws {
         // Given
         let defaults = try makeUserDefaults()
-        let userAssetsDirectory = try makeSceneEngineAssetsFixture(in: try makeTempDirectory())
-        let envAssetsDirectory = try makeSceneEngineAssetsFixture(in: try makeTempDirectory())
+        let root = try makeTempDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: root)
+        }
+        let userAssetsDirectory = try makeSceneEngineAssetsFixture(in: root.appending(path: "stored"))
+        let envAssetsDirectory = try makeSceneEngineAssetsFixture(in: root.appending(path: "env"))
+        let appSupportAssetsDirectory = root.appending(path: "app-support-assets")
         defaults.set(userAssetsDirectory.path, forKey: "sceneEngineAssetsDirectory")
+        let previousDefaultAssetsDirectory = SceneEngineRendererConfiguration.overrideDefaultAssetsDirectoryURL
+        SceneEngineRendererConfiguration.overrideDefaultAssetsDirectoryURL = appSupportAssetsDirectory
+        defer {
+            SceneEngineRendererConfiguration.overrideDefaultAssetsDirectoryURL = previousDefaultAssetsDirectory
+        }
         _ = AppViewModel(
             store: LibraryStore(root: try makeTempDirectory()),
             loginItemController: MockLoginItemController(),
