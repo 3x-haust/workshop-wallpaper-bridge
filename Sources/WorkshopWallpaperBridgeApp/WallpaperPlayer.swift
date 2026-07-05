@@ -436,7 +436,7 @@ enum SceneWallpaperContentFactory {
             frame: frame
         )
         lastDiagnostic = "scene video rendering in progress"
-        statusHandler?("Rendering scene to video…")
+        statusHandler?("Rendering scene to video… 0%")
         return try SceneWallpaperView(
             url: url,
             previewURL: previewURL,
@@ -487,7 +487,19 @@ enum SceneWallpaperContentFactory {
         let assetId = asset.id
         Task.detached(priority: .utility) {
             do {
-                _ = try SceneVideoRenderer.render(configuration: configuration, ffmpegPath: ffmpegPath)
+                _ = try SceneVideoRenderer.render(
+                    configuration: configuration,
+                    ffmpegPath: ffmpegPath,
+                    progressHandler: { progress in
+                        let percent = Int((progress * 100).rounded())
+                        Task { @MainActor in
+                            guard pendingRenderAssetIDs.contains(assetId) else {
+                                return
+                            }
+                            statusHandler?("Rendering scene to video… \(percent)%")
+                        }
+                    }
+                )
                 await MainActor.run {
                     pendingRenderAssetIDs.remove(assetId)
                     statusHandler?("Playing")

@@ -501,6 +501,99 @@ final class WallpaperPlayerSuspensionTests: XCTestCase {
         ])
     }
 
+    func testSceneVideoRenderConfigurationDefaultsToTwentySecondsForLessFrequentLoopSeam() {
+        // Given
+        let configuration = SceneVideoRenderConfiguration(
+            assetId: "asset",
+            projectDirectory: URL(filePath: "/tmp/scene-project"),
+            assetsDirectory: URL(filePath: "/tmp/wallpaper-engine-assets"),
+            rendererURL: URL(filePath: "/tmp/wwb-scene-renderer"),
+            size: CGSize(width: 1920, height: 1080)
+        )
+
+        // Then
+        XCTAssertEqual(configuration.seconds, 20)
+        XCTAssertEqual(configuration.fps, 30)
+    }
+
+    func testSceneVideoRenderProgressFractionComputesFramesWrittenOverTarget() {
+        // Then
+        XCTAssertEqual(SceneVideoRenderProgress.fraction(recordedFrameCount: 0, targetFrameCount: 600), 0)
+        XCTAssertEqual(SceneVideoRenderProgress.fraction(recordedFrameCount: 300, targetFrameCount: 600), 0.5)
+        XCTAssertEqual(SceneVideoRenderProgress.fraction(recordedFrameCount: 600, targetFrameCount: 600), 1.0)
+        // Overshoot (renderer produced extra frames) is clamped rather than exceeding 1.
+        XCTAssertEqual(SceneVideoRenderProgress.fraction(recordedFrameCount: 900, targetFrameCount: 600), 1.0)
+        // A zero/unknown target is treated as no progress rather than dividing by zero.
+        XCTAssertEqual(SceneVideoRenderProgress.fraction(recordedFrameCount: 10, targetFrameCount: 0), 0)
+    }
+
+    func testSceneVideoRendererReportsProgressWhileRecordingAndCompletesAtFullProgress() throws {
+        guard let ffmpegPath = VideoConverter().ffmpegPath() else {
+            throw XCTSkip("ffmpeg is required to encode the scene render fixture.")
+        }
+
+        // Given
+        let root = try Self.makeTempDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: root)
+        }
+        let previousCacheDirectory = SceneVideoCache.overrideCacheDirectoryURL
+        let cacheDirectory = root.appending(path: "SceneVideoCache")
+        SceneVideoCache.overrideCacheDirectoryURL = cacheDirectory
+        defer {
+            SceneVideoCache.overrideCacheDirectoryURL = previousCacheDirectory
+        }
+
+        // A fake renderer that trickles frames out with a short pause between
+        // each one, so the progress monitor's polling has a chance to observe
+        // partial progress before the process exits.
+        let rendererURL = root.appending(path: "fake-scene-renderer")
+        let frameImageURL = try Self.writeSolidColorPNG(size: CGSize(width: 32, height: 32))
+        let rendererScript = """
+        #!/bin/sh
+        set -e
+        record_dir=""
+        while [ "$#" -gt 0 ]; do
+          if [ "$1" = "--record-dir" ]; then
+            record_dir="$2"
+          fi
+          shift
+        done
+        cp "\(frameImageURL.path)" "$record_dir/frame_00001.png"
+        sleep 0.4
+        cp "\(frameImageURL.path)" "$record_dir/frame_00002.png"
+        """
+        try rendererScript.write(to: rendererURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: rendererURL.path)
+
+        let configuration = SceneVideoRenderConfiguration(
+            assetId: "MjQ2ODQ4OTIyMw",
+            projectDirectory: root,
+            assetsDirectory: root,
+            rendererURL: rendererURL,
+            size: CGSize(width: 32, height: 32),
+            fps: 2,
+            seconds: 1
+        )
+
+        // When
+        let reportedProgress = ProgressRecorder()
+        let outputURL = try SceneVideoRenderer.render(
+            configuration: configuration,
+            ffmpegPath: ffmpegPath,
+            progressHandler: { progress in
+                reportedProgress.record(progress)
+            }
+        )
+
+        // Then
+        XCTAssertEqual(outputURL, SceneVideoCache.cachedVideoURL(assetId: configuration.assetId))
+        let values = reportedProgress.values
+        XCTAssertFalse(values.isEmpty, "Expected the progress handler to be invoked at least once.")
+        XCTAssertEqual(values.last, 1.0, "Rendering should always finish by reporting full progress.")
+        XCTAssertTrue(values.allSatisfy { $0 >= 0 && $0 <= 1 })
+    }
+
     func testSceneVideoRecordSizeClampsLongEdgeAndPreservesAspectRatio() {
         // A logical size below the cap is used as-is (already even).
         XCTAssertEqual(
@@ -1029,6 +1122,25 @@ final class WallpaperPlayerSuspensionTests: XCTestCase {
             redistributionAllowed: false,
             issues: []
         )
+    }
+}
+
+/// Collects progress values reported from the background queue the scene
+/// video render progress monitor runs on.
+private final class ProgressRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedValues: [Double] = []
+
+    func record(_ value: Double) {
+        lock.lock()
+        defer { lock.unlock() }
+        storedValues.append(value)
+    }
+
+    var values: [Double] {
+        lock.lock()
+        defer { lock.unlock() }
+        return storedValues
     }
 }
 

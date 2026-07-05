@@ -24,7 +24,11 @@ struct SceneVideoRenderConfiguration: Sendable {
         rendererURL: URL,
         size: CGSize,
         fps: Int = 30,
-        seconds: Int = 10
+        // A longer recorded clip means the (still perceptible) loop point is
+        // reached less often, making the seam less jarring for scenes whose
+        // motion doesn't tile perfectly. The tradeoff is a longer first
+        // render, which the rendering-progress status message covers.
+        seconds: Int = 20
     ) {
         self.assetId = assetId
         self.projectDirectory = projectDirectory
@@ -95,7 +99,11 @@ enum SceneVideoCache {
     /// v2: fixed record size to use clamped logical points instead of
     /// doubled physical retina pixels (previously produced oversized
     /// 6048x3928 clips).
-    static let cacheVersion = 2
+    ///
+    /// v3: default record duration increased from 10s to 20s so the loop
+    /// point is reached less often, making the seam where playback jumps
+    /// back to the start less noticeable.
+    static let cacheVersion = 3
 
     nonisolated(unsafe) static var overrideCacheDirectoryURL: URL?
 
@@ -209,7 +217,17 @@ enum SceneVideoRenderer {
     /// ffmpeg, and moves the result into the per-asset cache. Blocks the
     /// calling thread, so callers should invoke this off the main actor
     /// (e.g. from `Task.detached`).
-    static func render(configuration: SceneVideoRenderConfiguration, ffmpegPath: String) throws -> URL {
+    ///
+    /// `progressHandler`, when provided, is invoked periodically from a
+    /// background queue (never the calling thread) with the fraction of the
+    /// target frame count (`fps * seconds`) recorded so far, so callers can
+    /// surface render progress to the user during the tens-of-seconds first
+    /// render.
+    static func render(
+        configuration: SceneVideoRenderConfiguration,
+        ffmpegPath: String,
+        progressHandler: (@Sendable (Double) -> Void)? = nil
+    ) throws -> URL {
         let fileManager = FileManager.default
         let tempDirectory = fileManager.temporaryDirectory
             .appending(path: "wwb-scene-render-\(UUID().uuidString)")
@@ -218,16 +236,26 @@ enum SceneVideoRenderer {
             try? fileManager.removeItem(at: tempDirectory)
         }
 
+        let progressMonitor = progressHandler.map {
+            SceneVideoRenderProgressMonitor(
+                directory: tempDirectory,
+                targetFrameCount: configuration.fps * configuration.seconds,
+                handler: $0
+            )
+        }
+        progressMonitor?.start()
         runRendererProcess(
             configuration.rendererURL,
             recordingArguments(recordDirectory: tempDirectory, configuration: configuration)
         )
+        progressMonitor?.stop()
         let recordedFrameCount = (try? fileManager.contentsOfDirectory(atPath: tempDirectory.path))?
             .filter { $0.hasPrefix("frame_") }
             .count ?? 0
         guard recordedFrameCount > 0 else {
             throw SceneVideoRenderError.noFramesRecorded
         }
+        progressHandler?(1.0)
 
         let temporaryOutputURL = tempDirectory.appending(path: "scene-render-output.mp4")
         try runProcess(
@@ -249,6 +277,58 @@ enum SceneVideoRenderer {
         let width = max(1, Int(size.width.rounded()))
         let height = max(1, Int(size.height.rounded()))
         return "0x0x\(width)x\(height)"
+    }
+}
+
+/// Pure fraction-of-target computation, factored out of the polling monitor
+/// below so it can be unit tested without any concurrency or file-system
+/// timing involved.
+enum SceneVideoRenderProgress {
+    static func fraction(recordedFrameCount: Int, targetFrameCount: Int) -> Double {
+        guard targetFrameCount > 0 else {
+            return 0
+        }
+        return min(1, max(0, Double(recordedFrameCount) / Double(targetFrameCount)))
+    }
+}
+
+/// Polls the renderer's frame output directory on a background queue while
+/// the (synchronous, blocking) renderer process runs, reporting progress as
+/// `frames written / (fps * seconds)`. The renderer process itself has no
+/// progress-reporting protocol of its own, so counting frame files on disk is
+/// the only available signal.
+private final class SceneVideoRenderProgressMonitor: @unchecked Sendable {
+    private let directory: URL
+    private let targetFrameCount: Int
+    private let handler: @Sendable (Double) -> Void
+    private let queue = DispatchQueue(label: "com.workshopwallpaperbridge.scene-video-render-progress")
+    private var timer: DispatchSourceTimer?
+
+    init(directory: URL, targetFrameCount: Int, handler: @escaping @Sendable (Double) -> Void) {
+        self.directory = directory
+        self.targetFrameCount = targetFrameCount
+        self.handler = handler
+    }
+
+    func start() {
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now() + 0.25, repeating: 0.25)
+        timer.setEventHandler { [directory, targetFrameCount, handler] in
+            let recordedFrameCount = (try? FileManager.default.contentsOfDirectory(atPath: directory.path))?
+                .filter { $0.hasPrefix("frame_") }
+                .count ?? 0
+            handler(SceneVideoRenderProgress.fraction(
+                recordedFrameCount: recordedFrameCount,
+                targetFrameCount: targetFrameCount
+            ))
+        }
+        timer.resume()
+        self.timer = timer
+    }
+
+    func stop() {
+        timer?.cancel()
+        timer = nil
     }
 }
 
