@@ -295,6 +295,13 @@ struct ContentView: View {
 private struct AssetRow: View {
     let asset: WallpaperAsset
 
+    // Derived fresh on every body evaluation (not cached in the row) so the
+    // badge picks up a completed scene video render as soon as the list
+    // re-renders, without needing dedicated per-row observation wiring.
+    private var displayStatus: LibraryRowDisplayStatus {
+        LibraryRowStatusResolver.status(for: asset)
+    }
+
     var body: some View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
@@ -316,9 +323,9 @@ private struct AssetRow: View {
             Text(asset.kind.rawValue)
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Text(asset.supportStatus.rawValue)
+            Text(displayStatus.label)
                 .font(.caption)
-                .foregroundStyle(asset.supportStatus == .playable ? .green : .orange)
+                .foregroundStyle(displayStatus.isPositive ? .green : .orange)
         }
         .padding(.vertical, 4)
     }

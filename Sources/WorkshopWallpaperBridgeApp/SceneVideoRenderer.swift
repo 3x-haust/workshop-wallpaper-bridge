@@ -152,6 +152,53 @@ enum SceneVideoCache {
     }
 }
 
+/// The status a library row should display for an asset. This is purely
+/// presentational: it never touches `WallpaperAsset.supportStatus`, which
+/// stays scan-derived and is what's persisted to `library.json`. Scenes are
+/// special-cased because playing one for the first time renders an offscreen
+/// video (see `SceneWallpaperContentFactory`), which takes about a minute -
+/// showing the same "playable" badge a video/image asset gets would make
+/// that first play look broken while it renders.
+enum LibraryRowDisplayStatus: Equatable {
+    case playable
+    case needsFirstRender
+    case notPlayable(SupportStatus)
+
+    var label: String {
+        switch self {
+        case .playable:
+            return SupportStatus.playable.rawValue
+        case .needsFirstRender:
+            return "renders on first play"
+        case .notPlayable(let status):
+            return status.rawValue
+        }
+    }
+
+    var isPositive: Bool {
+        self == .playable
+    }
+}
+
+enum LibraryRowStatusResolver {
+    /// Derives the display status fresh from disk state every call rather
+    /// than caching it, so the row picks up a completed render simply by
+    /// re-evaluating on the next SwiftUI re-render (e.g. once the app's
+    /// status message flips to "Playing" after the background render task
+    /// finishes).
+    static func status(for asset: WallpaperAsset) -> LibraryRowDisplayStatus {
+        guard asset.supportStatus == .playable else {
+            return .notPlayable(asset.supportStatus)
+        }
+        guard asset.kind == .scene, let entrypoint = asset.entrypoint else {
+            return .playable
+        }
+        let sourceURL = URL(filePath: entrypoint)
+        let hasFreshCache = SceneVideoCache.freshCachedVideoURL(assetId: asset.id, sourceURL: sourceURL) != nil
+        return hasFreshCache ? .playable : .needsFirstRender
+    }
+}
+
 /// Pure math for turning a recorded (non-tiling) clip into a seamlessly
 /// looping one by crossfading its tail into its head at encode time,
 /// factored out of `SceneVideoRenderer.ffmpegArguments` so the frame/offset
