@@ -107,7 +107,11 @@ enum SceneVideoCache {
     /// v4: the encode now crossfades the recorded clip's tail into its head
     /// (see `SceneVideoLoopCrossfade`), so the loop seam itself is blended
     /// away instead of merely being made less frequent.
-    static let cacheVersion = 4
+    ///
+    /// v5: recordings pass `--record-exclude-live` so live-data elements
+    /// (clock text etc.) are no longer baked into the looping video, and the
+    /// renderer restored water sparkles with Windows-matched bloom/tone.
+    static let cacheVersion = 5
 
     nonisolated(unsafe) static var overrideCacheDirectoryURL: URL?
 
@@ -313,6 +317,7 @@ enum SceneVideoRenderer {
             "--record-dir", recordDirectory.path,
             "--record-seconds", String(configuration.seconds),
             "--record-fps", String(configuration.fps),
+            "--record-exclude-live",
             "--assets-dir", configuration.assetsDirectory.path,
             configuration.projectDirectory.path
         ]

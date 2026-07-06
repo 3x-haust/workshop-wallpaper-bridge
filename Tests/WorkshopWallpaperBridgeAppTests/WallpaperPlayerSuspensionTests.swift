@@ -483,6 +483,7 @@ final class WallpaperPlayerSuspensionTests: XCTestCase {
             "10",
             "--record-fps",
             "30",
+            "--record-exclude-live",
             "--assets-dir",
             "/tmp/wallpaper-engine-assets",
             "/tmp/scene-project"
