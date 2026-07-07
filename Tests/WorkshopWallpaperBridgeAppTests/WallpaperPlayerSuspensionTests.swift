@@ -383,10 +383,12 @@ final class WallpaperPlayerSuspensionTests: XCTestCase {
 
         // Then
         XCTAssertTrue(view is SceneWallpaperView)
-        XCTAssertEqual(
-            SceneWallpaperContentFactory.lastDiagnostic,
-            "scene video rendering skipped: Wallpaper Engine assets folder"
-        )
+        // The diagnostic enumerates every missing component; ffmpeg availability
+        // depends on the host (absent on CI runners), so assert on the part this
+        // test controls instead of exact equality.
+        let diagnostic = try XCTUnwrap(SceneWallpaperContentFactory.lastDiagnostic)
+        XCTAssertTrue(diagnostic.hasPrefix("scene video rendering skipped: "))
+        XCTAssertTrue(diagnostic.contains("Wallpaper Engine assets folder"))
     }
 
     @MainActor
