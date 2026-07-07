@@ -78,6 +78,14 @@ final class AppViewModel: ObservableObject {
             setLaunchAtLogin(launchAtLogin)
         }
     }
+    @Published var language: AppLanguage = .system {
+        didSet {
+            guard language != oldValue else {
+                return
+            }
+            userDefaults.set(language.rawValue, forKey: PreferenceKey.language)
+        }
+    }
 
     private let scanner = WallpaperScanner()
     private let converter = VideoConverter()
@@ -208,6 +216,14 @@ final class AppViewModel: ObservableObject {
     func selectScannedAssets(_ ids: Set<WallpaperAsset.ID>) {
         selectedScannedAssetIds = ids
         normalizeScannedSelection(allowEmpty: true)
+    }
+
+    /// Looks up a localized UI chrome string for the currently selected
+    /// `language`. Views observe `language` via `@ObservedObject`, so calling
+    /// this from the view body re-resolves and redraws immediately when the
+    /// user switches languages.
+    func L(_ key: String) -> String {
+        Localization.string(key, language: language)
     }
 }
 
@@ -603,6 +619,10 @@ extension AppViewModel {
         }
         sceneAssetsDirectory = restoredSceneAssetsDirectory()
         SceneEngineRendererConfiguration.overrideAssetsPath = sceneAssetsDirectory.isEmpty ? nil : sceneAssetsDirectory
+        if let rawLanguage = userDefaults.string(forKey: PreferenceKey.language),
+           let storedLanguage = AppLanguage(rawValue: rawLanguage) {
+            language = storedLanguage
+        }
     }
 
     private func restoredSceneAssetsDirectory() -> String {
@@ -757,4 +777,5 @@ private enum PreferenceKey {
     static let sceneEngineAssetsDirectory = "sceneEngineAssetsDirectory"
     static let wallpaperAudioEnabled = "wallpaperAudioEnabled"
     static let wallpaperAudioVolume = "wallpaperAudioVolume"
+    static let language = "language"
 }

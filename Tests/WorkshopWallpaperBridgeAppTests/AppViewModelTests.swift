@@ -410,6 +410,51 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertEqual(restored.wallpaperAudioVolume, 0.85, accuracy: 0.0001)
     }
 
+    func testLanguagePreferencePersistsAcrossRestarts() throws {
+        // Given
+        let defaults = try makeUserDefaults()
+        let model = AppViewModel(
+            store: LibraryStore(root: try makeTempDirectory()),
+            loginItemController: MockLoginItemController(),
+            userDefaults: defaults
+        )
+        XCTAssertEqual(model.language, .system)
+
+        // When
+        model.language = .korean
+
+        // Then
+        XCTAssertEqual(defaults.string(forKey: "language"), "ko")
+
+        // And: a freshly constructed view model restores it.
+        let restored = AppViewModel(
+            store: LibraryStore(root: try makeTempDirectory()),
+            loginItemController: MockLoginItemController(),
+            userDefaults: defaults
+        )
+        XCTAssertEqual(restored.language, .korean)
+    }
+
+    func testLocalizedStringResolvesDifferentlyByLanguage() throws {
+        // Given
+        let model = AppViewModel(
+            store: LibraryStore(root: try makeTempDirectory()),
+            loginItemController: MockLoginItemController(),
+            userDefaults: try makeUserDefaults()
+        )
+
+        // When
+        model.language = .english
+        let english = model.L("tab.library")
+        model.language = .korean
+        let korean = model.L("tab.library")
+
+        // Then
+        XCTAssertEqual(english, "Library")
+        XCTAssertEqual(korean, "라이브러리")
+        XCTAssertNotEqual(english, korean)
+    }
+
     func testInitRestoresLockScreenAnimationPreferenceWithoutInstalling() throws {
         // Given
         let defaults = try makeUserDefaults()

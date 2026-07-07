@@ -65,6 +65,10 @@ Wallpaper Engine 프로젝트를 쓰는 경우:
 - macOS 데스크톱 및 Lock Screen 정적 이미지를 실제로 바꾸고 싶을 때만 **Set Still Wallpaper**를 사용합니다.
 - **Remove**는 Mac 라이브러리에 복사된 항목만 삭제합니다. 원본 복사 폴더나 원본 영상은 건드리지 않습니다.
 
+설정 창은 **Library** 탭(가져오기, Mac 라이브러리, Display mode, **Play on Desktop** / **Remove**)과 **Settings** 탭(재생 토글, Audio, Scene Engine Assets, Screen Saver, Language)으로 나뉩니다. **Convert Video**와 **Set Still Wallpaper**는 라이브러리 목록의 우클릭 컨텍스트 메뉴와 **Play on Desktop** 옆 **More**("⋯") 메뉴에서 사용할 수 있으며, 항상 보이는 버튼으로 노출되지 않습니다.
+
+Settings 탭의 **Language** 선택기로 앱 UI 텍스트를 **System**, **한국어**, **English** 사이에서 전환할 수 있습니다. 앱을 재시작하지 않아도 즉시 적용되며, 버튼·섹션 제목·안내 문구 등 정적 UI 문구만 번역 대상이므로 앱 실행 중 생성되는 상태 메시지는 영어로 표시될 수 있습니다.
+
 가져온 파일은 아래 위치에 저장됩니다.
 
 ```text

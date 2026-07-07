@@ -1,256 +1,60 @@
 import SwiftUI
 import WorkshopWallpaperCore
 
+private enum SettingsTab: Hashable {
+    case library
+    case settings
+}
+
 struct ContentView: View {
     @ObservedObject var model: AppViewModel
+    @State private var selectedTab: SettingsTab = .library
 
     var body: some View {
         VStack(spacing: 0) {
             header
             Divider()
-            HStack(spacing: 0) {
-                scanPanel
-                Divider()
-                libraryPanel
+            TabView(selection: $selectedTab) {
+                LibraryTabView(model: model)
+                    .tabItem { Text(model.L("tab.library")) }
+                    .tag(SettingsTab.library)
+                SettingsTabView(model: model)
+                    .tabItem { Text(model.L("tab.settings")) }
+                    .tag(SettingsTab.settings)
             }
             Divider()
             statusBar
         }
+        .frame(minWidth: 640, minHeight: 560)
         .alert(item: $model.updateAlert) { alert in
             updateAlert(alert)
         }
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Workshop Wallpaper Bridge")
-                        .font(.title2.weight(.semibold))
-                    Text("Menu bar wallpaper utility for copied Wallpaper Engine projects.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button("Stop") {
-                    model.stopPlayback()
-                }
-                .keyboardShortcut(".", modifiers: [.command, .shift])
-            }
-
-            HStack(spacing: 14) {
-                headerToggle("Open at Login", isOn: $model.launchAtLogin)
-                headerToggle("Auto-pause behind apps", isOn: $model.autoPauseWhenCovered)
-                headerToggle("Animate Screen Saver", isOn: $model.lockScreenAnimationEnabled)
-                headerToggle("Auto-check Updates", isOn: $model.automaticallyCheckForUpdates)
-            }
-
-            HStack(spacing: 8) {
-                Button("Check Updates") {
-                    model.checkForUpdates()
-                }
-                .disabled(model.isCheckingForUpdates)
-                if model.availableUpdate != nil {
-                    Button("Download Update") {
-                        model.openAvailableUpdate()
-                    }
-                }
-                Spacer()
-            }
-        }
-        .padding()
-    }
-
-    private func headerToggle(_ title: String, isOn: Binding<Bool>) -> some View {
-        Toggle(isOn: isOn) {
-            Text(title)
-                .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
-        }
-        .toggleStyle(.switch)
-        .font(.callout)
-        .frame(width: 220, alignment: .leading)
-    }
-
-    private var scanPanel: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("1. Choose the copied Workshop folder")
-                .font(.headline)
-            Text(
-                "Select the `431960` folder you copied from Windows Steam, "
-                    + "or add your own video from the library side."
-            )
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            HStack {
-                TextField(".../steamapps/workshop/content/431960", text: $model.sourcePath)
-                Button("Browse") {
-                    model.chooseFolder()
-                }
-                Button("Scan") {
-                    model.scanSource()
-                }
-            }
-            assetList(
-                title: "Scanned Projects",
-                assets: model.scannedAssets,
-                selection: Binding(
-                    get: { model.selectedScannedAssetIds },
-                    set: { model.selectScannedAssets($0) }
-                )
-            )
-            HStack {
-                Button(importButtonTitle) {
-                    model.importSelected()
-                }
-                .disabled(model.selectedScannedAssetIds.isEmpty)
-                Spacer()
-            }
-        }
-        .padding()
-        .frame(minWidth: 460)
-    }
-
-    private var libraryPanel: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("2. Play from your Mac library")
-                .font(.headline)
-            HStack {
-                Text("Imported files stay local. The original files are not modified.")
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(model.L("app.title"))
+                    .font(.title3.weight(.semibold))
+                Text(model.L("app.subtitle"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Spacer()
-                Picker("Display", selection: $model.displayMode) {
-                    ForEach(WallpaperDisplayMode.allCases) { mode in
-                        Text(mode.title).tag(mode)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 220)
-                Button("Add Video File") {
-                    model.chooseVideoFile()
-                }
+                    .lineLimit(1)
             }
-            libraryAssetList(
-                title: "Imported Projects",
-                assets: model.libraryAssets,
-                selection: Binding(
-                    get: { model.selectedLibraryAssetIds },
-                    set: { model.selectLibraryAssets($0) }
-                )
-            )
-            audioSection
-            sceneAssetsSection
-            libraryActions
-            Text(
-                "Video wallpapers use a generated video frame for still wallpaper. "
-                    + "Still images are written to the macOS Lock Screen cache when available. "
-                    + "Screen Saver animation uses the bundled macOS screen saver and supports MP4, MOV, and M4V."
-            )
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            Spacer()
+            Button(model.L("app.stop")) {
+                model.stopPlayback()
+            }
+            .keyboardShortcut(".", modifiers: [.command, .shift])
         }
         .padding()
-        .frame(minWidth: 460)
-    }
-
-    private var importButtonTitle: String {
-        model.selectedScannedAssetCount > 1
-            ? "Import Selected (\(model.selectedScannedAssetCount))"
-            : "Import Selected"
-    }
-
-    private var libraryActions: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                actionButton("Play on Desktop") {
-                    model.playSelected()
-                }
-                .disabled(model.selectedLibraryAsset == nil)
-                actionButton("Convert Video") {
-                    model.convertSelected()
-                }
-                .disabled(model.selectedLibraryAsset?.supportStatus != .needsConversion || model.isWorking)
-                actionButton("Set Still Wallpaper") {
-                    model.setStillWallpaper()
-                }
-                .disabled(model.selectedLibraryAsset == nil)
-                Spacer()
-            }
-            HStack(spacing: 8) {
-                actionButton("Screen Saver Settings") {
-                    model.openScreenSaverSettings()
-                }
-                actionButton(model.selectedLibraryAssetCount > 1 ? "Remove Selected" : "Remove") {
-                    model.removeSelectedLibraryAssets()
-                }
-                .disabled(model.selectedLibraryAssetIds.isEmpty)
-                .keyboardShortcut(.delete, modifiers: [])
-                Spacer()
-            }
-        }
-    }
-
-    private var audioSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Audio")
-                .font(.subheadline.weight(.semibold))
-            HStack(spacing: 12) {
-                Toggle(isOn: $model.wallpaperAudioEnabled) {
-                    Text("Play wallpaper audio")
-                }
-                .toggleStyle(.switch)
-                Slider(value: $model.wallpaperAudioVolume, in: 0...1)
-                    .disabled(!model.wallpaperAudioEnabled)
-                    .frame(width: 160)
-            }
-            Text(
-                "Applies to video wallpapers and scene background music/ambience. "
-                    + "If the wallpaper pauses because it's covered by another app, its audio pauses too."
-            )
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    private var sceneAssetsSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Scene Engine Assets")
-                .font(.subheadline.weight(.semibold))
-            Text(model.sceneAssetsStatus)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
-            HStack(spacing: 8) {
-                Button("Choose Assets Folder...") {
-                    model.chooseSceneAssetsFolder()
-                }
-                if !model.sceneAssetsDirectory.isEmpty {
-                    Button("Reset") {
-                        model.clearSceneAssetsFolder()
-                    }
-                }
-                Spacer()
-            }
-            Text("Copy the contents of steamapps/common/wallpaper_engine/assets from your Windows install.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    private func actionButton(_ title: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title)
-                .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
-        }
     }
 
     private func updateAlert(_ alert: UpdateAlert) -> Alert {
         return Alert(
             title: Text(alert.title),
             message: Text(alert.message),
-            dismissButton: .default(Text("OK"))
+            dismissButton: .default(Text(model.L("common.ok")))
         )
     }
 
@@ -262,60 +66,44 @@ struct ContentView: View {
             }
             Text(model.status)
                 .foregroundStyle(.secondary)
+                .lineLimit(1)
             Spacer()
         }
         .padding(.horizontal)
         .padding(.vertical, 8)
     }
+}
 
-    private func assetList(
-        title: String,
-        assets: [WallpaperAsset],
-        selection: Binding<Set<WallpaperAsset.ID>>
-    ) -> some View {
-        List(selection: selection) {
-            ForEach(assets) { asset in
-                AssetRow(asset: asset)
-                    .tag(asset.id)
-            }
-        }
-        .overlay {
-            if assets.isEmpty {
-                Text(title)
-                    .foregroundStyle(.tertiary)
-            }
-        }
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-    }
+/// A small "ⓘ" affordance that reveals a one-time explanation in a popover,
+/// used to keep long help/caption text out of the always-visible layout.
+struct HelpPopoverButton: View {
+    let title: String
+    let message: String
+    @State private var isPresented = false
 
-    private func libraryAssetList(
-        title: String,
-        assets: [WallpaperAsset],
-        selection: Binding<Set<WallpaperAsset.ID>>
-    ) -> some View {
-        List(selection: selection) {
-            ForEach(assets) { asset in
-                AssetRow(asset: asset)
-                    .tag(asset.id)
-                    .contextMenu {
-                        Button("Remove") {
-                            model.selectLibraryAssets([asset.id])
-                            model.removeSelectedLibraryAssets()
-                        }
-                    }
-            }
+    var body: some View {
+        Button {
+            isPresented = true
+        } label: {
+            Image(systemName: "info.circle")
         }
-        .overlay {
-            if assets.isEmpty {
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
+        .popover(isPresented: $isPresented) {
+            VStack(alignment: .leading, spacing: 8) {
                 Text(title)
-                    .foregroundStyle(.tertiary)
+                    .font(.headline)
+                Text(message)
+                    .font(.callout)
+                    .fixedSize(horizontal: false, vertical: true)
             }
+            .padding()
+            .frame(width: 300)
         }
-        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 }
 
-private struct AssetRow: View {
+struct AssetRow: View {
     let asset: WallpaperAsset
 
     // Derived fresh on every body evaluation (not cached in the row) so the
@@ -331,17 +119,17 @@ private struct AssetRow: View {
                 Text(asset.title)
                     .font(.body.weight(.medium))
                     .lineLimit(1)
-            Text(asset.projectDirectory)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-            if let issue = asset.issues.first {
-                Text(issue.message)
-                    .font(.caption2)
+                Text(asset.projectDirectory)
+                    .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                if let issue = asset.issues.first {
+                    Text(issue.message)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
             }
-        }
             Spacer()
             Text(asset.kind.rawValue)
                 .font(.caption)

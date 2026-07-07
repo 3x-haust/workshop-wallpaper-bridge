@@ -9,26 +9,36 @@ final class ScreenSaverFeatureTests: XCTestCase {
     }
 
     func testScreenSaverControlsUseScreenSaverLanguage() throws {
-        let contentView = try String(contentsOfFile: "Sources/WorkshopWallpaperBridgeApp/ContentView.swift")
+        // Settings-tab controls now source their labels from Localizable.strings
+        // rather than a string literal in Swift source (see AppViewModel.L(_:)),
+        // so check the English table alongside the still-literal StatusMenu/AppViewModel copy.
+        let settingsTab = try String(contentsOfFile: "Sources/WorkshopWallpaperBridgeApp/SettingsTabView.swift")
+        let localizableEn = try String(
+            contentsOfFile: "Sources/WorkshopWallpaperBridgeApp/Resources/en.lproj/Localizable.strings"
+        )
         let statusMenu = try String(contentsOfFile: "Sources/WorkshopWallpaperBridgeApp/StatusMenu.swift")
         let viewModel = try String(contentsOfFile: "Sources/WorkshopWallpaperBridgeApp/AppViewModel.swift")
 
-        XCTAssertTrue(contentView.contains("Animate Screen Saver"))
+        XCTAssertTrue(settingsTab.contains("settings.animateScreenSaver"))
+        XCTAssertTrue(localizableEn.contains("\"settings.animateScreenSaver\" = \"Animate Screen Saver\";"))
         XCTAssertTrue(statusMenu.contains("Animate Screen Saver"))
         XCTAssertTrue(viewModel.contains("Installed and selected Workshop Wallpaper Bridge Screen Saver"))
-        XCTAssertFalse(contentView.contains("Animate Lock Screen"))
         XCTAssertFalse(statusMenu.contains("Animate Lock Screen"))
         XCTAssertFalse(viewModel.contains("Animated Lock Screen"))
     }
 
     func testSceneAssetsSettingsExposePickerAndReset() throws {
-        let contentView = try String(contentsOfFile: "Sources/WorkshopWallpaperBridgeApp/ContentView.swift")
+        let settingsTab = try String(contentsOfFile: "Sources/WorkshopWallpaperBridgeApp/SettingsTabView.swift")
+        let localizableEn = try String(
+            contentsOfFile: "Sources/WorkshopWallpaperBridgeApp/Resources/en.lproj/Localizable.strings"
+        )
         let viewModel = try String(contentsOfFile: "Sources/WorkshopWallpaperBridgeApp/AppViewModel.swift")
 
-        XCTAssertTrue(contentView.contains("Scene Engine Assets"))
-        XCTAssertTrue(contentView.contains("Choose Assets Folder..."))
-        XCTAssertTrue(contentView.contains("model.chooseSceneAssetsFolder()"))
-        XCTAssertTrue(contentView.contains("model.clearSceneAssetsFolder()"))
+        XCTAssertTrue(settingsTab.contains("settings.scene.title"))
+        XCTAssertTrue(localizableEn.contains("\"settings.scene.title\" = \"Scene Engine Assets\";"))
+        XCTAssertTrue(localizableEn.contains("\"settings.scene.choose\" = \"Choose Assets Folder...\";"))
+        XCTAssertTrue(settingsTab.contains("model.chooseSceneAssetsFolder()"))
+        XCTAssertTrue(settingsTab.contains("model.clearSceneAssetsFolder()"))
         XCTAssertTrue(viewModel.contains("steamapps/common/wallpaper_engine/assets"))
         XCTAssertTrue(viewModel.contains("materials/"))
         XCTAssertTrue(viewModel.contains("shaders/"))
