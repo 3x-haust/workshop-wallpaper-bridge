@@ -17,10 +17,20 @@
 "library.import.help.body" = "복사한 Workshop 폴더를 선택하고 스캔을 누른 뒤, 스캔된 프로젝트를 하나 이상 선택하고 선택 항목 가져오기를 눌러 Mac 라이브러리에 추가하세요.";
 "library.scanned.empty" = "스캔된 프로젝트";
 "library.imported.empty" = "가져온 프로젝트";
+"library.sort.title" = "정렬";
+"library.new.badge" = "NEW";
+"library.preview.placeholder" = "월페이퍼를 선택하세요";
+"library.preview.empty" = "선택한 월페이퍼의 미리보기가 여기에 표시됩니다.";
 
 /* Library tab: toolbar */
 "library.display" = "디스플레이";
 "library.addVideo" = "동영상 파일 추가";
+
+/* Library tab: rotation */
+"library.rotate" = "라이브러리 순환 재생";
+"library.rotate.shuffle" = "무작위 재생";
+"library.rotate.every" = "간격";
+"library.rotate.next" = "다음";
 
 /* Library tab: actions */
 "library.play" = "데스크톱에서 재생";

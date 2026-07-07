@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import WorkshopWallpaperCore
 
@@ -60,7 +61,11 @@ struct ContentView: View {
 
     private var statusBar: some View {
         HStack {
-            if model.isWorking {
+            if let progress = model.importProgress {
+                ProgressView(value: progress.fraction)
+                    .controlSize(.small)
+                    .frame(width: 120)
+            } else if model.isWorking {
                 ProgressView()
                     .controlSize(.small)
             }
@@ -103,6 +108,50 @@ struct HelpPopoverButton: View {
     }
 }
 
+struct AssetPreview: View {
+    let asset: WallpaperAsset?
+    let placeholderTitle: String
+    let placeholderDescription: String
+
+    var body: some View {
+        HStack(spacing: 12) {
+            previewImage
+            VStack(alignment: .leading, spacing: 4) {
+                Text(asset?.title ?? placeholderTitle)
+                    .font(.callout.weight(.semibold))
+                    .lineLimit(1)
+                Text(assetDescription)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                if let issue = asset?.issues.first {
+                    Text(issue.message)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            Spacer()
+        }
+        .padding(10)
+        .frame(minHeight: 112, alignment: .leading)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    @ViewBuilder
+    private var previewImage: some View {
+        AssetThumbnail(asset: asset, width: 144, height: 88, cornerRadius: 6)
+    }
+
+    private var assetDescription: String {
+        guard let asset else {
+            return placeholderDescription
+        }
+        return "\(asset.kind.rawValue) · \(asset.supportStatus.rawValue)"
+    }
+}
+
 struct AssetRow: View {
     let asset: WallpaperAsset
     // Unused beyond forcing SwiftUI to re-evaluate this row's body: SwiftUI
@@ -114,6 +163,8 @@ struct AssetRow: View {
     // (e.g. on the next library rescan), so the badge would look stuck on
     // "renders on first play" even after the cached video exists.
     let sceneVideoRenderRevision: Int
+    var isNew: Bool = false
+    var newBadgeText: String = "NEW"
 
     // Derived fresh on every body evaluation (not cached in the row) so the
     // badge picks up a completed scene video render as soon as the list
@@ -124,6 +175,7 @@ struct AssetRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
+            AssetThumbnail(asset: asset, width: 64, height: 40, cornerRadius: 5)
             VStack(alignment: .leading, spacing: 2) {
                 Text(asset.title)
                     .font(.body.weight(.medium))
@@ -140,6 +192,20 @@ struct AssetRow: View {
                 }
             }
             Spacer()
+            if isNew {
+                Text(newBadgeText)
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Color.accentColor))
+            }
+            if let dateAddedText {
+                Text(dateAddedText)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
             Text(asset.kind.rawValue)
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -148,5 +214,76 @@ struct AssetRow: View {
                 .foregroundStyle(displayStatus.isPositive ? .green : .orange)
         }
         .padding(.vertical, 4)
+    }
+
+    private var dateAddedText: String? {
+        guard let dateAdded = asset.dateAdded else {
+            return nil
+        }
+        return Self.dateFormatter.string(from: dateAdded)
+    }
+
+    private static let dateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .short
+        formatter.timeStyle = .short
+        return formatter
+    }()
+}
+
+private struct AssetThumbnail: View {
+    let asset: WallpaperAsset?
+    let width: CGFloat
+    let height: CGFloat
+    let cornerRadius: CGFloat
+
+    var body: some View {
+        ZStack {
+            Rectangle()
+                .fill(.black.opacity(0.72))
+            if let image = previewNSImage {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: width, height: height)
+            } else {
+                Text(asset?.kind.rawValue.uppercased() ?? "PREVIEW")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.72))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                    .padding(.horizontal, 6)
+            }
+        }
+        .frame(width: width, height: height)
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+        .accessibilityLabel(accessibilityLabel)
+    }
+
+    private var previewNSImage: NSImage? {
+        guard let url = previewURL else {
+            return nil
+        }
+        return NSImage(contentsOf: url)
+    }
+
+    private var previewURL: URL? {
+        guard let asset else {
+            return nil
+        }
+        if let thumbnail = asset.thumbnail {
+            return URL(filePath: thumbnail)
+        }
+        guard asset.kind == .image, let entrypoint = asset.entrypoint else {
+            return nil
+        }
+        return URL(filePath: entrypoint)
+    }
+
+    private var accessibilityLabel: String {
+        guard let asset else {
+            return "Wallpaper preview placeholder"
+        }
+        return "Wallpaper preview for \(asset.title)"
     }
 }

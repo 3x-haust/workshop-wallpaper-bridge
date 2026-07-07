@@ -10,6 +10,14 @@ Workshop Wallpaper Bridge imports a copied Wallpaper Engine Workshop folder into
 
 [Website](https://3x-haust.github.io/workshop-wallpaper-bridge/) · [한국어](README.ko.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Releases](https://github.com/3x-haust/workshop-wallpaper-bridge/releases) · [Support](https://www.patreon.com/c/3xhaust)
 
+## Quick Links
+
+- [Download](#download): install the latest DMG.
+- [Use It](#use-it): import a copied Workshop folder or add local videos.
+- [What Works](#what-works): check supported wallpaper types.
+- [Build From Source](#build-from-source): run the app locally or package a DMG.
+- [Maintainers And Contributors](#maintainers-and-contributors): project maintainers and contributors.
+
 ## Demo
 
 ![Workshop Wallpaper Bridge demo](assets/workshop-wallpaper-bridge-demo.gif)
@@ -46,6 +54,11 @@ For Wallpaper Engine projects:
 5. Select a supported item and click **Import Selected**.
 6. Click **Play on Desktop**.
 
+The scan list sorts by **Date Added** newest first by default, using the macOS
+folder Date Added value with modification date as a fallback. Switch the sort to
+**Name** when you want an alphabetical list. After you import, items added to
+the copied Workshop folder later are marked **NEW** on the next scan.
+
 For your own videos, click **Add Video File** instead of scanning a Workshop folder.
 
 Display modes:
@@ -68,6 +81,13 @@ Playback notes:
 The settings window has a **Library** tab (import, your Mac library, Display mode, **Play on Desktop** / **Remove**) and a **Settings** tab (playback toggles, Audio, Scene Engine Assets, Screen Saver, and Language). **Convert Video** and **Set Still Wallpaper** are reachable from the library list's right-click context menu and from the **More** ("⋯") menu next to **Play on Desktop**, not as always-visible buttons.
 
 Use the **Language** picker in the Settings tab to switch the app's UI text between **System**, **한국어**, and **English**. The change applies immediately, without restarting the app; only static UI chrome (buttons, section titles, captions) is localized, so status messages generated while the app runs may still appear in English.
+
+Library rotation:
+
+- Turn on **Rotate Library** to automatically cycle through every playable wallpaper in your Mac library on a timer.
+- **Shuffle** randomizes the order, **Rotate Every** sets the interval (30s, 1m, 5m, 15m, 30m, 1h), and **Next** jumps to the next wallpaper immediately.
+- Rotation is available in both the settings window and the menu bar menu. The on/off state, shuffle, and interval are remembered across launches and resume after login.
+- **Play on Desktop** or **Stop** turns rotation off so manual selection always wins. Non-playable items are skipped automatically.
 
 Imported files are stored in:
 
@@ -220,6 +240,23 @@ Workshop Wallpaper Bridge is local-only.
 - It does not modify the original copied Workshop folder.
 
 Workshop Wallpaper Bridge is not affiliated with Valve, Steam, or Wallpaper Engine. Wallpaper Engine is a trademark of its respective owner.
+
+## Maintainers And Contributors
+
+<!-- profile-roster:start -->
+This section is generated from GitHub user profiles.
+
+### Maintainers
+
+- <a href="https://github.com/3x-haust"><img src="https://avatars.githubusercontent.com/u/94370559?v=4&s=72" width="36" height="36" alt="@3x-haust"></a> [유성윤](https://github.com/3x-haust) `@3x-haust`
+- <a href="https://github.com/dev-di-tto"><img src="https://avatars.githubusercontent.com/u/297542341?v=4&s=72" width="36" height="36" alt="@dev-di-tto"></a> [메타몽](https://github.com/dev-di-tto) `@dev-di-tto`
+
+### Contributors
+
+- <a href="https://github.com/3x-haust"><img src="https://avatars.githubusercontent.com/u/94370559?v=4&s=72" width="36" height="36" alt="@3x-haust"></a> [유성윤](https://github.com/3x-haust) `@3x-haust`
+- <a href="https://github.com/dev-di-tto"><img src="https://avatars.githubusercontent.com/u/297542341?v=4&s=72" width="36" height="36" alt="@dev-di-tto"></a> [메타몽](https://github.com/dev-di-tto) `@dev-di-tto`
+- <a href="https://github.com/ohjack83-lab"><img src="https://avatars.githubusercontent.com/u/263676419?v=4&s=72" width="36" height="36" alt="@ohjack83-lab"></a> [ohjack83](https://github.com/ohjack83-lab) `@ohjack83-lab`
+<!-- profile-roster:end -->
 
 ## License
 

@@ -10,6 +10,14 @@ Workshop Wallpaper Bridge는 복사해 온 Wallpaper Engine Workshop 폴더를 M
 
 [웹사이트](https://3x-haust.github.io/workshop-wallpaper-bridge/) · [English](README.md) · [기여 안내](CONTRIBUTING.md) · [보안 정책](SECURITY.md) · [릴리즈](https://github.com/3x-haust/workshop-wallpaper-bridge/releases) · [후원](https://www.patreon.com/c/3xhaust)
 
+## 빠른 링크
+
+- [다운로드](#다운로드): 최신 DMG를 설치합니다.
+- [사용 방법](#사용-방법): 복사한 Workshop 폴더를 가져오거나 로컬 영상을 추가합니다.
+- [지원 범위](#지원-범위): 지원되는 월페이퍼 유형을 확인합니다.
+- [소스에서 빌드](#소스에서-빌드): 앱을 로컬에서 실행하거나 DMG를 패키징합니다.
+- [메인테이너와 기여자](#메인테이너와-기여자): 프로젝트 메인테이너와 기여자 목록입니다.
+
 ## 데모
 
 ![Workshop Wallpaper Bridge 데모](assets/workshop-wallpaper-bridge-demo.gif)
@@ -46,6 +54,11 @@ Wallpaper Engine 프로젝트를 쓰는 경우:
 5. 지원되는 항목을 선택하고 **Import Selected**를 누릅니다.
 6. **Play on Desktop**을 누릅니다.
 
+스캔 목록은 기본적으로 macOS 폴더 **Date Added** 값을 기준으로 최신순 정렬됩니다.
+Date Added를 읽을 수 없으면 수정일을 fallback으로 사용합니다. 알파벳순으로 보고 싶으면
+정렬을 **Name**으로 바꿀 수 있습니다. Import 이후 새로 복사되어 다음 Scan에서 발견된
+항목에는 **NEW** 배지가 붙습니다.
+
 직접 가진 영상을 쓰려면 Workshop 폴더를 스캔하지 않고 **Add Video File**을 누릅니다.
 
 표시 방식:
@@ -68,6 +81,13 @@ Wallpaper Engine 프로젝트를 쓰는 경우:
 설정 창은 **Library** 탭(가져오기, Mac 라이브러리, Display mode, **Play on Desktop** / **Remove**)과 **Settings** 탭(재생 토글, Audio, Scene Engine Assets, Screen Saver, Language)으로 나뉩니다. **Convert Video**와 **Set Still Wallpaper**는 라이브러리 목록의 우클릭 컨텍스트 메뉴와 **Play on Desktop** 옆 **More**("⋯") 메뉴에서 사용할 수 있으며, 항상 보이는 버튼으로 노출되지 않습니다.
 
 Settings 탭의 **Language** 선택기로 앱 UI 텍스트를 **System**, **한국어**, **English** 사이에서 전환할 수 있습니다. 앱을 재시작하지 않아도 즉시 적용되며, 버튼·섹션 제목·안내 문구 등 정적 UI 문구만 번역 대상이므로 앱 실행 중 생성되는 상태 메시지는 영어로 표시될 수 있습니다.
+
+라이브러리 순환(로테이션):
+
+- **Rotate Library**를 켜면 Mac 라이브러리의 재생 가능한 월페이퍼를 타이머에 맞춰 순서대로 자동 전환합니다.
+- **Shuffle**은 순서를 무작위로 섞고, **Rotate Every**로 간격(30초·1분·5분·15분·30분·1시간)을 정하며, **Next**로 즉시 다음으로 넘어갑니다.
+- 설정창과 메뉴바 양쪽에서 제어할 수 있습니다. 켜짐/꺼짐·셔플·간격 설정은 앱을 다시 켜도 유지되고 로그인 후 자동으로 재개됩니다.
+- **Play on Desktop**이나 **Stop**을 누르면 로테이션이 꺼져 수동 선택이 우선합니다. 재생 불가 항목은 자동으로 건너뜁니다.
 
 가져온 파일은 아래 위치에 저장됩니다.
 
@@ -220,6 +240,23 @@ Workshop Wallpaper Bridge는 local-only 앱입니다.
 - 원본으로 복사해 온 Workshop 폴더를 수정하지 않습니다.
 
 Workshop Wallpaper Bridge는 Valve, Steam, Wallpaper Engine과 관련이 없는 비공식 프로젝트입니다. Wallpaper Engine은 해당 소유자의 상표입니다.
+
+## 메인테이너와 기여자
+
+<!-- profile-roster:start -->
+이 영역은 GitHub 사용자 프로필에서 자동 생성됩니다.
+
+### 메인테이너
+
+- <a href="https://github.com/3x-haust"><img src="https://avatars.githubusercontent.com/u/94370559?v=4&s=72" width="36" height="36" alt="@3x-haust"></a> [유성윤](https://github.com/3x-haust) `@3x-haust`
+- <a href="https://github.com/dev-di-tto"><img src="https://avatars.githubusercontent.com/u/297542341?v=4&s=72" width="36" height="36" alt="@dev-di-tto"></a> [메타몽](https://github.com/dev-di-tto) `@dev-di-tto`
+
+### 기여자
+
+- <a href="https://github.com/3x-haust"><img src="https://avatars.githubusercontent.com/u/94370559?v=4&s=72" width="36" height="36" alt="@3x-haust"></a> [유성윤](https://github.com/3x-haust) `@3x-haust`
+- <a href="https://github.com/dev-di-tto"><img src="https://avatars.githubusercontent.com/u/297542341?v=4&s=72" width="36" height="36" alt="@dev-di-tto"></a> [메타몽](https://github.com/dev-di-tto) `@dev-di-tto`
+- <a href="https://github.com/ohjack83-lab"><img src="https://avatars.githubusercontent.com/u/263676419?v=4&s=72" width="36" height="36" alt="@ohjack83-lab"></a> [ohjack83](https://github.com/ohjack83-lab) `@ohjack83-lab`
+<!-- profile-roster:end -->
 
 ## 라이선스
 

@@ -5,7 +5,7 @@ import WorkshopWallpaperCore
 
 @MainActor
 final class AppViewModelTests: XCTestCase {
-    func testImportSelectedImportsMultipleScannedAssets() throws {
+    func testImportSelectedImportsMultipleScannedAssets() async throws {
         // Given
         let sourceRoot = try makeTempDirectory()
         let first = try makeScannedProject(root: sourceRoot, id: "first", title: "First Loop")
@@ -19,9 +19,13 @@ final class AppViewModelTests: XCTestCase {
         model.scannedAssets = [first, second]
         model.selectScannedAssets([first.id, second.id])
 
-        // When
-        model.importSelected()
+        // When (import runs off the main thread; await its completion)
+        await model.importSelected().value
         let manifest = try store.load()
+
+        // Then the working/progress state is cleared once the import finishes.
+        XCTAssertFalse(model.isWorking)
+        XCTAssertNil(model.importProgress)
 
         // Then
         XCTAssertEqual(Set(manifest.assets.map(\.id)), [first.id, second.id])
@@ -100,6 +104,92 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertEqual(model.selectedScannedAssetId, asset.id)
     }
 
+    func testImportSelectedDoesNotStartWhileLibraryOperationIsRunning() async throws {
+        // Given
+        let sourceRoot = try makeTempDirectory()
+        let asset = try makeScannedProject(root: sourceRoot, id: "one", title: "One")
+        let store = LibraryStore(root: try makeTempDirectory())
+        let model = AppViewModel(
+            store: store,
+            loginItemController: MockLoginItemController(),
+            userDefaults: try makeUserDefaults()
+        )
+        model.scannedAssets = [asset]
+        model.selectScannedAssets([asset.id])
+        model.isWorking = true
+
+        // When
+        await model.importSelected().value
+        let manifest = try store.load()
+
+        // Then
+        XCTAssertTrue(manifest.assets.isEmpty)
+        XCTAssertEqual(model.status, "Finish the current library operation first.")
+        XCTAssertNil(model.importProgress)
+    }
+
+    func testScanSourceSortsByDateAddedByDefaultAndCanSortByName() throws {
+        // Given
+        let sourceRoot = try makeTempDirectory()
+        let older = try makeScannedProject(root: sourceRoot, id: "100", title: "Alpha")
+        let newer = try makeScannedProject(root: sourceRoot, id: "200", title: "Beta")
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date(timeIntervalSince1970: 1_700_000_000)],
+            ofItemAtPath: older.projectDirectory
+        )
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date(timeIntervalSince1970: 1_700_086_400)],
+            ofItemAtPath: newer.projectDirectory
+        )
+        let model = AppViewModel(
+            store: LibraryStore(root: try makeTempDirectory()),
+            loginItemController: MockLoginItemController(),
+            userDefaults: try makeUserDefaults()
+        )
+        model.sourcePath = sourceRoot.path
+
+        // When
+        model.scanSource()
+
+        // Then
+        XCTAssertEqual(model.scannedAssets.map(\.id), ["200", "100"])
+        XCTAssertEqual(model.selectedScannedAssetId, "200")
+
+        // When
+        model.scannedSortOrder = .name
+
+        // Then
+        XCTAssertEqual(model.scannedAssets.map(\.id), ["100", "200"])
+    }
+
+    func testNewScannedAssetUsesLastImportBaseline() throws {
+        // Given
+        let sourceRoot = try makeTempDirectory()
+        let old = try makeScannedProject(
+            root: sourceRoot,
+            id: "old",
+            title: "Old",
+            dateAdded: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        let fresh = try makeScannedProject(
+            root: sourceRoot,
+            id: "fresh",
+            title: "Fresh",
+            dateAdded: Date(timeIntervalSince1970: 1_700_010_000)
+        )
+        let defaults = try makeUserDefaults()
+        defaults.set(Date(timeIntervalSince1970: 1_700_005_000), forKey: "lastImportAt")
+        let model = AppViewModel(
+            store: LibraryStore(root: try makeTempDirectory()),
+            loginItemController: MockLoginItemController(),
+            userDefaults: defaults
+        )
+
+        // Then
+        XCTAssertFalse(model.isNewScannedAsset(old))
+        XCTAssertTrue(model.isNewScannedAsset(fresh))
+    }
+
     func testInitSelectsFirstLibraryAssetWhenAvailable() throws {
         // Given
         let sourceRoot = try makeTempDirectory()
@@ -118,6 +208,28 @@ final class AppViewModelTests: XCTestCase {
         // Then
         XCTAssertEqual(model.selectedLibraryAssetId, imported.id)
         XCTAssertEqual(model.selectedLibraryAsset, imported)
+    }
+
+    func testImportVideoFileDoesNotStartWhileLibraryOperationIsRunning() async throws {
+        // Given
+        let sourceRoot = try makeTempDirectory()
+        let video = sourceRoot.appending(path: "clip.mp4")
+        FileManager.default.createFile(atPath: video.path, contents: Data([1]))
+        let store = LibraryStore(root: try makeTempDirectory())
+        let model = AppViewModel(
+            store: store,
+            loginItemController: MockLoginItemController(),
+            userDefaults: try makeUserDefaults()
+        )
+        model.isWorking = true
+
+        // When
+        await model.importVideoFile(video).value
+        let manifest = try store.load()
+
+        // Then
+        XCTAssertTrue(manifest.assets.isEmpty)
+        XCTAssertEqual(model.status, "Finish the current library operation first.")
     }
 
     func testRemoveSelectedLibraryAssetDeletesImportedCopy() throws {
@@ -144,6 +256,31 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertTrue(manifest.assets.isEmpty)
         XCTAssertFalse(FileManager.default.fileExists(atPath: imported.projectDirectory))
         XCTAssertTrue(FileManager.default.fileExists(atPath: video.path))
+    }
+
+    func testRemoveSelectedLibraryAssetDoesNotRunWhileLibraryOperationIsRunning() throws {
+        // Given
+        let sourceRoot = try makeTempDirectory()
+        let video = sourceRoot.appending(path: "clip.mp4")
+        FileManager.default.createFile(atPath: video.path, contents: Data([1]))
+        let store = LibraryStore(root: try makeTempDirectory())
+        let imported = try store.importVideoFile(video)
+        let model = AppViewModel(
+            store: store,
+            loginItemController: MockLoginItemController(),
+            userDefaults: try makeUserDefaults()
+        )
+        model.selectedLibraryAssetId = imported.id
+        model.isWorking = true
+
+        // When
+        model.removeSelectedLibraryAsset()
+        let manifest = try store.load()
+
+        // Then
+        XCTAssertEqual(manifest.assets, [imported])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: imported.projectDirectory))
+        XCTAssertEqual(model.status, "Finish the current library operation first.")
     }
 
     func testRemoveSelectedLibraryAssetsDeletesMultipleImportedCopies() throws {
@@ -780,11 +917,21 @@ final class AppViewModelTests: XCTestCase {
         return defaults
     }
 
-    private func makeScannedProject(root: URL, id: String, title: String) throws -> WallpaperAsset {
+    private func makeScannedProject(
+        root: URL,
+        id: String,
+        title: String,
+        dateAdded: Date? = nil
+    ) throws -> WallpaperAsset {
         let project = root.appending(path: id)
         try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
         let entrypoint = project.appending(path: "loop.mp4")
         try Data([1]).write(to: entrypoint)
+        try #"{"title":"\#(title)","file":"loop.mp4"}"#.write(
+            to: project.appending(path: "project.json"),
+            atomically: true,
+            encoding: .utf8
+        )
         return WallpaperAsset(
             id: id,
             title: title,
@@ -795,6 +942,7 @@ final class AppViewModelTests: XCTestCase {
             entrypoint: entrypoint.path,
             thumbnail: nil,
             workshopId: id,
+            dateAdded: dateAdded,
             redistributionAllowed: false,
             issues: []
         )

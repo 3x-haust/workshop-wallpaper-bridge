@@ -4,6 +4,7 @@ final class DocumentationTests: XCTestCase {
     func testEnglishReadmeUsesConciseOpenSourceStructure() throws {
         let readme = try String(contentsOfFile: "README.md")
         let expectedHeadings = [
+            "## Quick Links",
             "## Demo",
             "## Download",
             "## Use It",
@@ -13,6 +14,7 @@ final class DocumentationTests: XCTestCase {
             "## CLI",
             "## Troubleshooting",
             "## Project Boundaries",
+            "## Maintainers And Contributors",
             "## License"
         ]
 
@@ -37,6 +39,7 @@ final class DocumentationTests: XCTestCase {
     func testKoreanReadmeMirrorsEnglishStructure() throws {
         let readme = try String(contentsOfFile: "README.ko.md")
         let expectedHeadings = [
+            "## 빠른 링크",
             "## 데모",
             "## 다운로드",
             "## 사용 방법",
@@ -46,6 +49,7 @@ final class DocumentationTests: XCTestCase {
             "## CLI",
             "## 문제 해결",
             "## 프로젝트 경계",
+            "## 메인테이너와 기여자",
             "## 라이선스"
         ]
 
@@ -78,6 +82,8 @@ final class DocumentationTests: XCTestCase {
             XCTAssertTrue(readme.contains("ffmpeg"))
             XCTAssertTrue(readme.contains("Steam Workshop"))
             XCTAssertTrue(readme.contains("DRM"))
+            XCTAssertTrue(readme.contains("dev-di-tto"))
+            XCTAssertTrue(readme.contains("ohjack83-lab"))
             XCTAssertTrue(readme.contains("~/Library/Application Support/WorkshopWallpaperBridge"))
         }
     }
@@ -105,13 +111,16 @@ final class DocumentationTests: XCTestCase {
         XCTAssertTrue(workflow.contains("macos-15"))
     }
 
-    func testReleaseWorkflowPublishesDmgAndChecksum() throws {
+    func testReleaseWorkflowPublishesReleaseArchiveAndChecksum() throws {
         let workflow = try String(contentsOfFile: ".github/workflows/release.yml")
 
         XCTAssertTrue(workflow.contains("Scripts/package-app.sh"))
         XCTAssertTrue(workflow.contains("shasum -a 256"))
         XCTAssertTrue(workflow.contains("gh release upload"))
-        XCTAssertTrue(workflow.contains("WorkshopWallpaperBridge-macOS-arm64.dmg"))
+        XCTAssertTrue(workflow.contains("-name \"*.dmg\""))
+        XCTAssertTrue(workflow.contains("-name \"*.zip\""))
+        XCTAssertTrue(workflow.contains("RELEASE_ARTIFACT"))
+        XCTAssertTrue(workflow.contains("RELEASE_CHECKSUM"))
         XCTAssertTrue(workflow.contains("contents: write"))
     }
 
@@ -135,6 +144,32 @@ final class DocumentationTests: XCTestCase {
         XCTAssertTrue(workflow.contains("REQUIRE_NOTARIZATION: ${{ steps.signing.outputs.available == 'true' && '1' || '0' }}"))
     }
 
+    func testProfileRosterIsGeneratedFromGitHubMetadata() throws {
+        let english = try String(contentsOfFile: "README.md")
+        let korean = try String(contentsOfFile: "README.ko.md")
+        let workflow = try String(contentsOfFile: ".github/workflows/update-profile-roster.yml")
+        let script = try String(contentsOfFile: "Scripts/update-profile-roster.mjs")
+        let maintenanceNotes = try String(contentsOfFile: "docs/open-source-maintenance.md")
+
+        for readme in [english, korean] {
+            XCTAssertTrue(readme.contains("<!-- profile-roster:start -->"))
+            XCTAssertTrue(readme.contains("<!-- profile-roster:end -->"))
+            XCTAssertTrue(readme.contains("avatars.githubusercontent.com"))
+        }
+
+        XCTAssertTrue(workflow.contains("node Scripts/update-profile-roster.mjs"))
+        XCTAssertTrue(workflow.contains("contents: write"))
+        XCTAssertTrue(workflow.contains("pull-requests: write"))
+        XCTAssertTrue(workflow.contains("automation/update-profile-roster"))
+        XCTAssertTrue(workflow.contains("gh pr create"))
+        XCTAssertTrue(maintenanceNotes.contains("creates or reuses a pull request"))
+        XCTAssertTrue(maintenanceNotes.contains("intentionally omits commit counts"))
+        XCTAssertTrue(script.contains("/collaborators?affiliation=direct&per_page=100"))
+        XCTAssertTrue(script.contains("permissions.push === true"))
+        XCTAssertTrue(script.contains("/contributors?anon=false&per_page=100"))
+        XCTAssertFalse(script.contains("contributionLabel"))
+    }
+
     func testPackagingScriptVerifiesNotarizedQuarantinedApp() throws {
         let script = try String(contentsOfFile: "Scripts/package-app.sh")
 
@@ -147,8 +182,8 @@ final class DocumentationTests: XCTestCase {
     func testPackagedAppDefaultsToCurrentReleaseVersion() throws {
         let script = try String(contentsOfFile: "Scripts/package-app.sh")
 
-        XCTAssertTrue(script.contains("APP_VERSION=\"${APP_VERSION:-1.2.0}\""))
-        XCTAssertTrue(script.contains("BUNDLE_VERSION=\"${BUNDLE_VERSION:-11}\""))
+        XCTAssertTrue(script.contains("APP_VERSION=\"${APP_VERSION:-1.4.0}\""))
+        XCTAssertTrue(script.contains("BUNDLE_VERSION=\"${BUNDLE_VERSION:-12}\""))
     }
 
     func testFrameDiffScriptBoundsImageAllocationBeforeDecodingPixels() throws {

@@ -32,6 +32,18 @@ Purpose: make every PR state its scope, validation, safety checks, and AI assist
 
 Reasoning: reviewers should not have to guess whether tests ran, whether docs were updated, or whether a change risks unsupported Steam/DRM behavior.
 
+## `.github/workflows/update-profile-roster.yml`
+
+Purpose: keep the README maintainer and contributor roster generated from GitHub user profiles.
+
+Reasoning: contributor lists drift when they are hand-edited. The workflow reads direct repository collaborators with write, maintain, or admin permission for maintainers and GitHub's contributor API for contributors, then pushes README profile updates to `automation/update-profile-roster` and creates or reuses a pull request after merges, on schedule, or by manual dispatch. The generated roster intentionally omits commit counts so merging a roster-only pull request does not immediately make the roster stale again.
+
+## `Scripts/update-profile-roster.mjs`
+
+Purpose: render the English and Korean README roster blocks between `profile-roster` markers.
+
+Reasoning: the source of truth should be GitHub profile and repository metadata, not a copied list inside README prose.
+
 ## Issue Templates
 
 Purpose: route reports into bug, compatibility, and feature request flows.

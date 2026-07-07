@@ -126,10 +126,10 @@ public struct ScenePuppetAnimation: Equatable, Sendable {
         let span = Double(frames.count - 1)
         var position = time * max(fps, 0.01) * rate
         if mirrors {
-            let cycle = position.truncatingRemainder(dividingBy: span * 2)
+            let cycle = Self.positiveRemainder(position, span * 2)
             position = cycle <= span ? cycle : (span * 2) - cycle
         } else {
-            position = position.truncatingRemainder(dividingBy: span)
+            position = Self.positiveRemainder(position, span)
         }
         let lower = min(Int(position), frames.count - 2)
         let upper = lower + 1
@@ -141,6 +141,11 @@ public struct ScenePuppetAnimation: Equatable, Sendable {
                 rotation: start.rotation + (end.rotation - start.rotation) * fraction
             )
         }
+    }
+
+    private static func positiveRemainder(_ value: Double, _ divisor: Double) -> Double {
+        let remainder = value.truncatingRemainder(dividingBy: divisor)
+        return remainder >= 0 ? remainder : remainder + divisor
     }
 }
 
@@ -190,7 +195,10 @@ public struct ScenePuppetModel: Equatable, Sendable {
     public func skinTransforms(at time: Double, animationID: Int?, rate: Double) -> [SceneAffine]? {
         guard let animation = animation(withID: animationID),
               let bindPose = animation.frames.first else {
-            return nil
+            guard !bones.isEmpty else {
+                return nil
+            }
+            return Array(repeating: .identity, count: bones.count)
         }
         let bindWorld = worldTransforms(for: bindPose)
         let animatedWorld = worldTransforms(for: animation.poses(at: time, rate: rate))
@@ -308,6 +316,9 @@ public struct ScenePuppetModelDecoder: Sendable {
             try reader.skip(1)
             bones.append(ScenePuppetBone(parent: parent))
         }
+        guard reader.remainingByteCount >= 8 else {
+            return ScenePuppetModel(vertices: vertices, triangles: triangles, bones: bones, animations: [])
+        }
         guard try reader.readBytes(8) == Data("MDLA0001".utf8) else {
             // Models without animation data still expose the static mesh.
             return ScenePuppetModel(vertices: vertices, triangles: triangles, bones: bones, animations: [])
@@ -394,6 +405,10 @@ public enum ScenePuppetModelError: Error, Equatable, LocalizedError {
 struct ScenePuppetBinaryReader {
     let data: Data
     var offset = 0
+
+    var remainingByteCount: Int {
+        data.count - offset
+    }
 
     mutating func readBytes(_ count: Int) throws -> Data {
         guard count >= 0, data.count - offset >= count else {

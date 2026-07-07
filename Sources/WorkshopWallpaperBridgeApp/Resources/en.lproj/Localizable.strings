@@ -17,10 +17,20 @@
 "library.import.help.body" = "Select the copied Workshop folder and click Scan, then choose one or more scanned projects and click Import Selected to add them to your Mac library.";
 "library.scanned.empty" = "Scanned Projects";
 "library.imported.empty" = "Imported Projects";
+"library.sort.title" = "Sort";
+"library.new.badge" = "NEW";
+"library.preview.placeholder" = "Select a wallpaper";
+"library.preview.empty" = "The selected wallpaper preview appears here.";
 
 /* Library tab: toolbar */
 "library.display" = "Display";
 "library.addVideo" = "Add Video File";
+
+/* Library tab: rotation */
+"library.rotate" = "Rotate Library";
+"library.rotate.shuffle" = "Shuffle";
+"library.rotate.every" = "Every";
+"library.rotate.next" = "Next";
 
 /* Library tab: actions */
 "library.play" = "Play on Desktop";

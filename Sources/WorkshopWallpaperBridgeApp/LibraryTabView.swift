@@ -16,6 +16,12 @@ struct LibraryTabView: View {
             }
             toolbarRow
             libraryList
+            AssetPreview(
+                asset: model.selectedLibraryAsset,
+                placeholderTitle: model.L("library.preview.placeholder"),
+                placeholderDescription: model.L("library.preview.empty")
+            )
+            rotationRow
             actionRow
         }
         .padding()
@@ -80,6 +86,13 @@ struct LibraryTabView: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                 Spacer()
+                Picker(model.L("library.sort.title"), selection: $model.scannedSortOrder) {
+                    ForEach(ScannedAssetSortOrder.allCases) { order in
+                        Text(order.title).tag(order)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 200)
                 Button(importButtonTitle) {
                     model.importSelected()
                 }
@@ -92,12 +105,22 @@ struct LibraryTabView: View {
                 )
             ) {
                 ForEach(model.scannedAssets) { asset in
-                    AssetRow(asset: asset, sceneVideoRenderRevision: model.sceneVideoRenderRevision)
-                        .tag(asset.id)
+                    AssetRow(
+                        asset: asset,
+                        sceneVideoRenderRevision: model.sceneVideoRenderRevision,
+                        isNew: model.isNewScannedAsset(asset),
+                        newBadgeText: model.L("library.new.badge")
+                    )
+                    .tag(asset.id)
                 }
             }
             .frame(height: 110)
             .clipShape(RoundedRectangle(cornerRadius: 8))
+            AssetPreview(
+                asset: model.selectedScannedAsset,
+                placeholderTitle: model.L("library.preview.placeholder"),
+                placeholderDescription: model.L("library.preview.empty")
+            )
         }
     }
 
@@ -142,6 +165,30 @@ struct LibraryTabView: View {
         }
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .frame(maxHeight: .infinity)
+    }
+
+    private var rotationRow: some View {
+        HStack(spacing: 12) {
+            Toggle(model.L("library.rotate"), isOn: $model.rotationEnabled)
+                .toggleStyle(.switch)
+                .lineLimit(1)
+                .fixedSize()
+            Toggle(model.L("library.rotate.shuffle"), isOn: $model.rotationShuffle)
+                .toggleStyle(.switch)
+                .lineLimit(1)
+                .fixedSize()
+            Picker(model.L("library.rotate.every"), selection: $model.rotationInterval) {
+                ForEach(AppViewModel.rotationIntervalOptions, id: \.seconds) { option in
+                    Text(option.label).tag(option.seconds)
+                }
+            }
+            .fixedSize()
+            Button(model.L("library.rotate.next")) {
+                model.nextWallpaper()
+            }
+            .disabled(!model.rotationEnabled)
+            Spacer()
+        }
     }
 
     @ViewBuilder

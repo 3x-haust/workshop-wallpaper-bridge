@@ -32,6 +32,18 @@ struct StatusMenu: View {
             model.stopPlayback()
         }
         Divider()
+        Toggle("Rotate Library", isOn: $model.rotationEnabled)
+        Toggle("Shuffle Rotation", isOn: $model.rotationShuffle)
+        Button("Next Wallpaper") {
+            model.nextWallpaper()
+        }
+        .disabled(!model.rotationEnabled)
+        Picker("Rotate Every", selection: $model.rotationInterval) {
+            ForEach(AppViewModel.rotationIntervalOptions, id: \.seconds) { option in
+                Text(option.label).tag(option.seconds)
+            }
+        }
+        Divider()
         Button("Quit") {
             NSApp.terminate(nil)
         }
