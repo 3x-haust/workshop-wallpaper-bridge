@@ -9,6 +9,15 @@ struct UpdateAlert: Identifiable {
     let message: String
 }
 
+/// Drives the "Remove" confirmation dialog: holds the assets awaiting the
+/// user's confirmation before `AppViewModel.removeSelectedLibraryAssets()`
+/// actually moves their library folders to the Trash.
+struct PendingLibraryRemoval: Identifiable {
+    let id = UUID()
+    let assetIds: Set<WallpaperAsset.ID>
+    let title: String
+}
+
 struct ImportProgress: Equatable {
     let completed: Int
     let total: Int
@@ -36,7 +45,9 @@ protocol WallpaperPlaying: AnyObject {
     func play(
         asset: WallpaperAsset,
         autoPauseWhenCovered: Bool,
-        displayMode: WallpaperDisplayMode
+        displayMode: WallpaperDisplayMode,
+        audioEnabled: Bool?,
+        audioVolume: Double?
     ) throws
     func stop()
     func setDisplayMode(_ mode: WallpaperDisplayMode)
@@ -54,6 +65,16 @@ final class AppViewModel: ObservableObject {
     @Published private(set) var selectedLibraryAssetIds: Set<WallpaperAsset.ID> = []
     @Published var status = "Choose a copied Wallpaper Engine Workshop folder to begin."
     @Published var isWorking = false
+    @Published private(set) var sceneAssetsDirectory = ""
+    /// Bumped whenever a scene's background video render completes. Library
+    /// rows read this alongside the asset itself so their body actually
+    /// re-evaluates: SwiftUI skips re-invoking a child view's body when its
+    /// input properties are structurally unchanged, even if the enclosing
+    /// `@ObservedObject` published an unrelated change (e.g. `status`), so
+    /// without this the "renders on first play" badge never flips to
+    /// "playable" until something else forces the asset itself to change.
+    @Published private(set) var sceneVideoRenderRevision = 0
+    @Published var pendingLibraryRemoval: PendingLibraryRemoval?
     @Published private(set) var importProgress: ImportProgress?
     @Published var displayMode: WallpaperDisplayMode = .fit {
         didSet {
@@ -68,6 +89,20 @@ final class AppViewModel: ObservableObject {
         didSet {
             wallpaperPlayer.setAutoPauseWhenCovered(autoPauseWhenCovered)
             userDefaults.set(autoPauseWhenCovered, forKey: PreferenceKey.autoPauseWhenCovered)
+        }
+    }
+    /// Off by default: the previous behavior was silent playback, so audio
+    /// should never turn on for existing users without them opting in.
+    @Published var wallpaperAudioEnabled = false {
+        didSet {
+            WallpaperPlayer.shared.setAudioSettings(enabled: wallpaperAudioEnabled, volume: wallpaperAudioVolume)
+            userDefaults.set(wallpaperAudioEnabled, forKey: PreferenceKey.wallpaperAudioEnabled)
+        }
+    }
+    @Published var wallpaperAudioVolume = 0.5 {
+        didSet {
+            WallpaperPlayer.shared.setAudioSettings(enabled: wallpaperAudioEnabled, volume: wallpaperAudioVolume)
+            userDefaults.set(wallpaperAudioVolume, forKey: PreferenceKey.wallpaperAudioVolume)
         }
     }
     @Published var lockScreenAnimationEnabled = false {
@@ -98,6 +133,14 @@ final class AppViewModel: ObservableObject {
                 return
             }
             setLaunchAtLogin(launchAtLogin)
+        }
+    }
+    @Published var language: AppLanguage = .system {
+        didSet {
+            guard language != oldValue else {
+                return
+            }
+            userDefaults.set(language.rawValue, forKey: PreferenceKey.language)
         }
     }
 
@@ -188,6 +231,12 @@ final class AppViewModel: ObservableObject {
         }
         syncLaunchAtLoginStatus()
         scheduleAutomaticUpdateCheck()
+        SceneWallpaperContentFactory.statusHandler = { [weak self] message in
+            self?.status = message
+        }
+        SceneWallpaperContentFactory.sceneVideoRenderCompletionHandler = { [weak self] assetId in
+            self?.handleSceneVideoRenderCompletion(assetId: assetId)
+        }
     }
 
     init(
@@ -258,6 +307,23 @@ final class AppViewModel: ObservableObject {
         libraryAssets.filter { selectedLibraryAssetIds.contains($0.id) }
     }
 
+    var sceneAssetsStatus: String {
+        if let envPath = ProcessInfo.processInfo.environment[SceneEngineRendererConfiguration.assetsEnvironmentVariableName],
+           !envPath.isEmpty {
+            let envURL = URL(filePath: envPath).standardizedFileURL
+            return SceneEngineRendererConfiguration.isValidAssetsDirectory(envURL)
+                ? "Using WWB_SCENE_ENGINE_ASSETS_DIR: \(envURL.path)"
+                : "WWB_SCENE_ENGINE_ASSETS_DIR is set, but the assets folder is missing or incomplete."
+        }
+        guard !sceneAssetsDirectory.isEmpty else {
+            return "Not set. The scene renderer will use the default app-support assets folder if it exists."
+        }
+        let url = URL(filePath: sceneAssetsDirectory).standardizedFileURL
+        return SceneEngineRendererConfiguration.isValidAssetsDirectory(url)
+            ? "Scene Engine assets ready: \(url.path)"
+            : "Scene Engine assets folder is missing or incomplete: \(url.path)"
+    }
+
     func selectLibraryAssets(_ ids: Set<WallpaperAsset.ID>) {
         selectedLibraryAssetIds = ids
         normalizeLibrarySelection(allowEmpty: true)
@@ -266,6 +332,14 @@ final class AppViewModel: ObservableObject {
     func selectScannedAssets(_ ids: Set<WallpaperAsset.ID>) {
         selectedScannedAssetIds = ids
         normalizeScannedSelection(allowEmpty: true)
+    }
+
+    /// Looks up a localized UI chrome string for the currently selected
+    /// `language`. Views observe `language` via `@ObservedObject`, so calling
+    /// this from the view body re-resolves and redraws immediately when the
+    /// user switches languages.
+    func L(_ key: String) -> String {
+        Localization.string(key, language: language)
     }
 }
 
@@ -279,6 +353,74 @@ extension AppViewModel {
             sourcePath = url.path
             scanSource()
         }
+    }
+
+    func chooseSceneAssetsFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.message = "Choose the Wallpaper Engine assets folder contents."
+        if panel.runModal() == .OK, let url = panel.url {
+            setSceneAssetsFolder(url)
+        }
+    }
+
+    func setSceneAssetsFolder(_ url: URL) {
+        let standardizedURL = url.standardizedFileURL
+        guard SceneEngineRendererConfiguration.isValidAssetsDirectory(standardizedURL) else {
+            status = "This does not look like a Wallpaper Engine assets folder. It must contain materials/ "
+                + "and shaders/. Copy the contents of steamapps/common/wallpaper_engine/assets, not the parent folder."
+            return
+        }
+        let localURL: URL
+        do {
+            localURL = try copySceneAssetsToDefaultLocation(from: standardizedURL)
+        } catch {
+            status = "Could not copy Scene Engine assets into app support: \(error.localizedDescription)"
+            return
+        }
+        sceneAssetsDirectory = localURL.path
+        userDefaults.set(sceneAssetsDirectory, forKey: PreferenceKey.sceneEngineAssetsDirectory)
+        SceneEngineRendererConfiguration.overrideAssetsPath = sceneAssetsDirectory
+        status = "Scene Engine assets copied into app support."
+    }
+
+    func clearSceneAssetsFolder() {
+        sceneAssetsDirectory = ""
+        userDefaults.removeObject(forKey: PreferenceKey.sceneEngineAssetsDirectory)
+        SceneEngineRendererConfiguration.overrideAssetsPath = nil
+        status = "Scene Engine assets folder reset to the default path."
+    }
+
+    private func copySceneAssetsToDefaultLocation(from sourceURL: URL) throws -> URL {
+        guard let destinationURL = SceneEngineRendererConfiguration.defaultAssetsDirectoryURL() else {
+            throw CocoaError(.fileNoSuchFile)
+        }
+        if sourceURL.standardizedFileURL.resolvingSymlinksInPath().path
+            == destinationURL.standardizedFileURL.resolvingSymlinksInPath().path {
+            return destinationURL
+        }
+
+        let fileManager = FileManager.default
+        let parentURL = destinationURL.deletingLastPathComponent()
+        try fileManager.createDirectory(at: parentURL, withIntermediateDirectories: true)
+
+        let tempURL = parentURL.appending(
+            path: ".wallpaper-engine-assets-\(UUID().uuidString)",
+            directoryHint: .isDirectory
+        )
+        try fileManager.copyItem(at: sourceURL, to: tempURL)
+        do {
+            if fileManager.fileExists(atPath: destinationURL.path) {
+                try fileManager.removeItem(at: destinationURL)
+            }
+            try fileManager.moveItem(at: tempURL, to: destinationURL)
+        } catch {
+            try? fileManager.removeItem(at: tempURL)
+            throw error
+        }
+        return destinationURL.standardizedFileURL
     }
 
     func scanSource() {
@@ -421,12 +563,33 @@ extension AppViewModel {
         removeSelectedLibraryAssets()
     }
 
+    /// Prepares the confirmation dialog state for the currently selected
+    /// library asset(s). The view presents `.confirmationDialog` bound to
+    /// `pendingLibraryRemoval`; only its destructive action actually calls
+    /// `removeSelectedLibraryAssets()`.
+    func requestRemoveSelectedLibraryAssets() {
+        let assets = selectedLibraryAssets
+        guard !assets.isEmpty else {
+            status = "Select a library project first."
+            return
+        }
+        let title = assets.count == 1
+            ? assets[0].title
+            : "\(assets.count) items"
+        pendingLibraryRemoval = PendingLibraryRemoval(assetIds: Set(assets.map(\.id)), title: title)
+    }
+
+    func cancelPendingLibraryRemoval() {
+        pendingLibraryRemoval = nil
+    }
+
     func removeSelectedLibraryAssets() {
         guard !isWorking else {
             status = "Finish the current library operation first."
             return
         }
         let assets = selectedLibraryAssets
+        pendingLibraryRemoval = nil
         guard !assets.isEmpty else {
             status = "Select a library project first."
             return
@@ -439,14 +602,14 @@ extension AppViewModel {
             loadLibrary()
             if wasRotating, !rotationEnabled {
                 if assets.count == 1, let asset = assets.first {
-                    status = "Removed \(asset.title) from your Mac library. Rotation stopped — no playable wallpapers left."
+                    status = "Moved \(asset.title) to the Trash. Rotation stopped — no playable wallpapers left."
                 } else {
-                    status = "Removed \(assets.count) items from your Mac library. Rotation stopped — no playable wallpapers left."
+                    status = "Moved \(assets.count) items to the Trash. Rotation stopped — no playable wallpapers left."
                 }
             } else if assets.count == 1, let asset = assets.first {
-                status = "Removed \(asset.title) from your Mac library."
+                status = "Moved \(asset.title) to the Trash. The original copied folder was not touched."
             } else {
-                status = "Removed \(assets.count) items from your Mac library."
+                status = "Moved \(assets.count) items to the Trash. The original copied folders were not touched."
             }
         } catch {
             status = error.localizedDescription
@@ -642,6 +805,12 @@ extension AppViewModel {
         if userDefaults.object(forKey: PreferenceKey.autoPauseWhenCovered) != nil {
             autoPauseWhenCovered = userDefaults.bool(forKey: PreferenceKey.autoPauseWhenCovered)
         }
+        if userDefaults.object(forKey: PreferenceKey.wallpaperAudioEnabled) != nil {
+            wallpaperAudioEnabled = userDefaults.bool(forKey: PreferenceKey.wallpaperAudioEnabled)
+        }
+        if userDefaults.object(forKey: PreferenceKey.wallpaperAudioVolume) != nil {
+            wallpaperAudioVolume = userDefaults.double(forKey: PreferenceKey.wallpaperAudioVolume)
+        }
         if userDefaults.object(forKey: PreferenceKey.lockScreenAnimationEnabled) != nil {
             isSyncingLockScreenAnimation = true
             lockScreenAnimationEnabled = userDefaults.bool(forKey: PreferenceKey.lockScreenAnimationEnabled)
@@ -649,6 +818,12 @@ extension AppViewModel {
         }
         if userDefaults.object(forKey: PreferenceKey.automaticallyCheckForUpdates) != nil {
             automaticallyCheckForUpdates = userDefaults.bool(forKey: PreferenceKey.automaticallyCheckForUpdates)
+        }
+        sceneAssetsDirectory = restoredSceneAssetsDirectory()
+        SceneEngineRendererConfiguration.overrideAssetsPath = sceneAssetsDirectory.isEmpty ? nil : sceneAssetsDirectory
+        if let rawLanguage = userDefaults.string(forKey: PreferenceKey.language),
+           let storedLanguage = AppLanguage(rawValue: rawLanguage) {
+            language = storedLanguage
         }
         if userDefaults.object(forKey: PreferenceKey.rotationShuffle) != nil {
             rotationShuffle = userDefaults.bool(forKey: PreferenceKey.rotationShuffle)
@@ -660,6 +835,24 @@ extension AppViewModel {
         let storedRotationInterval = userDefaults.double(forKey: PreferenceKey.rotationInterval)
         if storedRotationInterval > 0 {
             rotationInterval = storedRotationInterval
+        }
+    }
+
+    private func restoredSceneAssetsDirectory() -> String {
+        guard let storedPath = userDefaults.string(forKey: PreferenceKey.sceneEngineAssetsDirectory),
+              !storedPath.isEmpty else {
+            return ""
+        }
+        let storedURL = URL(filePath: storedPath).standardizedFileURL
+        guard SceneEngineRendererConfiguration.isValidAssetsDirectory(storedURL) else {
+            return storedPath
+        }
+        do {
+            let localURL = try copySceneAssetsToDefaultLocation(from: storedURL)
+            userDefaults.set(localURL.path, forKey: PreferenceKey.sceneEngineAssetsDirectory)
+            return localURL.path
+        } catch {
+            return storedPath
         }
     }
 
@@ -723,7 +916,9 @@ extension AppViewModel {
         try wallpaperPlayer.play(
             asset: asset,
             autoPauseWhenCovered: autoPauseWhenCovered,
-            displayMode: displayMode
+            displayMode: displayMode,
+            audioEnabled: wallpaperAudioEnabled,
+            audioVolume: wallpaperAudioVolume
         )
         if remember {
             userDefaults.set(asset.id, forKey: PreferenceKey.lastPlayedAssetId)
@@ -735,6 +930,28 @@ extension AppViewModel {
         status = lockScreenError.map {
             "\(playbackStatus) Screen Saver update failed: \($0)"
         } ?? playbackStatus
+    }
+
+    /// Fires once a scene's background video render finishes. Bumps
+    /// `sceneVideoRenderRevision` so the library list's "renders on first
+    /// play" badge flips to "playable" immediately (see the doc comment on
+    /// that property for why the plain `libraryAssets`/`status` publishes
+    /// aren't enough), then refreshes the lock screen animation config.
+    func handleSceneVideoRenderCompletion(assetId: String) {
+        sceneVideoRenderRevision += 1
+        refreshLockScreenAnimationConfigurationAfterSceneVideoRender(assetId: assetId)
+    }
+
+    /// A scene's first render is asynchronous: `refreshLockScreenAnimationConfiguration`
+    /// only ever sees the fresh cached video if it's called again once the
+    /// render completes. Without this, the lock screen config would stay
+    /// pinned to the scene's still image (written on the initial play) until
+    /// the user replayed the wallpaper.
+    private func refreshLockScreenAnimationConfigurationAfterSceneVideoRender(assetId: String) {
+        guard let asset = libraryAssets.first(where: { $0.id == assetId }) else {
+            return
+        }
+        _ = refreshLockScreenAnimationConfiguration(asset: asset)
     }
 
     private func refreshLockScreenAnimationConfiguration(asset: WallpaperAsset) -> String? {
@@ -951,6 +1168,10 @@ private enum PreferenceKey {
     static let lastPlayedAssetId = "lastPlayedAssetId"
     static let automaticallyCheckForUpdates = "automaticallyCheckForUpdates"
     static let lastUpdateCheckAt = "lastUpdateCheckAt"
+    static let sceneEngineAssetsDirectory = "sceneEngineAssetsDirectory"
+    static let wallpaperAudioEnabled = "wallpaperAudioEnabled"
+    static let wallpaperAudioVolume = "wallpaperAudioVolume"
+    static let language = "language"
     static let rotationEnabled = "rotationEnabled"
     static let rotationShuffle = "rotationShuffle"
     static let rotationInterval = "rotationInterval"

@@ -5,7 +5,7 @@ import SwiftUI
 final class SettingsWindowCoordinator {
     static let shared = SettingsWindowCoordinator()
 
-    private let defaultWindowSize = CGSize(width: 980, height: 640)
+    private let defaultWindowSize = CGSize(width: 640, height: 560)
     private var window: NSWindow?
 
     func show(model: AppViewModel) {
@@ -23,7 +23,7 @@ final class SettingsWindowCoordinator {
     private func makeWindow(model: AppViewModel) -> NSWindow {
         let controller = NSHostingController(
             rootView: ContentView(model: model)
-                .frame(minWidth: 980, minHeight: 640)
+                .frame(minWidth: 640, minHeight: 560)
         )
         let window = NSWindow(
             contentRect: NSRect(origin: .zero, size: defaultWindowSize),

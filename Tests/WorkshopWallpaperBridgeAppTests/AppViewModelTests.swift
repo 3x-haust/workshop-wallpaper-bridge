@@ -39,6 +39,52 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: second.projectDirectory))
     }
 
+    func testSceneVideoRenderCompletionBumpsRevisionSoLibraryRowsRefresh() throws {
+        // Given
+        let model = AppViewModel(
+            store: LibraryStore(root: try makeTempDirectory()),
+            loginItemController: MockLoginItemController(),
+            userDefaults: try makeUserDefaults()
+        )
+        let sceneRoot = try makeTempDirectory()
+        let entrypoint = sceneRoot.appending(path: "scene.pkg")
+        try Data([1]).write(to: entrypoint)
+        let scene = WallpaperAsset(
+            id: "scene-1",
+            title: "Scene",
+            kind: .scene,
+            supportStatus: .playable,
+            source: .localSteamWorkshop,
+            projectDirectory: sceneRoot.path,
+            entrypoint: entrypoint.path,
+            thumbnail: nil,
+            workshopId: nil,
+            redistributionAllowed: false,
+            issues: []
+        )
+        model.libraryAssets = [scene]
+
+        // Then (before any render, the row shows the "renders on first play"
+        // badge because there's no cached video yet)
+        XCTAssertEqual(LibraryRowStatusResolver.status(for: scene), .needsFirstRender)
+        let revisionBeforeRender = model.sceneVideoRenderRevision
+
+        // When a render completes and lands a fresh cache entry
+        let previousCacheDirectory = SceneVideoCache.overrideCacheDirectoryURL
+        let cacheDirectory = sceneRoot.appending(path: "SceneVideoCache")
+        try FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
+        try Data([1]).write(to: cacheDirectory.appending(path: "\(scene.id).mp4"))
+        SceneVideoCache.overrideCacheDirectoryURL = cacheDirectory
+        addTeardownBlock {
+            SceneVideoCache.overrideCacheDirectoryURL = previousCacheDirectory
+        }
+        model.handleSceneVideoRenderCompletion(assetId: scene.id)
+
+        // Then
+        XCTAssertEqual(model.sceneVideoRenderRevision, revisionBeforeRender + 1)
+        XCTAssertEqual(LibraryRowStatusResolver.status(for: scene), .playable)
+    }
+
     func testSelectScannedAssetsIgnoresMissingIds() throws {
         // Given
         let sourceRoot = try makeTempDirectory()
@@ -268,6 +314,70 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: secondVideo.path))
     }
 
+    func testRequestRemoveSelectedLibraryAssetsSetsPendingConfirmationWithoutDeleting() throws {
+        // Given
+        let sourceRoot = try makeTempDirectory()
+        let video = sourceRoot.appending(path: "keep-until-confirmed.mp4")
+        FileManager.default.createFile(atPath: video.path, contents: Data([1]))
+        let store = LibraryStore(root: try makeTempDirectory())
+        let imported = try store.importVideoFile(video)
+        let model = AppViewModel(
+            store: store,
+            loginItemController: MockLoginItemController(),
+            userDefaults: try makeUserDefaults()
+        )
+        model.selectedLibraryAssetId = imported.id
+
+        // When
+        model.requestRemoveSelectedLibraryAssets()
+
+        // Then
+        XCTAssertEqual(model.pendingLibraryRemoval?.assetIds, [imported.id])
+        XCTAssertEqual(model.pendingLibraryRemoval?.title, imported.title)
+        XCTAssertFalse(model.libraryAssets.isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: imported.projectDirectory))
+    }
+
+    func testCancelPendingLibraryRemovalClearsConfirmationWithoutDeleting() throws {
+        // Given
+        let sourceRoot = try makeTempDirectory()
+        let video = sourceRoot.appending(path: "cancel-me.mp4")
+        FileManager.default.createFile(atPath: video.path, contents: Data([1]))
+        let store = LibraryStore(root: try makeTempDirectory())
+        let imported = try store.importVideoFile(video)
+        let model = AppViewModel(
+            store: store,
+            loginItemController: MockLoginItemController(),
+            userDefaults: try makeUserDefaults()
+        )
+        model.selectedLibraryAssetId = imported.id
+        model.requestRemoveSelectedLibraryAssets()
+
+        // When
+        model.cancelPendingLibraryRemoval()
+
+        // Then
+        XCTAssertNil(model.pendingLibraryRemoval)
+        XCTAssertFalse(model.libraryAssets.isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: imported.projectDirectory))
+    }
+
+    func testRequestRemoveSelectedLibraryAssetsWithNoSelectionReportsStatus() throws {
+        // Given
+        let model = AppViewModel(
+            store: LibraryStore(root: try makeTempDirectory()),
+            loginItemController: MockLoginItemController(),
+            userDefaults: try makeUserDefaults()
+        )
+
+        // When
+        model.requestRemoveSelectedLibraryAssets()
+
+        // Then
+        XCTAssertNil(model.pendingLibraryRemoval)
+        XCTAssertEqual(model.status, "Select a library project first.")
+    }
+
     func testLaunchAtLoginToggleRegistersLoginItem() throws {
         // Given
         let loginItems = MockLoginItemController()
@@ -324,6 +434,170 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertFalse(model.autoPauseWhenCovered)
     }
 
+    func testSceneAssetsFolderPersistsAndFeedsRendererResolution() throws {
+        // Given
+        let defaults = try makeUserDefaults()
+        let root = try makeTempDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: root)
+        }
+        let assetsDirectory = try makeSceneEngineAssetsFixture(in: root.appending(path: "source"))
+        let appSupportAssetsDirectory = root.appending(path: "app-support-assets")
+        let previousDefaultAssetsDirectory = SceneEngineRendererConfiguration.overrideDefaultAssetsDirectoryURL
+        SceneEngineRendererConfiguration.overrideDefaultAssetsDirectoryURL = appSupportAssetsDirectory
+        defer {
+            SceneEngineRendererConfiguration.overrideDefaultAssetsDirectoryURL = previousDefaultAssetsDirectory
+        }
+        let model = AppViewModel(
+            store: LibraryStore(root: try makeTempDirectory()),
+            loginItemController: MockLoginItemController(),
+            userDefaults: defaults
+        )
+
+        // When
+        model.setSceneAssetsFolder(assetsDirectory)
+
+        // Then
+        XCTAssertEqual(model.sceneAssetsDirectory, appSupportAssetsDirectory.path)
+        XCTAssertEqual(defaults.string(forKey: "sceneEngineAssetsDirectory"), appSupportAssetsDirectory.path)
+        XCTAssertEqual(SceneEngineRendererConfiguration.assetsDirectoryURL(environment: [:])?.path, appSupportAssetsDirectory.path)
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: appSupportAssetsDirectory.appending(path: "materials/util/composelayer.json").path
+        ))
+        XCTAssertTrue(model.sceneAssetsStatus.contains("ready"))
+    }
+
+    func testInvalidSceneAssetsFolderIsRejectedWithoutChangingPersistedValue() throws {
+        // Given
+        let defaults = try makeUserDefaults()
+        let root = try makeTempDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: root)
+        }
+        let validAssetsDirectory = try makeSceneEngineAssetsFixture(in: root.appending(path: "stored"))
+        let invalidDirectory = root.appending(path: "invalid")
+        try FileManager.default.createDirectory(at: invalidDirectory, withIntermediateDirectories: true)
+        let appSupportAssetsDirectory = root.appending(path: "app-support-assets")
+        defaults.set(validAssetsDirectory.path, forKey: "sceneEngineAssetsDirectory")
+        let previousDefaultAssetsDirectory = SceneEngineRendererConfiguration.overrideDefaultAssetsDirectoryURL
+        SceneEngineRendererConfiguration.overrideDefaultAssetsDirectoryURL = appSupportAssetsDirectory
+        defer {
+            SceneEngineRendererConfiguration.overrideDefaultAssetsDirectoryURL = previousDefaultAssetsDirectory
+        }
+        let model = AppViewModel(
+            store: LibraryStore(root: try makeTempDirectory()),
+            loginItemController: MockLoginItemController(),
+            userDefaults: defaults
+        )
+
+        // When
+        model.setSceneAssetsFolder(invalidDirectory)
+
+        // Then
+        XCTAssertEqual(model.sceneAssetsDirectory, appSupportAssetsDirectory.path)
+        XCTAssertEqual(defaults.string(forKey: "sceneEngineAssetsDirectory"), appSupportAssetsDirectory.path)
+        XCTAssertEqual(SceneEngineRendererConfiguration.assetsDirectoryURL(environment: [:])?.path, appSupportAssetsDirectory.path)
+        XCTAssertTrue(model.status.contains("does not look like a Wallpaper Engine assets folder"))
+        XCTAssertTrue(model.status.contains("materials/"))
+        XCTAssertTrue(model.status.contains("shaders/"))
+    }
+
+    func testStoredSceneAssetsFolderMigratesToDefaultAppSupportLocation() throws {
+        // Given
+        let defaults = try makeUserDefaults()
+        let root = try makeTempDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: root)
+        }
+        let storedAssetsDirectory = try makeSceneEngineAssetsFixture(in: root.appending(path: "stored"))
+        let appSupportAssetsDirectory = root.appending(path: "app-support-assets")
+        defaults.set(storedAssetsDirectory.path, forKey: "sceneEngineAssetsDirectory")
+        let previousDefaultAssetsDirectory = SceneEngineRendererConfiguration.overrideDefaultAssetsDirectoryURL
+        SceneEngineRendererConfiguration.overrideDefaultAssetsDirectoryURL = appSupportAssetsDirectory
+        defer {
+            SceneEngineRendererConfiguration.overrideDefaultAssetsDirectoryURL = previousDefaultAssetsDirectory
+        }
+
+        // When
+        let model = AppViewModel(
+            store: LibraryStore(root: try makeTempDirectory()),
+            loginItemController: MockLoginItemController(),
+            userDefaults: defaults
+        )
+
+        // Then
+        XCTAssertEqual(model.sceneAssetsDirectory, appSupportAssetsDirectory.path)
+        XCTAssertEqual(defaults.string(forKey: "sceneEngineAssetsDirectory"), appSupportAssetsDirectory.path)
+        XCTAssertEqual(SceneEngineRendererConfiguration.assetsDirectoryURL(environment: [:])?.path, appSupportAssetsDirectory.path)
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: appSupportAssetsDirectory.appending(path: "materials/util/composelayer.json").path
+        ))
+    }
+
+    func testSceneAssetsFolderCanBeClearedToDefaultResolution() throws {
+        // Given
+        let defaults = try makeUserDefaults()
+        let root = try makeTempDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: root)
+        }
+        let assetsDirectory = try makeSceneEngineAssetsFixture(in: root.appending(path: "stored"))
+        let appSupportAssetsDirectory = root.appending(path: "app-support-assets")
+        defaults.set(assetsDirectory.path, forKey: "sceneEngineAssetsDirectory")
+        let previousDefaultAssetsDirectory = SceneEngineRendererConfiguration.overrideDefaultAssetsDirectoryURL
+        SceneEngineRendererConfiguration.overrideDefaultAssetsDirectoryURL = appSupportAssetsDirectory
+        defer {
+            SceneEngineRendererConfiguration.overrideDefaultAssetsDirectoryURL = previousDefaultAssetsDirectory
+        }
+        let model = AppViewModel(
+            store: LibraryStore(root: try makeTempDirectory()),
+            loginItemController: MockLoginItemController(),
+            userDefaults: defaults
+        )
+
+        // When
+        model.clearSceneAssetsFolder()
+
+        // Then
+        XCTAssertEqual(model.sceneAssetsDirectory, "")
+        XCTAssertNil(defaults.string(forKey: "sceneEngineAssetsDirectory"))
+        XCTAssertNil(SceneEngineRendererConfiguration.overrideAssetsPath)
+        XCTAssertTrue(model.sceneAssetsStatus.contains("Not set"))
+    }
+
+    func testSceneAssetsEnvironmentOverrideWinsOverUserPreference() throws {
+        // Given
+        let defaults = try makeUserDefaults()
+        let root = try makeTempDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: root)
+        }
+        let userAssetsDirectory = try makeSceneEngineAssetsFixture(in: root.appending(path: "stored"))
+        let envAssetsDirectory = try makeSceneEngineAssetsFixture(in: root.appending(path: "env"))
+        let appSupportAssetsDirectory = root.appending(path: "app-support-assets")
+        defaults.set(userAssetsDirectory.path, forKey: "sceneEngineAssetsDirectory")
+        let previousDefaultAssetsDirectory = SceneEngineRendererConfiguration.overrideDefaultAssetsDirectoryURL
+        SceneEngineRendererConfiguration.overrideDefaultAssetsDirectoryURL = appSupportAssetsDirectory
+        defer {
+            SceneEngineRendererConfiguration.overrideDefaultAssetsDirectoryURL = previousDefaultAssetsDirectory
+        }
+        _ = AppViewModel(
+            store: LibraryStore(root: try makeTempDirectory()),
+            loginItemController: MockLoginItemController(),
+            userDefaults: defaults
+        )
+
+        // When
+        let resolved = SceneEngineRendererConfiguration.assetsDirectoryURL(
+            environment: [
+                SceneEngineRendererConfiguration.assetsEnvironmentVariableName: envAssetsDirectory.path
+            ]
+        )
+
+        // Then
+        XCTAssertEqual(resolved?.path, envAssetsDirectory.path)
+    }
+
     func testInitDefaultsToContinuousPlayback() throws {
         // Given
         let defaults = try makeUserDefaults()
@@ -337,6 +611,95 @@ final class AppViewModelTests: XCTestCase {
 
         // Then
         XCTAssertFalse(model.autoPauseWhenCovered)
+    }
+
+    func testInitDefaultsToDisabledWallpaperAudioAtHalfVolume() throws {
+        // Given
+        let defaults = try makeUserDefaults()
+
+        // When
+        let model = AppViewModel(
+            store: LibraryStore(root: try makeTempDirectory()),
+            loginItemController: MockLoginItemController(),
+            userDefaults: defaults
+        )
+
+        // Then: audio defaults off so existing users aren't surprised by
+        // wallpapers suddenly making sound.
+        XCTAssertFalse(model.wallpaperAudioEnabled)
+        XCTAssertEqual(model.wallpaperAudioVolume, 0.5, accuracy: 0.0001)
+    }
+
+    func testWallpaperAudioPreferencesPersistAcrossRestarts() throws {
+        // Given
+        let defaults = try makeUserDefaults()
+        let model = AppViewModel(
+            store: LibraryStore(root: try makeTempDirectory()),
+            loginItemController: MockLoginItemController(),
+            userDefaults: defaults
+        )
+
+        // When
+        model.wallpaperAudioEnabled = true
+        model.wallpaperAudioVolume = 0.85
+
+        // Then
+        XCTAssertTrue(defaults.bool(forKey: "wallpaperAudioEnabled"))
+        XCTAssertEqual(defaults.double(forKey: "wallpaperAudioVolume"), 0.85, accuracy: 0.0001)
+
+        // And: a freshly constructed view model restores them.
+        let restored = AppViewModel(
+            store: LibraryStore(root: try makeTempDirectory()),
+            loginItemController: MockLoginItemController(),
+            userDefaults: defaults
+        )
+        XCTAssertTrue(restored.wallpaperAudioEnabled)
+        XCTAssertEqual(restored.wallpaperAudioVolume, 0.85, accuracy: 0.0001)
+    }
+
+    func testLanguagePreferencePersistsAcrossRestarts() throws {
+        // Given
+        let defaults = try makeUserDefaults()
+        let model = AppViewModel(
+            store: LibraryStore(root: try makeTempDirectory()),
+            loginItemController: MockLoginItemController(),
+            userDefaults: defaults
+        )
+        XCTAssertEqual(model.language, .system)
+
+        // When
+        model.language = .korean
+
+        // Then
+        XCTAssertEqual(defaults.string(forKey: "language"), "ko")
+
+        // And: a freshly constructed view model restores it.
+        let restored = AppViewModel(
+            store: LibraryStore(root: try makeTempDirectory()),
+            loginItemController: MockLoginItemController(),
+            userDefaults: defaults
+        )
+        XCTAssertEqual(restored.language, .korean)
+    }
+
+    func testLocalizedStringResolvesDifferentlyByLanguage() throws {
+        // Given
+        let model = AppViewModel(
+            store: LibraryStore(root: try makeTempDirectory()),
+            loginItemController: MockLoginItemController(),
+            userDefaults: try makeUserDefaults()
+        )
+
+        // When
+        model.language = .english
+        let english = model.L("tab.library")
+        model.language = .korean
+        let korean = model.L("tab.library")
+
+        // Then
+        XCTAssertEqual(english, "Library")
+        XCTAssertEqual(korean, "라이브러리")
+        XCTAssertNotEqual(english, korean)
     }
 
     func testInitRestoresLockScreenAnimationPreferenceWithoutInstalling() throws {
@@ -583,6 +946,19 @@ final class AppViewModelTests: XCTestCase {
             redistributionAllowed: false,
             issues: []
         )
+    }
+
+    private func makeSceneEngineAssetsFixture(in root: URL) throws -> URL {
+        let assetsDirectory = root.appending(path: "wallpaper-engine-assets")
+        for relativePath in SceneEngineRendererConfiguration.requiredAssetPaths {
+            let fileURL = assetsDirectory.appending(path: relativePath)
+            try FileManager.default.createDirectory(
+                at: fileURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try "{}\n".write(to: fileURL, atomically: true, encoding: .utf8)
+        }
+        return assetsDirectory
     }
 }
 

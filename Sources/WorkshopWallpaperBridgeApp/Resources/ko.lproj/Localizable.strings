@@ -1,0 +1,82 @@
+/* App chrome */
+"app.title" = "Workshop Wallpaper Bridge";
+"app.subtitle" = "복사해 온 Wallpaper Engine 프로젝트를 위한 메뉴바 월페이퍼 유틸리티입니다.";
+"app.stop" = "정지";
+
+/* Tabs */
+"tab.library" = "라이브러리";
+"tab.settings" = "설정";
+
+/* Library tab: source import */
+"library.source.title" = "가져오기";
+"library.source.placeholder" = ".../steamapps/workshop/content/431960";
+"library.browse" = "찾아보기";
+"library.scan" = "스캔";
+"library.import" = "선택 항목 가져오기";
+"library.import.help.title" = "프로젝트 가져오기";
+"library.import.help.body" = "복사한 Workshop 폴더를 선택하고 스캔을 누른 뒤, 스캔된 프로젝트를 하나 이상 선택하고 선택 항목 가져오기를 눌러 Mac 라이브러리에 추가하세요.";
+"library.scanned.empty" = "스캔된 프로젝트";
+"library.imported.empty" = "가져온 프로젝트";
+"library.sort.title" = "정렬";
+"library.new.badge" = "NEW";
+"library.preview.placeholder" = "월페이퍼를 선택하세요";
+"library.preview.empty" = "선택한 월페이퍼의 미리보기가 여기에 표시됩니다.";
+
+/* Library tab: toolbar */
+"library.display" = "디스플레이";
+"library.addVideo" = "동영상 파일 추가";
+
+/* Library tab: rotation */
+"library.rotate" = "라이브러리 순환 재생";
+"library.rotate.shuffle" = "무작위 재생";
+"library.rotate.every" = "간격";
+"library.rotate.next" = "다음";
+
+/* Library tab: actions */
+"library.play" = "데스크톱에서 재생";
+"library.remove" = "삭제";
+"library.remove.selected" = "선택 항목 삭제";
+"library.remove.confirm.title" = "\"%@\"을(를) 휴지통으로 이동할까요?";
+"library.remove.confirm.title.fallback" = "휴지통으로 이동할까요?";
+"library.remove.confirm.message" = "가져온 사본이 휴지통으로 이동하며, 필요하면 복원할 수 있습니다. 원본으로 복사해 둔 Workshop 폴더는 그대로 유지됩니다.";
+"library.remove.confirm.button" = "휴지통으로 이동";
+"library.more" = "더 보기";
+"library.convert" = "동영상 변환";
+"library.setStillWallpaper" = "정지 배경화면으로 설정";
+"library.screenSaverSettings" = "화면 보호기 설정";
+"library.help.title" = "라이브러리 안내";
+"library.help.body" = "가져온 파일은 로컬에만 저장되며 원본은 수정되지 않습니다. 동영상 월페이퍼는 정지 배경화면용으로 프레임을 생성하고, 화면 보호기 애니메이션은 MP4, MOV, M4V를 지원합니다.";
+
+/* Settings tab: playback */
+"settings.playback.title" = "재생";
+"settings.openAtLogin" = "로그인 시 열기";
+"settings.autoPause" = "다른 앱에 가려지면 자동 일시정지";
+"settings.animateScreenSaver" = "화면 보호기 애니메이션";
+"settings.autoCheckUpdates" = "업데이트 자동 확인";
+"settings.checkUpdates" = "업데이트 확인";
+"settings.downloadUpdate" = "업데이트 다운로드";
+
+/* Settings tab: audio */
+"settings.audio.title" = "오디오";
+"settings.audio.toggle" = "월페이퍼 오디오 재생";
+"settings.audio.help.title" = "월페이퍼 오디오 안내";
+"settings.audio.help.body" = "동영상 월페이퍼와 scene의 배경음악/환경음에 적용됩니다. 월페이퍼가 다른 앱에 가려져 자동 일시정지되면 소리도 함께 멈춥니다.";
+
+/* Settings tab: scene engine assets */
+"settings.scene.title" = "Scene Engine Assets";
+"settings.scene.choose" = "Assets 폴더 선택...";
+"settings.scene.reset" = "초기화";
+"settings.scene.help.title" = "Scene Engine Assets 안내";
+"settings.scene.help.body" = "Windows에 설치된 steamapps/common/wallpaper_engine/assets 폴더의 내용을 복사하세요.";
+
+/* Settings tab: language */
+"settings.language.title" = "언어";
+"settings.language.system" = "시스템";
+"settings.language.korean" = "한국어";
+"settings.language.english" = "English";
+"settings.language.help.title" = "언어 안내";
+"settings.language.help.body" = "변경 사항은 이 창에 즉시 적용됩니다. 앱 실행 중 생성되는 상태 메시지는 영어로 표시될 수 있습니다.";
+
+/* Common */
+"common.ok" = "확인";
+"common.cancel" = "취소";

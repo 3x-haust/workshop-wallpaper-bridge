@@ -133,7 +133,7 @@ final class AppViewModelRotationTests: XCTestCase {
         XCTAssertFalse(defaults.bool(forKey: "rotationEnabled"))
         XCTAssertEqual(
             model.status,
-            "Removed Asset last from your Mac library. Rotation stopped — no playable wallpapers left."
+            "Moved Asset last to the Trash. Rotation stopped — no playable wallpapers left."
         )
     }
 
@@ -287,7 +287,9 @@ private final class MockWallpaperPlayer: WallpaperPlaying {
     func play(
         asset: WallpaperAsset,
         autoPauseWhenCovered: Bool,
-        displayMode: WallpaperDisplayMode
+        displayMode: WallpaperDisplayMode,
+        audioEnabled: Bool?,
+        audioVolume: Double?
     ) throws {
         playedAssetIds.append(asset.id)
         if failingAssetIds.contains(asset.id) {

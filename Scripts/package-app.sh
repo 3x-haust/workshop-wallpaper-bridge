@@ -6,13 +6,21 @@ APP_NAME="Workshop Wallpaper Bridge"
 APP_DIR="$ROOT/dist/$APP_NAME.app"
 MACOS_DIR="$APP_DIR/Contents/MacOS"
 RESOURCES_DIR="$APP_DIR/Contents/Resources"
+RENDERERS_DIR="$RESOURCES_DIR/Renderers"
+RENDERER_NOTICE_DIR="$RESOURCES_DIR/Renderer Notices"
+RENDERER_NOTICE_PATH="$RENDERER_NOTICE_DIR/GPL Scene Renderer Notice.txt"
 SAVER_NAME="Workshop Wallpaper Bridge"
 SAVER_DIR="$RESOURCES_DIR/$SAVER_NAME.saver"
 SAVER_MACOS_DIR="$SAVER_DIR/Contents/MacOS"
 SAVER_EXECUTABLE="Workshop Wallpaper Bridge Lock Screen"
 DMG_PATH="$ROOT/dist/WorkshopWallpaperBridge-macOS-arm64.dmg"
-APP_VERSION="${APP_VERSION:-1.1.4}"
-BUNDLE_VERSION="${BUNDLE_VERSION:-10}"
+APP_VERSION="${APP_VERSION:-1.4.0}"
+BUNDLE_VERSION="${BUNDLE_VERSION:-12}"
+SCENE_RENDERER_BINARY="${SCENE_RENDERER_BINARY:-}"
+SCENE_RENDERER_CONVENTIONAL_PATH="$ROOT/ExternalRenderers/wwb-scene-renderer"
+SCENE_RENDERER_BUNDLED_PATH=""
+SCENE_RENDERER_SOURCE_URL="${SCENE_RENDERER_SOURCE_URL:-https://github.com/3x-haust/wallpaperengine-mac-renderer}"
+SCENE_RENDERER_SOURCE_REF="${SCENE_RENDERER_SOURCE_REF:-b79ac590ff5ddcfdae2d26f5c3a5d289b3e4b058}"
 SIGN_IDENTITY="${SIGN_IDENTITY:-}"
 NOTARY_PROFILE="${NOTARY_PROFILE:-}"
 NOTARY_KEYCHAIN="${NOTARY_KEYCHAIN:-}"
@@ -78,6 +86,60 @@ assert_no_quarantine_metadata() {
   fi
 }
 
+bundle_scene_renderer_if_available() {
+  local source_path=""
+
+  if [ -n "$SCENE_RENDERER_BINARY" ]; then
+    source_path="$SCENE_RENDERER_BINARY"
+    if [ ! -f "$source_path" ]; then
+      printf '%s\n' "SCENE_RENDERER_BINARY does not point to a file: $source_path" >&2
+      exit 1
+    fi
+    if [ ! -x "$source_path" ]; then
+      printf '%s\n' "SCENE_RENDERER_BINARY is not executable: $source_path" >&2
+      exit 1
+    fi
+  elif [ -f "$SCENE_RENDERER_CONVENTIONAL_PATH" ]; then
+    source_path="$SCENE_RENDERER_CONVENTIONAL_PATH"
+    if [ ! -x "$source_path" ]; then
+      printf '%s\n' "conventional scene renderer exists but is not executable: $source_path" >&2
+      exit 1
+    fi
+  else
+    printf '%s\n' "warning: no external GPL scene renderer bundled; set SCENE_RENDERER_BINARY or place one at $SCENE_RENDERER_CONVENTIONAL_PATH." >&2
+  fi
+
+  mkdir -p "$RENDERER_NOTICE_DIR"
+  if [ -n "$source_path" ]; then
+    mkdir -p "$RENDERERS_DIR"
+    SCENE_RENDERER_BUNDLED_PATH="$RENDERERS_DIR/wwb-scene-renderer"
+    cp "$source_path" "$SCENE_RENDERER_BUNDLED_PATH"
+    chmod +x "$SCENE_RENDERER_BUNDLED_PATH"
+
+    local source_dir
+    local dylib
+    source_dir="$(cd "$(dirname "$source_path")" && pwd)"
+    for dylib in "$source_dir"/*.dylib; do
+      if [ -f "$dylib" ]; then
+        cp "$dylib" "$RENDERERS_DIR/"
+      fi
+    done
+    if command -v install_name_tool >/dev/null 2>&1; then
+      install_name_tool -add_rpath "@executable_path" "$SCENE_RENDERER_BUNDLED_PATH" 2>/dev/null || true
+    fi
+  fi
+
+  cat > "$RENDERER_NOTICE_PATH" <<NOTICE
+Workshop Wallpaper Bridge can use a separate GPL scene renderer subprocess for scene.pkg playback when that renderer is bundled.
+
+Bundled renderer: ${SCENE_RENDERER_BUNDLED_PATH:-not bundled in this build}
+Renderer source: $SCENE_RENDERER_SOURCE_URL
+Renderer source ref: $SCENE_RENDERER_SOURCE_REF
+
+The main Workshop Wallpaper Bridge app remains MIT-licensed. The external scene renderer, when bundled, is distributed as a separate GPL component and its corresponding source must remain available at the source/ref above or an equivalent published source location.
+NOTICE
+}
+
 verify_gatekeeper_accepts_quarantined_app_from_dmg() {
   local mounted_app
   local copied_app
@@ -116,6 +178,7 @@ rm -rf "$ROOT/dist"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR" "$SAVER_MACOS_DIR"
 cp "$ROOT/.build/release/WorkshopWallpaperBridge" "$MACOS_DIR/Workshop Wallpaper Bridge"
 cp "$ROOT/.build/release/wwbctl" "$MACOS_DIR/wwbctl"
+bundle_scene_renderer_if_available
 cat > "$APP_DIR/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -189,6 +252,9 @@ assert_no_quarantine_metadata "$APP_DIR"
 if [ -n "$SIGN_IDENTITY" ]; then
   codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$MACOS_DIR/wwbctl"
   codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$MACOS_DIR/Workshop Wallpaper Bridge"
+  if [ -n "$SCENE_RENDERER_BUNDLED_PATH" ]; then
+    codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$SCENE_RENDERER_BUNDLED_PATH"
+  fi
   codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$SAVER_DIR"
   codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$APP_DIR"
   codesign --verify --strict --verbose=2 "$APP_DIR"

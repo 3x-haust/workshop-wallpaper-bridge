@@ -1,0 +1,82 @@
+/* App chrome */
+"app.title" = "Workshop Wallpaper Bridge";
+"app.subtitle" = "Menu bar wallpaper utility for copied Wallpaper Engine projects.";
+"app.stop" = "Stop";
+
+/* Tabs */
+"tab.library" = "Library";
+"tab.settings" = "Settings";
+
+/* Library tab: source import */
+"library.source.title" = "Source";
+"library.source.placeholder" = ".../steamapps/workshop/content/431960";
+"library.browse" = "Browse";
+"library.scan" = "Scan";
+"library.import" = "Import Selected";
+"library.import.help.title" = "Importing projects";
+"library.import.help.body" = "Select the copied Workshop folder and click Scan, then choose one or more scanned projects and click Import Selected to add them to your Mac library.";
+"library.scanned.empty" = "Scanned Projects";
+"library.imported.empty" = "Imported Projects";
+"library.sort.title" = "Sort";
+"library.new.badge" = "NEW";
+"library.preview.placeholder" = "Select a wallpaper";
+"library.preview.empty" = "The selected wallpaper preview appears here.";
+
+/* Library tab: toolbar */
+"library.display" = "Display";
+"library.addVideo" = "Add Video File";
+
+/* Library tab: rotation */
+"library.rotate" = "Rotate Library";
+"library.rotate.shuffle" = "Shuffle";
+"library.rotate.every" = "Every";
+"library.rotate.next" = "Next";
+
+/* Library tab: actions */
+"library.play" = "Play on Desktop";
+"library.remove" = "Remove";
+"library.remove.selected" = "Remove Selected";
+"library.remove.confirm.title" = "Move \"%@\" to the Trash?";
+"library.remove.confirm.title.fallback" = "Move to the Trash?";
+"library.remove.confirm.message" = "This moves the imported copy to the Trash, where it can be restored. The original copied Workshop folder is not touched.";
+"library.remove.confirm.button" = "Move to Trash";
+"library.more" = "More";
+"library.convert" = "Convert Video";
+"library.setStillWallpaper" = "Set Still Wallpaper";
+"library.screenSaverSettings" = "Screen Saver Settings";
+"library.help.title" = "About the library";
+"library.help.body" = "Imported files stay local; originals are never modified. Video wallpapers use a generated frame for still wallpaper, and Screen Saver animation supports MP4, MOV, and M4V.";
+
+/* Settings tab: playback */
+"settings.playback.title" = "Playback";
+"settings.openAtLogin" = "Open at Login";
+"settings.autoPause" = "Auto-pause behind apps";
+"settings.animateScreenSaver" = "Animate Screen Saver";
+"settings.autoCheckUpdates" = "Auto-check Updates";
+"settings.checkUpdates" = "Check Updates";
+"settings.downloadUpdate" = "Download Update";
+
+/* Settings tab: audio */
+"settings.audio.title" = "Audio";
+"settings.audio.toggle" = "Play wallpaper audio";
+"settings.audio.help.title" = "About wallpaper audio";
+"settings.audio.help.body" = "Applies to video wallpapers and scene background music/ambience. If the wallpaper pauses because it's covered by another app, its audio pauses too.";
+
+/* Settings tab: scene engine assets */
+"settings.scene.title" = "Scene Engine Assets";
+"settings.scene.choose" = "Choose Assets Folder...";
+"settings.scene.reset" = "Reset";
+"settings.scene.help.title" = "About Scene Engine assets";
+"settings.scene.help.body" = "Copy the contents of steamapps/common/wallpaper_engine/assets from your Windows install.";
+
+/* Settings tab: language */
+"settings.language.title" = "Language";
+"settings.language.system" = "System";
+"settings.language.korean" = "한국어";
+"settings.language.english" = "English";
+"settings.language.help.title" = "About Language";
+"settings.language.help.body" = "Changes take effect immediately in this window. Status messages generated while the app is running may remain in English.";
+
+/* Common */
+"common.ok" = "OK";
+"common.cancel" = "Cancel";

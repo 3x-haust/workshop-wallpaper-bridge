@@ -9,16 +9,39 @@ final class ScreenSaverFeatureTests: XCTestCase {
     }
 
     func testScreenSaverControlsUseScreenSaverLanguage() throws {
-        let contentView = try String(contentsOfFile: "Sources/WorkshopWallpaperBridgeApp/ContentView.swift")
+        // Settings-tab controls now source their labels from Localizable.strings
+        // rather than a string literal in Swift source (see AppViewModel.L(_:)),
+        // so check the English table alongside the still-literal StatusMenu/AppViewModel copy.
+        let settingsTab = try String(contentsOfFile: "Sources/WorkshopWallpaperBridgeApp/SettingsTabView.swift")
+        let localizableEn = try String(
+            contentsOfFile: "Sources/WorkshopWallpaperBridgeApp/Resources/en.lproj/Localizable.strings"
+        )
         let statusMenu = try String(contentsOfFile: "Sources/WorkshopWallpaperBridgeApp/StatusMenu.swift")
         let viewModel = try String(contentsOfFile: "Sources/WorkshopWallpaperBridgeApp/AppViewModel.swift")
 
-        XCTAssertTrue(contentView.contains("Animate Screen Saver"))
+        XCTAssertTrue(settingsTab.contains("settings.animateScreenSaver"))
+        XCTAssertTrue(localizableEn.contains("\"settings.animateScreenSaver\" = \"Animate Screen Saver\";"))
         XCTAssertTrue(statusMenu.contains("Animate Screen Saver"))
         XCTAssertTrue(viewModel.contains("Installed and selected Workshop Wallpaper Bridge Screen Saver"))
-        XCTAssertFalse(contentView.contains("Animate Lock Screen"))
         XCTAssertFalse(statusMenu.contains("Animate Lock Screen"))
         XCTAssertFalse(viewModel.contains("Animated Lock Screen"))
+    }
+
+    func testSceneAssetsSettingsExposePickerAndReset() throws {
+        let settingsTab = try String(contentsOfFile: "Sources/WorkshopWallpaperBridgeApp/SettingsTabView.swift")
+        let localizableEn = try String(
+            contentsOfFile: "Sources/WorkshopWallpaperBridgeApp/Resources/en.lproj/Localizable.strings"
+        )
+        let viewModel = try String(contentsOfFile: "Sources/WorkshopWallpaperBridgeApp/AppViewModel.swift")
+
+        XCTAssertTrue(settingsTab.contains("settings.scene.title"))
+        XCTAssertTrue(localizableEn.contains("\"settings.scene.title\" = \"Scene Engine Assets\";"))
+        XCTAssertTrue(localizableEn.contains("\"settings.scene.choose\" = \"Choose Assets Folder...\";"))
+        XCTAssertTrue(settingsTab.contains("model.chooseSceneAssetsFolder()"))
+        XCTAssertTrue(settingsTab.contains("model.clearSceneAssetsFolder()"))
+        XCTAssertTrue(viewModel.contains("steamapps/common/wallpaper_engine/assets"))
+        XCTAssertTrue(viewModel.contains("materials/"))
+        XCTAssertTrue(viewModel.contains("shaders/"))
     }
 
     func testScreenSaverViewShowsFallbackInsteadOfBlackOnlyContent() throws {
@@ -73,6 +96,35 @@ final class ScreenSaverFeatureTests: XCTestCase {
         XCTAssertTrue(source.contains("self.playerLayer.hidden = YES"))
         XCTAssertTrue(source.contains("dispatch_async(dispatch_get_main_queue()"))
         XCTAssertTrue(source.contains("WorkshopWallpaperPlayerItemStatusContext"))
+    }
+
+    func testScreenSaverShowsDiagnosticInsteadOfBlackWhenStillImageFailsToLoad() throws {
+        let source = try String(
+            contentsOfFile: "Sources/WorkshopWallpaperLockScreenSaver/WorkshopWallpaperLockScreenSaverView.m"
+        )
+
+        XCTAssertTrue(source.contains("CGImageRef cgImage = image ? [image CGImageForProposedRect:NULL context:nil hints:nil] : NULL;"))
+        XCTAssertTrue(source.contains("if (!image || !cgImage) {"))
+        XCTAssertTrue(source.contains("[self showFallbackMessage:[NSString stringWithFormat:@\"Could not load the wallpaper image at %@.\", url.path]];"))
+    }
+
+    func testSceneVideoRenderCompletionRefreshesLockScreenConfiguration() throws {
+        let wallpaperPlayer = try String(contentsOfFile: "Sources/WorkshopWallpaperBridgeApp/WallpaperPlayer.swift")
+        let viewModel = try String(contentsOfFile: "Sources/WorkshopWallpaperBridgeApp/AppViewModel.swift")
+
+        XCTAssertTrue(wallpaperPlayer.contains("static var sceneVideoRenderCompletionHandler: ((String) -> Void)?"))
+        XCTAssertTrue(wallpaperPlayer.contains("sceneVideoRenderCompletionHandler?(assetId)"))
+        XCTAssertTrue(viewModel.contains("SceneWallpaperContentFactory.sceneVideoRenderCompletionHandler = { [weak self] assetId in"))
+        XCTAssertTrue(viewModel.contains("refreshLockScreenAnimationConfigurationAfterSceneVideoRender(assetId: assetId)"))
+    }
+
+    func testLockScreenAnimationControllerReusesFreshCachedSceneVideoAsSourcePath() throws {
+        let source = try String(
+            contentsOfFile: "Sources/WorkshopWallpaperBridgeApp/LockScreenAnimationController.swift"
+        )
+
+        XCTAssertTrue(source.contains("if asset.kind == .scene {"))
+        XCTAssertTrue(source.contains("SceneVideoCache.freshCachedVideoURL(assetId: asset.id, sourceURL: sourceURL)?.path"))
     }
 
     func testScreenSaverViewHasAppKitDrawingFallbackForLegacyHosts() throws {

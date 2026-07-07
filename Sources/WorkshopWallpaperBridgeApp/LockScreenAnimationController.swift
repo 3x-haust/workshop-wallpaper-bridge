@@ -143,12 +143,23 @@ struct LockScreenAnimationController: LockScreenAnimationManaging {
     }
 
     private func animatedVideoPath(for asset: WallpaperAsset?) -> String? {
-        guard let path = asset?.entrypoint,
-              asset?.kind == .video,
-              Self.screenSaverVideoExtensions.contains(URL(filePath: path).pathExtension.lowercased()) else {
+        guard let asset, let entrypoint = asset.entrypoint else {
             return nil
         }
-        return path
+        if asset.kind == .video,
+           Self.screenSaverVideoExtensions.contains(URL(filePath: entrypoint).pathExtension.lowercased()) {
+            return entrypoint
+        }
+        // Scenes don't have a directly playable video entrypoint, but once a
+        // scene has been played at least once it has a cached looping mp4
+        // rendered from it (see `SceneVideoCache`). Reuse that cache so the
+        // lock screen animates the same video the desktop wallpaper plays,
+        // instead of only ever showing the scene's static preview image.
+        if asset.kind == .scene {
+            let sourceURL = URL(filePath: entrypoint)
+            return SceneVideoCache.freshCachedVideoURL(assetId: asset.id, sourceURL: sourceURL)?.path
+        }
+        return nil
     }
 
     private func stillImagePath(for asset: WallpaperAsset?) -> String? {

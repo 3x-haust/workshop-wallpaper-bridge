@@ -1,10 +1,35 @@
 import Foundation
 
+/// Seam over `FileManager`'s trash/remove operations so tests can verify the
+/// library-asset removal path prefers Trash (recoverable) over a permanent
+/// delete, and can simulate a volume that doesn't support Trash.
+public protocol AssetTrashing: Sendable {
+    /// Moves `url` to the Trash. Mirrors `FileManager.trashItem(at:resultingItemURL:)`.
+    func trashItem(at url: URL) throws
+    /// Permanently deletes `url`. Mirrors `FileManager.removeItem(at:)`.
+    func removeItem(at url: URL) throws
+}
+
+public struct FileManagerAssetTrasher: AssetTrashing {
+    public init() {}
+
+    public func trashItem(at url: URL) throws {
+        var resultingURL: NSURL?
+        try FileManager.default.trashItem(at: url, resultingItemURL: &resultingURL)
+    }
+
+    public func removeItem(at url: URL) throws {
+        try FileManager.default.removeItem(at: url)
+    }
+}
+
 public struct LibraryStore: Sendable {
     public let root: URL
+    private let trasher: AssetTrashing
 
-    public init(root: URL) {
+    public init(root: URL, trasher: AssetTrashing = FileManagerAssetTrasher()) {
         self.root = root
+        self.trasher = trasher
     }
 
     public func load() throws -> LibraryManifest {
@@ -213,13 +238,22 @@ public struct LibraryStore: Sendable {
         try data.write(to: root.appending(path: "library.json"), options: [.atomic])
     }
 
+    /// Moves the asset's imported library directory to the Trash rather than
+    /// deleting it outright, so a mistaken removal (or a removal of an asset
+    /// whose original Workshop copy is already gone) stays recoverable. Falls
+    /// back to a permanent delete only if the volume doesn't support Trash.
     private func removeLibraryDirectory(for asset: WallpaperAsset) throws {
         let directory = URL(filePath: asset.projectDirectory).standardizedFileURL
         guard isInsideAssetsRoot(directory) else {
             return
         }
-        if FileManager.default.fileExists(atPath: directory.path) {
-            try FileManager.default.removeItem(at: directory)
+        guard FileManager.default.fileExists(atPath: directory.path) else {
+            return
+        }
+        do {
+            try trasher.trashItem(at: directory)
+        } catch {
+            try trasher.removeItem(at: directory)
         }
     }
 

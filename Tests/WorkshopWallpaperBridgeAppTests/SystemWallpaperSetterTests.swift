@@ -83,8 +83,37 @@ final class SystemWallpaperSetterTests: XCTestCase {
         let thumbnailURL = root.appending(path: "preview.gif")
         try makeVideo(at: videoURL)
         try Data("GIF89a".utf8).write(to: thumbnailURL)
-        let provider = StillWallpaperImageProvider(cacheDirectory: root.appending(path: "cache"))
+        let cacheDirectory = root.appending(path: "cache")
+        var exportedVideoURL: URL?
+        let provider = StillWallpaperImageProvider(
+            cacheDirectory: cacheDirectory,
+            exportVideoFrame: { videoURL, assetId, cacheDirectory in
+                exportedVideoURL = videoURL
+                let output = cacheDirectory.appending(path: "\(assetId)-still.png")
+                try FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
+                try self.makeImage(at: output)
+                return output
+            }
+        )
         let asset = makeAsset(kind: .video, entrypoint: videoURL.path, thumbnail: thumbnailURL.path)
+
+        // When
+        let output = try provider.stillImageURL(for: asset)
+
+        // Then
+        XCTAssertEqual(output.pathExtension, "png")
+        XCTAssertEqual(exportedVideoURL, videoURL)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: output.path))
+        XCTAssertGreaterThan(try Data(contentsOf: output).count, 0)
+    }
+
+    func testDefaultStillImageProviderExtractsPlayableVideoFrameWhenAVFoundationCanDecodeFixture() throws {
+        // Given
+        let root = try makeTempDirectory()
+        let videoURL = root.appending(path: "clip.mp4")
+        try makeVideo(at: videoURL)
+        let provider = StillWallpaperImageProvider(cacheDirectory: root.appending(path: "cache"))
+        let asset = makeAsset(kind: .video, entrypoint: videoURL.path, thumbnail: nil)
 
         // When
         let output = try provider.stillImageURL(for: asset)
@@ -182,57 +211,28 @@ final class SystemWallpaperSetterTests: XCTestCase {
     }
 
     private func makeVideo(at url: URL) throws {
-        let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
-        let input = AVAssetWriterInput(
-            mediaType: .video,
-            outputSettings: [
-                AVVideoCodecKey: AVVideoCodecType.h264,
-                AVVideoWidthKey: 64,
-                AVVideoHeightKey: 36
-            ]
-        )
-        let adaptor = AVAssetWriterInputPixelBufferAdaptor(
-            assetWriterInput: input,
-            sourcePixelBufferAttributes: [
-                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-                kCVPixelBufferWidthKey as String: 64,
-                kCVPixelBufferHeightKey as String: 36
-            ]
-        )
-        writer.add(input)
-        writer.startWriting()
-        writer.startSession(atSourceTime: .zero)
-        let buffer = try makePixelBuffer(width: 64, height: 36)
-        XCTAssertTrue(adaptor.append(buffer, withPresentationTime: .zero))
-        input.markAsFinished()
-        let semaphore = DispatchSemaphore(value: 0)
-        writer.finishWriting { semaphore.signal() }
-        semaphore.wait()
-        if let error = writer.error {
-            throw error
+        guard let ffmpeg = VideoConverter().ffmpegPath() else {
+            throw XCTSkip("ffmpeg is required to create the video fixture.")
         }
-        XCTAssertEqual(writer.status, .completed)
-    }
-
-    private func makePixelBuffer(width: Int, height: Int) throws -> CVPixelBuffer {
-        var buffer: CVPixelBuffer?
-        let status = CVPixelBufferCreate(
-            kCFAllocatorDefault,
-            width,
-            height,
-            kCVPixelFormatType_32BGRA,
-            nil,
-            &buffer
-        )
-        guard status == kCVReturnSuccess, let buffer else {
-            throw SystemWallpaperError.noStillImage
-        }
-        CVPixelBufferLockBaseAddress(buffer, [])
-        defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
-        guard let baseAddress = CVPixelBufferGetBaseAddress(buffer) else {
-            throw SystemWallpaperError.noStillImage
-        }
-        memset(baseAddress, 0x80, CVPixelBufferGetDataSize(buffer))
-        return buffer
+        let process = Process()
+        process.executableURL = URL(filePath: ffmpeg)
+        process.arguments = [
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=size=32x32:rate=1:duration=1",
+            "-frames:v",
+            "1",
+            url.path
+        ]
+        process.standardOutput = Pipe()
+        process.standardError = Pipe()
+        try process.run()
+        process.waitUntilExit()
+        XCTAssertEqual(process.terminationStatus, 0)
     }
 }

@@ -2,248 +2,60 @@ import AppKit
 import SwiftUI
 import WorkshopWallpaperCore
 
+private enum SettingsTab: Hashable {
+    case library
+    case settings
+}
+
 struct ContentView: View {
     @ObservedObject var model: AppViewModel
+    @State private var selectedTab: SettingsTab = .library
 
     var body: some View {
         VStack(spacing: 0) {
             header
             Divider()
-            HStack(spacing: 0) {
-                scanPanel
-                Divider()
-                libraryPanel
+            TabView(selection: $selectedTab) {
+                LibraryTabView(model: model)
+                    .tabItem { Text(model.L("tab.library")) }
+                    .tag(SettingsTab.library)
+                SettingsTabView(model: model)
+                    .tabItem { Text(model.L("tab.settings")) }
+                    .tag(SettingsTab.settings)
             }
             Divider()
             statusBar
         }
+        .frame(minWidth: 640, minHeight: 560)
         .alert(item: $model.updateAlert) { alert in
             updateAlert(alert)
         }
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Workshop Wallpaper Bridge")
-                        .font(.title2.weight(.semibold))
-                    Text("Menu bar wallpaper utility for copied Wallpaper Engine projects.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button("Stop") {
-                    model.stopPlayback()
-                }
-                .keyboardShortcut(".", modifiers: [.command, .shift])
-            }
-
-            HStack(spacing: 14) {
-                headerToggle("Open at Login", isOn: $model.launchAtLogin)
-                headerToggle("Auto-pause behind apps", isOn: $model.autoPauseWhenCovered)
-                headerToggle("Animate Screen Saver", isOn: $model.lockScreenAnimationEnabled)
-                headerToggle("Auto-check Updates", isOn: $model.automaticallyCheckForUpdates)
-            }
-
-            HStack(spacing: 8) {
-                Button("Check Updates") {
-                    model.checkForUpdates()
-                }
-                .disabled(model.isCheckingForUpdates)
-                if model.availableUpdate != nil {
-                    Button("Download Update") {
-                        model.openAvailableUpdate()
-                    }
-                }
-                Spacer()
-            }
-        }
-        .padding()
-    }
-
-    private func headerToggle(_ title: String, isOn: Binding<Bool>) -> some View {
-        Toggle(isOn: isOn) {
-            Text(title)
-                .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
-        }
-        .toggleStyle(.switch)
-        .font(.callout)
-        .frame(width: 220, alignment: .leading)
-    }
-
-    private var scanPanel: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("1. Choose the copied Workshop folder")
-                .font(.headline)
-            Text(
-                "Select the `431960` folder you copied from Windows Steam, "
-                    + "or add your own video from the library side."
-            )
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            HStack {
-                TextField(".../steamapps/workshop/content/431960", text: $model.sourcePath)
-                Button("Browse") {
-                    model.chooseFolder()
-                }
-                Button("Scan") {
-                    model.scanSource()
-                }
-            }
-            HStack {
-                Text("Scanned Projects")
-                    .font(.subheadline.weight(.semibold))
-                Spacer()
-                Picker("Sort", selection: $model.scannedSortOrder) {
-                    ForEach(ScannedAssetSortOrder.allCases) { order in
-                        Text(order.title).tag(order)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 220)
-            }
-            assetList(
-                title: "Scanned Projects",
-                assets: model.scannedAssets,
-                previewAsset: model.selectedScannedAsset,
-                isNew: { model.isNewScannedAsset($0) },
-                selection: Binding(
-                    get: { model.selectedScannedAssetIds },
-                    set: { model.selectScannedAssets($0) }
-                )
-            )
-            HStack {
-                Button(importButtonTitle) {
-                    model.importSelected()
-                }
-                .disabled(model.selectedScannedAssetIds.isEmpty || model.isWorking)
-                Spacer()
-            }
-        }
-        .padding()
-        .frame(minWidth: 460)
-    }
-
-    private var libraryPanel: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("2. Play from your Mac library")
-                .font(.headline)
-            HStack {
-                Text("Imported files stay local. The original files are not modified.")
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(model.L("app.title"))
+                    .font(.title3.weight(.semibold))
+                Text(model.L("app.subtitle"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Spacer()
-                Picker("Display", selection: $model.displayMode) {
-                    ForEach(WallpaperDisplayMode.allCases) { mode in
-                        Text(mode.title).tag(mode)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 220)
-                Button("Add Video File") {
-                    model.chooseVideoFile()
-                }
-                .disabled(model.isWorking)
+                    .lineLimit(1)
             }
-            libraryAssetList(
-                title: "Imported Projects",
-                assets: model.libraryAssets,
-                previewAsset: model.selectedLibraryAsset,
-                isNew: { _ in false },
-                selection: Binding(
-                    get: { model.selectedLibraryAssetIds },
-                    set: { model.selectLibraryAssets($0) }
-                )
-            )
-            libraryActions
-            Text(
-                "Video wallpapers use a generated video frame for still wallpaper. "
-                    + "Still images are written to the macOS Lock Screen cache when available. "
-                    + "Screen Saver animation uses the bundled macOS screen saver and supports MP4, MOV, and M4V."
-            )
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            Spacer()
+            Button(model.L("app.stop")) {
+                model.stopPlayback()
+            }
+            .keyboardShortcut(".", modifiers: [.command, .shift])
         }
         .padding()
-        .frame(minWidth: 460)
-    }
-
-    private var importButtonTitle: String {
-        model.selectedScannedAssetCount > 1
-            ? "Import Selected (\(model.selectedScannedAssetCount))"
-            : "Import Selected"
-    }
-
-    private var libraryActions: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                actionButton("Play on Desktop") {
-                    model.playSelected()
-                }
-                .disabled(model.selectedLibraryAsset == nil)
-                actionButton("Convert Video") {
-                    model.convertSelected()
-                }
-                .disabled(model.selectedLibraryAsset?.supportStatus != .needsConversion || model.isWorking)
-                actionButton("Set Still Wallpaper") {
-                    model.setStillWallpaper()
-                }
-                .disabled(model.selectedLibraryAsset == nil)
-                Spacer()
-            }
-            HStack(spacing: 8) {
-                actionButton("Screen Saver Settings") {
-                    model.openScreenSaverSettings()
-                }
-                actionButton(model.selectedLibraryAssetCount > 1 ? "Remove Selected" : "Remove") {
-                    model.removeSelectedLibraryAssets()
-                }
-                .disabled(model.selectedLibraryAssetIds.isEmpty || model.isWorking)
-                .keyboardShortcut(.delete, modifiers: [])
-                Spacer()
-            }
-            HStack(spacing: 16) {
-                Toggle("Rotate Library", isOn: $model.rotationEnabled)
-                    .toggleStyle(.switch)
-                    .lineLimit(1)
-                    .fixedSize()
-                Toggle("Shuffle", isOn: $model.rotationShuffle)
-                    .toggleStyle(.switch)
-                    .lineLimit(1)
-                    .fixedSize()
-                Spacer()
-            }
-            HStack(spacing: 12) {
-                Picker("Every", selection: $model.rotationInterval) {
-                    ForEach(AppViewModel.rotationIntervalOptions, id: \.seconds) { option in
-                        Text(option.label).tag(option.seconds)
-                    }
-                }
-                .fixedSize()
-                actionButton("Next") {
-                    model.nextWallpaper()
-                }
-                .disabled(!model.rotationEnabled)
-                Spacer()
-            }
-        }
-    }
-
-    private func actionButton(_ title: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title)
-                .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
-        }
     }
 
     private func updateAlert(_ alert: UpdateAlert) -> Alert {
         return Alert(
             title: Text(alert.title),
             message: Text(alert.message),
-            dismissButton: .default(Text("OK"))
+            dismissButton: .default(Text(model.L("common.ok")))
         )
     }
 
@@ -259,77 +71,53 @@ struct ContentView: View {
             }
             Text(model.status)
                 .foregroundStyle(.secondary)
+                .lineLimit(1)
             Spacer()
         }
         .padding(.horizontal)
         .padding(.vertical, 8)
     }
+}
 
-    private func assetList(
-        title: String,
-        assets: [WallpaperAsset],
-        previewAsset: WallpaperAsset?,
-        isNew: @escaping (WallpaperAsset) -> Bool,
-        selection: Binding<Set<WallpaperAsset.ID>>
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            List(selection: selection) {
-                ForEach(assets) { asset in
-                    AssetRow(asset: asset, isNew: isNew(asset))
-                        .tag(asset.id)
-                }
-            }
-            .overlay {
-                if assets.isEmpty {
-                    Text(title)
-                        .foregroundStyle(.tertiary)
-                }
-            }
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            AssetPreview(asset: previewAsset)
+/// A small "ⓘ" affordance that reveals a one-time explanation in a popover,
+/// used to keep long help/caption text out of the always-visible layout.
+struct HelpPopoverButton: View {
+    let title: String
+    let message: String
+    @State private var isPresented = false
+
+    var body: some View {
+        Button {
+            isPresented = true
+        } label: {
+            Image(systemName: "info.circle")
         }
-    }
-
-    private func libraryAssetList(
-        title: String,
-        assets: [WallpaperAsset],
-        previewAsset: WallpaperAsset?,
-        isNew: @escaping (WallpaperAsset) -> Bool,
-        selection: Binding<Set<WallpaperAsset.ID>>
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            List(selection: selection) {
-                ForEach(assets) { asset in
-                    AssetRow(asset: asset, isNew: isNew(asset))
-                        .tag(asset.id)
-                        .contextMenu {
-                            Button("Remove") {
-                                model.selectLibraryAssets([asset.id])
-                                model.removeSelectedLibraryAssets()
-                            }
-                        }
-                }
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
+        .popover(isPresented: $isPresented) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(title)
+                    .font(.headline)
+                Text(message)
+                    .font(.callout)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .overlay {
-                if assets.isEmpty {
-                    Text(title)
-                        .foregroundStyle(.tertiary)
-                }
-            }
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            AssetPreview(asset: previewAsset)
+            .padding()
+            .frame(width: 300)
         }
     }
 }
 
-private struct AssetPreview: View {
+struct AssetPreview: View {
     let asset: WallpaperAsset?
+    let placeholderTitle: String
+    let placeholderDescription: String
 
     var body: some View {
         HStack(spacing: 12) {
             previewImage
             VStack(alignment: .leading, spacing: 4) {
-                Text(asset?.title ?? "Select a wallpaper")
+                Text(asset?.title ?? placeholderTitle)
                     .font(.callout.weight(.semibold))
                     .lineLimit(1)
                 Text(assetDescription)
@@ -358,15 +146,32 @@ private struct AssetPreview: View {
 
     private var assetDescription: String {
         guard let asset else {
-            return "The selected wallpaper preview appears here."
+            return placeholderDescription
         }
         return "\(asset.kind.rawValue) · \(asset.supportStatus.rawValue)"
     }
 }
 
-private struct AssetRow: View {
+struct AssetRow: View {
     let asset: WallpaperAsset
-    let isNew: Bool
+    // Unused beyond forcing SwiftUI to re-evaluate this row's body: SwiftUI
+    // skips recomputing a child view's body when its stored properties are
+    // structurally unchanged, even if the enclosing `@ObservedObject`
+    // published an unrelated change. Without a property here that changes
+    // when a scene's video render completes, `displayStatus` below would
+    // keep returning its first-render value until `asset` itself changed
+    // (e.g. on the next library rescan), so the badge would look stuck on
+    // "renders on first play" even after the cached video exists.
+    let sceneVideoRenderRevision: Int
+    var isNew: Bool = false
+    var newBadgeText: String = "NEW"
+
+    // Derived fresh on every body evaluation (not cached in the row) so the
+    // badge picks up a completed scene video render as soon as the list
+    // re-renders, without needing dedicated per-row observation wiring.
+    private var displayStatus: LibraryRowDisplayStatus {
+        LibraryRowStatusResolver.status(for: asset)
+    }
 
     var body: some View {
         HStack(spacing: 10) {
@@ -388,7 +193,7 @@ private struct AssetRow: View {
             }
             Spacer()
             if isNew {
-                Text("NEW")
+                Text(newBadgeText)
                     .font(.caption2.weight(.bold))
                     .foregroundStyle(.white)
                     .padding(.horizontal, 6)
@@ -404,9 +209,9 @@ private struct AssetRow: View {
             Text(asset.kind.rawValue)
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Text(asset.supportStatus.rawValue)
+            Text(displayStatus.label)
                 .font(.caption)
-                .foregroundStyle(asset.supportStatus == .playable ? .green : .orange)
+                .foregroundStyle(displayStatus.isPositive ? .green : .orange)
         }
         .padding(.vertical, 4)
     }

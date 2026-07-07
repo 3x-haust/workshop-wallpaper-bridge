@@ -4,6 +4,7 @@ import PackageDescription
 
 let package = Package(
     name: "WorkshopWallpaperBridge",
+    defaultLocalization: "en",
     platforms: [.macOS(.v14)],
     products: [
         .library(name: "WorkshopWallpaperCore", targets: ["WorkshopWallpaperCore"]),
@@ -14,7 +15,8 @@ let package = Package(
         .target(name: "WorkshopWallpaperCore"),
         .executableTarget(
             name: "WorkshopWallpaperBridgeApp",
-            dependencies: ["WorkshopWallpaperCore"]
+            dependencies: ["WorkshopWallpaperCore"],
+            resources: [.process("Resources")]
         ),
         .executableTarget(
             name: "wwbctl",

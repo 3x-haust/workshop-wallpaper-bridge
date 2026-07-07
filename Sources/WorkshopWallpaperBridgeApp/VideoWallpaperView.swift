@@ -5,13 +5,23 @@ import AVFoundation
 final class VideoWallpaperView: NSView,
     PausableWallpaperContent,
     DisplayModeUpdatableContent,
-    WallpaperContentLifecycle {
+    WallpaperContentLifecycle,
+    AudioControllableWallpaperContent {
     private let player: AVQueuePlayer
     private let looper: AVPlayerLooper
     private let fallbackLayer = CALayer()
-    private let playerLayer: AVPlayerLayer
+    // Not private so tests can assert on the configured video gravity
+    // (e.g. that scene-rendered wallpaper videos are forced to fill).
+    let playerLayer: AVPlayerLayer
 
-    init(url: URL, fallbackImageURL: URL?, frame: CGRect, displayMode: WallpaperDisplayMode) {
+    init(
+        url: URL,
+        fallbackImageURL: URL?,
+        frame: CGRect,
+        displayMode: WallpaperDisplayMode,
+        audioEnabled: Bool = false,
+        audioVolume: Double = 0.5
+    ) {
         let item = AVPlayerItem(url: url)
         let queue = AVQueuePlayer()
         player = queue
@@ -27,7 +37,8 @@ final class VideoWallpaperView: NSView,
         layer?.addSublayer(playerLayer)
         layoutLayers()
         player.actionAtItemEnd = .none
-        player.isMuted = true
+        player.isMuted = !audioEnabled
+        player.volume = Float(audioVolume)
         player.play()
     }
 
@@ -55,6 +66,11 @@ final class VideoWallpaperView: NSView,
         fallbackLayer.contentsGravity = WallpaperContentLayout.imageContentsGravity(for: displayMode)
         playerLayer.videoGravity = WallpaperContentLayout.videoGravity(for: displayMode)
         CATransaction.commit()
+    }
+
+    func setAudioEnabled(_ enabled: Bool, volume: Double) {
+        player.isMuted = !enabled
+        player.volume = Float(volume)
     }
 
     func prepareForClose() {
