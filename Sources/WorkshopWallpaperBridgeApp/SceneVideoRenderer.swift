@@ -503,29 +503,347 @@ enum SceneVideoRenderer {
         String(format: "%.3f", value)
     }
 
-    /// Runs the renderer to capture offscreen frames, encodes them with
-    /// ffmpeg, and moves the result into the per-asset cache. Blocks the
-    /// calling thread, so callers should invoke this off the main actor
-    /// (e.g. from `Task.detached`).
+    // MARK: - Raw-pipe pipeline (renderer --record-raw + concurrent ffmpeg)
+
+    /// Injectable seam for probing whether `rendererURL` supports
+    /// `--record-raw` (streaming RGBA frames to a FIFO) by inspecting its
+    /// `--help` output, so tests can stub the probe without running a real
+    /// binary. Failures (missing binary, non-zero exit, etc.) resolve to an
+    /// empty string, which `supportsRecordRaw` treats as "not supported" so
+    /// the caller falls back to the PNG-sequence pipeline.
+    nonisolated(unsafe) static var rendererHelpOutput: (URL) -> String = { rendererURL in
+        let process = Process()
+        process.executableURL = rendererURL
+        process.arguments = ["--help"]
+        let stdoutPipe = Pipe()
+        process.standardOutput = stdoutPipe
+        process.standardError = Pipe()
+        do {
+            try process.run()
+        } catch {
+            return ""
+        }
+        let data = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return String(data: data, encoding: .utf8) ?? ""
+    }
+
+    /// Pure check factored out of `rendererHelpOutput` so the detection logic
+    /// can be unit tested against sample `--help` text without invoking a
+    /// process.
+    static func supportsRecordRaw(helpOutput: String) -> Bool {
+        helpOutput.contains("record-raw")
+    }
+
+    static func supportsRecordRaw(rendererURL: URL) -> Bool {
+        supportsRecordRaw(helpOutput: rendererHelpOutput(rendererURL))
+    }
+
+    /// Builds the renderer invocation for the raw-pipe pipeline: identical to
+    /// `recordingArguments` except frames stream to `fifoURL` (a FIFO or
+    /// regular file) via `--record-raw` instead of being written as a PNG
+    /// sequence via `--record-dir`.
+    static func rawRecordingArguments(
+        fifoURL: URL,
+        configuration: SceneVideoRenderConfiguration
+    ) -> [String] {
+        [
+            "--window", windowArgument(for: configuration.size),
+            "--silent",
+            "--noautomute",
+            "--no-audio-processing",
+            "--disable-mouse",
+            "--record-raw", fifoURL.path,
+            "--record-seconds", String(configuration.seconds),
+            "--record-fps", String(configuration.fps),
+            "--record-exclude-live",
+            "--assets-dir", configuration.assetsDirectory.path,
+            configuration.projectDirectory.path
+        ]
+    }
+
+    /// Builds the ffmpeg invocation that reads raw RGBA frames from
+    /// `fifoURL` as they're streamed by the renderer and encodes them into a
+    /// fast, near-lossless intermediate mp4. Encoding overlaps the renderer's
+    /// frame production (rather than waiting for it to finish, as the PNG
+    /// pipeline does), which is the whole point of the raw-pipe pipeline.
     ///
-    /// `progressHandler`, when provided, is invoked periodically from a
-    /// background queue (never the calling thread) with the fraction of the
-    /// target frame count (`fps * seconds`) recorded so far, so callers can
-    /// surface render progress to the user during the tens-of-seconds first
-    /// render.
-    static func render(
-        configuration: SceneVideoRenderConfiguration,
-        ffmpegPath: String,
-        progressHandler: (@Sendable (Double) -> Void)? = nil
-    ) throws -> URL {
-        let fileManager = FileManager.default
-        let tempDirectory = fileManager.temporaryDirectory
-            .appending(path: "wwb-scene-render-\(UUID().uuidString)")
-        try fileManager.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
-        defer {
-            try? fileManager.removeItem(at: tempDirectory)
+    /// The crossfade loop filter (`SceneVideoLoopCrossfade`) needs to read
+    /// the same clip twice (once for its head, once for its tail), which a
+    /// single-consumer FIFO can't provide - so this stage only transcodes the
+    /// raw stream to a seekable intermediate file; `videoCrossfadeFfmpegArguments`
+    /// then runs the crossfade pass on that file as a second, much shorter
+    /// (real-time-fast) step.
+    static func rawEncodeFfmpegArguments(
+        fifoURL: URL,
+        size: CGSize,
+        fps: Int,
+        outputURL: URL
+    ) -> [String] {
+        let width = max(1, Int(size.width.rounded()))
+        let height = max(1, Int(size.height.rounded()))
+        return [
+            "-y",
+            "-f", "rawvideo",
+            "-pix_fmt", "rgba",
+            "-s", "\(width)x\(height)",
+            "-r", String(fps),
+            "-i", fifoURL.path,
+            "-c:v", "libx264",
+            "-preset", "ultrafast",
+            "-qp", "0",
+            "-pix_fmt", "yuv420p",
+            outputURL.path
+        ]
+    }
+
+    /// Same crossfade-loop math as `ffmpegArguments`, but reading from an
+    /// already-encoded video file (the raw-pipe pipeline's intermediate mp4)
+    /// instead of a PNG frame sequence.
+    static func videoCrossfadeFfmpegArguments(
+        videoURL: URL,
+        fps: Int,
+        recordedFrameCount: Int,
+        outputURL: URL
+    ) -> [String] {
+        let crossfadeFrameCount = SceneVideoLoopCrossfade.frameCount(totalFrameCount: recordedFrameCount, fps: fps)
+        guard crossfadeFrameCount > 0 else {
+            return [
+                "-y",
+                "-i", videoURL.path,
+                "-c:v", "libx264",
+                "-pix_fmt", "yuv420p",
+                "-crf", "18",
+                "-movflags", "+faststart",
+                outputURL.path
+            ]
         }
 
+        let offsetSeconds = SceneVideoLoopCrossfade.offsetSeconds(
+            totalFrameCount: recordedFrameCount,
+            crossfadeFrameCount: crossfadeFrameCount,
+            fps: fps
+        )
+        let crossfadeSeconds = Double(crossfadeFrameCount) / Double(fps)
+        let filterComplex = "[0:v]trim=start_frame=\(crossfadeFrameCount),setpts=PTS-STARTPTS[main];"
+            + "[1:v]trim=end_frame=\(crossfadeFrameCount),setpts=PTS-STARTPTS[head];"
+            + "[main][head]xfade=transition=fade:duration=\(formatSeconds(crossfadeSeconds)):offset=\(formatSeconds(offsetSeconds))[out]"
+
+        return [
+            "-y",
+            "-i", videoURL.path,
+            "-i", videoURL.path,
+            "-filter_complex", filterComplex,
+            "-map", "[out]",
+            "-c:v", "libx264",
+            "-pix_fmt", "yuv420p",
+            "-crf", "18",
+            "-movflags", "+faststart",
+            outputURL.path
+        ]
+    }
+
+    /// Injectable seam for starting a process without blocking until it
+    /// exits, used so ffmpeg can be started (and be actively reading the
+    /// FIFO) *before* the renderer is started writing to it. `stderrPipe`,
+    /// when provided, is wired up as the process's standard error so its
+    /// `frame=` progress lines can be parsed as they're written.
+    nonisolated(unsafe) static var startProcess: (URL, [String], Pipe?) throws -> Process = { executableURL, arguments, stderrPipe in
+        let process = Process()
+        process.executableURL = executableURL
+        process.arguments = arguments
+        if let stderrPipe {
+            process.standardError = stderrPipe
+        }
+        try process.run()
+        return process
+    }
+
+    /// How long the raw-pipe pipeline is allowed to run before it's treated
+    /// as stalled (renderer hung mid-scene, ffmpeg stopped reading, etc.) and
+    /// both child processes are killed so `render()` can fall back to the
+    /// PNG-sequence pipeline instead of hanging the caller forever.
+    /// Injectable so tests can exercise the stall path without waiting on a
+    /// realistic timeout. Defaults to twice the requested record duration
+    /// with a floor, since the raw-pipe pipeline overlaps recording and
+    /// encoding but the final crossfade pass still needs a little headroom
+    /// beyond that.
+    nonisolated(unsafe) static var rawPipeWatchdogTimeout: (SceneVideoRenderConfiguration) -> TimeInterval = { configuration in
+        max(30, Double(configuration.seconds) * 2)
+    }
+
+    /// Runs the concurrent raw-pipe pipeline: a FIFO is created, ffmpeg is
+    /// started reading raw RGBA frames from it (encoding them to a fast
+    /// intermediate file as they arrive), then the renderer is started
+    /// writing frames into the same FIFO via `--record-raw`. Once both have
+    /// finished, the intermediate file is passed through the existing
+    /// crossfade-loop encode to produce the final silent video.
+    ///
+    /// Race fix: a FIFO's blocking `open(2)` only rendezvous correctly when
+    /// *both* processes actually reach their own open call. If either one is
+    /// slow to start (library init, dynamic loading, etc.) or fails to start
+    /// at all (crash, missing binary, bad arguments) before doing so, the
+    /// other can hang forever inside `open()` waiting for a counterpart that
+    /// is late or will never arrive - e.g. a fast-writing renderer (or a
+    /// short-lived fake one in tests) can write everything and exit before a
+    /// slower-initializing ffmpeg has even reached its own `open()` of the
+    /// FIFO, so ffmpeg then blocks forever waiting for a writer that already
+    /// came and went. To avoid that, this function itself opens the FIFO
+    /// `O_RDWR` (`anchorFD`) before starting either child process. An
+    /// `O_RDWR` open of a FIFO never blocks and counts as both a reader and
+    /// a writer, so for as long as it's held, ffmpeg's read-open and the
+    /// renderer's write-open both succeed immediately no matter how late
+    /// either process is to actually call `open()`, and no matter what order
+    /// they start in or whether one fails outright. The anchor is kept open
+    /// until the renderer process has actually finished (see below) - only
+    /// then is it safe to close: closing it any earlier would just
+    /// reconstruct the same race (ffmpeg might still not have reached its
+    /// own open() yet), while an anchor left open past that point would
+    /// itself count as a permanent second writer and prevent ffmpeg from
+    /// ever observing EOF.
+    ///
+    /// Belt-and-braces: an overall watchdog (`rawPipeWatchdogTimeout`) kills
+    /// both processes and signals a stall if the pipeline runs far longer
+    /// than expected, and every error path below explicitly terminates and
+    /// reaps any process it already started so no ffmpeg/renderer instance
+    /// is left running past this function returning.
+    private static func renderUsingRawPipe(
+        configuration: SceneVideoRenderConfiguration,
+        ffmpegPath: String,
+        tempDirectory: URL,
+        progressHandler: (@Sendable (Double) -> Void)?
+    ) throws -> URL {
+        let fileManager = FileManager.default
+        let fifoURL = tempDirectory.appending(path: "scene-raw.fifo")
+        guard mkfifo(fifoURL.path, 0o600) == 0 else {
+            throw SceneVideoRenderError.fifoCreationFailed(errno)
+        }
+
+        let anchorFD = open(fifoURL.path, O_RDWR)
+        guard anchorFD != -1 else {
+            let openErrno = errno
+            try? fileManager.removeItem(at: fifoURL)
+            throw SceneVideoRenderError.fifoCreationFailed(openErrno)
+        }
+        var anchorClosed = false
+        func closeAnchor() {
+            guard !anchorClosed else {
+                return
+            }
+            close(anchorFD)
+            anchorClosed = true
+        }
+        defer { closeAnchor() }
+
+        let intermediateOutputURL = tempDirectory.appending(path: "scene-render-raw.mp4")
+        let stderrPipe = Pipe()
+        let ffmpegProcess: Process
+        do {
+            ffmpegProcess = try startProcess(
+                URL(filePath: ffmpegPath),
+                rawEncodeFfmpegArguments(
+                    fifoURL: fifoURL,
+                    size: configuration.size,
+                    fps: configuration.fps,
+                    outputURL: intermediateOutputURL
+                ),
+                stderrPipe
+            )
+        } catch {
+            try? fileManager.removeItem(at: fifoURL)
+            throw error
+        }
+
+        let targetFrameCount = configuration.fps * configuration.seconds
+        let progressMonitor = FfmpegStderrProgressMonitor(
+            pipe: stderrPipe,
+            targetFrameCount: targetFrameCount,
+            handler: progressHandler ?? { _ in }
+        )
+        progressMonitor.start()
+
+        let rendererProcess: Process
+        do {
+            rendererProcess = try startProcess(
+                configuration.rendererURL,
+                rawRecordingArguments(fifoURL: fifoURL, configuration: configuration),
+                nil
+            )
+        } catch {
+            _ = progressMonitor.stop()
+            ffmpegProcess.terminate()
+            ffmpegProcess.waitUntilExit()
+            try? fileManager.removeItem(at: fifoURL)
+            throw error
+        }
+
+        let watchdogState = RawPipeWatchdogState()
+        let watchdogWorkItem = DispatchWorkItem {
+            watchdogState.markFired()
+            rendererProcess.terminate()
+            ffmpegProcess.terminate()
+        }
+        DispatchQueue.global(qos: .utility).asyncAfter(
+            deadline: .now() + rawPipeWatchdogTimeout(configuration),
+            execute: watchdogWorkItem
+        )
+
+        // The renderer's own exit status isn't a reliable success signal
+        // (some builds crash during their own shutdown-time cleanup even
+        // after successfully streaming every frame), so it's ignored here
+        // just like the PNG-sequence pipeline's `runRendererProcess` ignores
+        // it.
+        rendererProcess.waitUntilExit()
+
+        // Only now - once the renderer has actually finished (normally or
+        // via the watchdog above) - is it safe to release the anchor fd.
+        // ffmpeg keeps reading happily regardless of when it got around to
+        // opening the FIFO for real, and closing the anchor here lets it see
+        // a normal EOF right as the renderer's own write end goes away, with
+        // no gap in which either side could still be waiting on the other.
+        closeAnchor()
+
+        ffmpegProcess.waitUntilExit()
+        watchdogWorkItem.cancel()
+
+        let recordedFrameCount = progressMonitor.stop()
+        try? fileManager.removeItem(at: fifoURL)
+
+        if watchdogState.hasFired {
+            throw SceneVideoRenderError.rawPipeStalled
+        }
+        guard ffmpegProcess.terminationStatus == 0 else {
+            throw SceneVideoRenderError.processFailed("ffmpeg", ffmpegProcess.terminationStatus)
+        }
+        guard recordedFrameCount > 0 else {
+            throw SceneVideoRenderError.noFramesRecorded
+        }
+        progressHandler?(1.0)
+
+        let temporaryOutputURL = tempDirectory.appending(path: "scene-render-output.mp4")
+        try runProcess(
+            URL(filePath: ffmpegPath),
+            videoCrossfadeFfmpegArguments(
+                videoURL: intermediateOutputURL,
+                fps: configuration.fps,
+                recordedFrameCount: recordedFrameCount,
+                outputURL: temporaryOutputURL
+            )
+        )
+        return temporaryOutputURL
+    }
+
+    /// Runs the original serial pipeline: the renderer writes a PNG frame
+    /// sequence to a temp directory (recording finishes before encoding
+    /// starts), then ffmpeg encodes the sequence. Used when the renderer
+    /// binary doesn't support `--record-raw` yet.
+    private static func renderUsingPNGSequence(
+        configuration: SceneVideoRenderConfiguration,
+        ffmpegPath: String,
+        tempDirectory: URL,
+        progressHandler: (@Sendable (Double) -> Void)?
+    ) throws -> URL {
+        let fileManager = FileManager.default
         let progressMonitor = progressHandler.map {
             SceneVideoRenderProgressMonitor(
                 directory: tempDirectory,
@@ -557,6 +875,69 @@ enum SceneVideoRenderer {
                 outputURL: temporaryOutputURL
             )
         )
+        return temporaryOutputURL
+    }
+
+    /// Runs the renderer to capture offscreen frames, encodes them with
+    /// ffmpeg, and moves the result into the per-asset cache. Blocks the
+    /// calling thread, so callers should invoke this off the main actor
+    /// (e.g. from `Task.detached`).
+    ///
+    /// When the renderer binary supports `--record-raw` (probed via its
+    /// `--help` output), rendering and encoding run concurrently through a
+    /// FIFO instead of the renderer writing a complete PNG sequence before
+    /// ffmpeg starts - the first-play render is significantly faster since
+    /// encoding overlaps frame production instead of following it. Older
+    /// renderer binaries without that flag fall back to the original
+    /// serial PNG-sequence pipeline.
+    ///
+    /// `progressHandler`, when provided, is invoked periodically from a
+    /// background queue (never the calling thread) with the fraction of the
+    /// target frame count (`fps * seconds`) recorded so far, so callers can
+    /// surface render progress to the user during the tens-of-seconds first
+    /// render.
+    static func render(
+        configuration: SceneVideoRenderConfiguration,
+        ffmpegPath: String,
+        progressHandler: (@Sendable (Double) -> Void)? = nil
+    ) throws -> URL {
+        let fileManager = FileManager.default
+        let tempDirectory = fileManager.temporaryDirectory
+            .appending(path: "wwb-scene-render-\(UUID().uuidString)")
+        try fileManager.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+        defer {
+            try? fileManager.removeItem(at: tempDirectory)
+        }
+
+        let temporaryOutputURL: URL
+        if supportsRecordRaw(rendererURL: configuration.rendererURL) {
+            do {
+                temporaryOutputURL = try renderUsingRawPipe(
+                    configuration: configuration,
+                    ffmpegPath: ffmpegPath,
+                    tempDirectory: tempDirectory,
+                    progressHandler: progressHandler
+                )
+            } catch SceneVideoRenderError.rawPipeStalled {
+                // The concurrent pipeline stalled past its watchdog timeout;
+                // both processes were already killed, so fall back to the
+                // original serial PNG-sequence pipeline rather than failing
+                // the render outright.
+                temporaryOutputURL = try renderUsingPNGSequence(
+                    configuration: configuration,
+                    ffmpegPath: ffmpegPath,
+                    tempDirectory: tempDirectory,
+                    progressHandler: progressHandler
+                )
+            }
+        } else {
+            temporaryOutputURL = try renderUsingPNGSequence(
+                configuration: configuration,
+                ffmpegPath: ffmpegPath,
+                tempDirectory: tempDirectory,
+                progressHandler: progressHandler
+            )
+        }
 
         let finalOutputURL = configuration.sceneURL.map {
             muxSceneAudioIfAvailable(
@@ -659,6 +1040,78 @@ enum SceneVideoRenderProgress {
     }
 }
 
+/// Parses ffmpeg's periodic `frame=  123 fps=... ` progress lines (written to
+/// stderr, updated in place with carriage returns), factored out so the
+/// regex-like extraction can be unit tested against sample lines without any
+/// process or pipe involved.
+enum FfmpegProgressParsing {
+    static func frameCount(fromLine line: String) -> Int? {
+        guard let range = line.range(of: "frame=") else {
+            return nil
+        }
+        let afterFrame = line[range.upperBound...].drop { $0 == " " }
+        let digits = afterFrame.prefix { $0.isNumber }
+        return digits.isEmpty ? nil : Int(digits)
+    }
+}
+
+/// Watches an ffmpeg process's stderr pipe while it encodes, parsing the
+/// `frame=` progress lines it periodically writes there to report render
+/// progress and to recover the final encoded frame count once the process
+/// exits (used as `recordedFrameCount` for the crossfade-loop pass in the
+/// raw-pipe pipeline).
+private final class FfmpegStderrProgressMonitor: @unchecked Sendable {
+    private let pipe: Pipe
+    private let targetFrameCount: Int
+    private let handler: @Sendable (Double) -> Void
+    private let lock = NSLock()
+    private var lastFrameCount = 0
+
+    init(pipe: Pipe, targetFrameCount: Int, handler: @escaping @Sendable (Double) -> Void) {
+        self.pipe = pipe
+        self.targetFrameCount = targetFrameCount
+        self.handler = handler
+    }
+
+    func start() {
+        pipe.fileHandleForReading.readabilityHandler = { [weak self] fileHandle in
+            guard let self else {
+                return
+            }
+            let data = fileHandle.availableData
+            guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else {
+                return
+            }
+            var latestFrameCount: Int?
+            for line in text.split(whereSeparator: { $0 == "\r" || $0 == "\n" }) {
+                if let frameCount = FfmpegProgressParsing.frameCount(fromLine: String(line)) {
+                    latestFrameCount = frameCount
+                }
+            }
+            guard let latestFrameCount else {
+                return
+            }
+            self.lock.lock()
+            self.lastFrameCount = latestFrameCount
+            self.lock.unlock()
+            self.handler(SceneVideoRenderProgress.fraction(
+                recordedFrameCount: latestFrameCount,
+                targetFrameCount: self.targetFrameCount
+            ))
+        }
+    }
+
+    /// Stops watching and returns the last frame count observed in a
+    /// `frame=` line, which - once the encoder process has exited - is its
+    /// final encoded frame count.
+    func stop() -> Int {
+        pipe.fileHandleForReading.readabilityHandler = nil
+        lock.lock()
+        defer { lock.unlock() }
+        return lastFrameCount
+    }
+}
+
 /// Polls the renderer's frame output directory on a background queue while
 /// the (synchronous, blocking) renderer process runs, reporting progress as
 /// `frames written / (fps * seconds)`. The renderer process itself has no
@@ -699,9 +1152,11 @@ private final class SceneVideoRenderProgressMonitor: @unchecked Sendable {
     }
 }
 
-enum SceneVideoRenderError: Error, LocalizedError {
+enum SceneVideoRenderError: Error, LocalizedError, Equatable {
     case processFailed(String, Int32)
     case noFramesRecorded
+    case fifoCreationFailed(Int32)
+    case rawPipeStalled
 
     var errorDescription: String? {
         switch self {
@@ -709,6 +1164,32 @@ enum SceneVideoRenderError: Error, LocalizedError {
             return "\(name) exited with status \(status)."
         case .noFramesRecorded:
             return "The scene renderer did not produce any recorded frames."
+        case .fifoCreationFailed(let errnoValue):
+            return "Could not create the recording FIFO (errno \(errnoValue))."
+        case .rawPipeStalled:
+            return "The concurrent scene render pipeline stalled and was aborted."
         }
+    }
+}
+
+/// Thread-safe latch set by the raw-pipe pipeline's watchdog timer when it
+/// kills both child processes after the pipeline runs longer than
+/// `SceneVideoRenderer.rawPipeWatchdogTimeout` allows, so the code that
+/// awaited the (now-terminated) processes can tell a genuine stall apart
+/// from normal completion or a real process failure.
+private final class RawPipeWatchdogState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var fired = false
+
+    func markFired() {
+        lock.lock()
+        fired = true
+        lock.unlock()
+    }
+
+    var hasFired: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return fired
     }
 }

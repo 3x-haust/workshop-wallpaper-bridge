@@ -757,6 +757,171 @@ final class WallpaperPlayerSuspensionTests: XCTestCase {
         ])
     }
 
+    func testSupportsRecordRawDetectsFlagInHelpOutput() {
+        // Given: the real usage line contains "--record-raw" among many
+        // other flags; a plain substring check is sufficient and doesn't
+        // need to parse the whole usage grammar.
+        let helpWithRecordRaw = """
+        Usage: linux-wallpaperengine [--help] [--record-dir VAR] [--record-raw VAR] [--record-seconds VAR] background id
+        """
+        let helpWithoutRecordRaw = """
+        Usage: linux-wallpaperengine [--help] [--record-dir VAR] [--record-seconds VAR] background id
+        """
+
+        // Then
+        XCTAssertTrue(SceneVideoRenderer.supportsRecordRaw(helpOutput: helpWithRecordRaw))
+        XCTAssertFalse(SceneVideoRenderer.supportsRecordRaw(helpOutput: helpWithoutRecordRaw))
+        XCTAssertFalse(SceneVideoRenderer.supportsRecordRaw(helpOutput: ""))
+    }
+
+    func testRawRecordingArgumentsUseRecordRawInsteadOfRecordDir() {
+        // Given
+        let configuration = SceneVideoRenderConfiguration(
+            assetId: "MjQ2ODQ4OTIyMw",
+            projectDirectory: URL(filePath: "/tmp/scene-project"),
+            assetsDirectory: URL(filePath: "/tmp/wallpaper-engine-assets"),
+            rendererURL: URL(filePath: "/tmp/wwb-scene-renderer"),
+            size: CGSize(width: 1920, height: 1080),
+            fps: 30,
+            seconds: 10
+        )
+        let fifoURL = URL(filePath: "/tmp/scene-record/scene-raw.fifo")
+
+        // When
+        let arguments = SceneVideoRenderer.rawRecordingArguments(fifoURL: fifoURL, configuration: configuration)
+
+        // Then
+        XCTAssertEqual(arguments, [
+            "--window",
+            "0x0x1920x1080",
+            "--silent",
+            "--noautomute",
+            "--no-audio-processing",
+            "--disable-mouse",
+            "--record-raw",
+            "/tmp/scene-record/scene-raw.fifo",
+            "--record-seconds",
+            "10",
+            "--record-fps",
+            "30",
+            "--record-exclude-live",
+            "--assets-dir",
+            "/tmp/wallpaper-engine-assets",
+            "/tmp/scene-project"
+        ])
+    }
+
+    func testRawEncodeFfmpegArgumentsReadRawRGBAFromFifo() {
+        // When
+        let arguments = SceneVideoRenderer.rawEncodeFfmpegArguments(
+            fifoURL: URL(filePath: "/tmp/scene-record/scene-raw.fifo"),
+            size: CGSize(width: 1920, height: 1080),
+            fps: 30,
+            outputURL: URL(filePath: "/tmp/scene-record/scene-render-raw.mp4")
+        )
+
+        // Then
+        XCTAssertEqual(arguments, [
+            "-y",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgba",
+            "-s",
+            "1920x1080",
+            "-r",
+            "30",
+            "-i",
+            "/tmp/scene-record/scene-raw.fifo",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-qp",
+            "0",
+            "-pix_fmt",
+            "yuv420p",
+            "/tmp/scene-record/scene-render-raw.mp4"
+        ])
+    }
+
+    func testVideoCrossfadeFfmpegArgumentsMatchPNGSequenceCrossfadeMath() {
+        // Given: identical frame/fps inputs to
+        // testSceneVideoRendererBuildsRecordingAndFfmpegArguments, so the
+        // crossfade filter string (offset/duration) should match exactly -
+        // only the `-i` inputs differ (a video file read twice instead of a
+        // PNG pattern read twice).
+        let arguments = SceneVideoRenderer.videoCrossfadeFfmpegArguments(
+            videoURL: URL(filePath: "/tmp/scene-record/scene-render-raw.mp4"),
+            fps: 30,
+            recordedFrameCount: 300,
+            outputURL: URL(filePath: "/tmp/scene-record/output.mp4")
+        )
+
+        // Then
+        XCTAssertEqual(arguments, [
+            "-y",
+            "-i",
+            "/tmp/scene-record/scene-render-raw.mp4",
+            "-i",
+            "/tmp/scene-record/scene-render-raw.mp4",
+            "-filter_complex",
+            "[0:v]trim=start_frame=36,setpts=PTS-STARTPTS[main];"
+                + "[1:v]trim=end_frame=36,setpts=PTS-STARTPTS[head];"
+                + "[main][head]xfade=transition=fade:duration=1.200:offset=7.600[out]",
+            "-map",
+            "[out]",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-crf",
+            "18",
+            "-movflags",
+            "+faststart",
+            "/tmp/scene-record/output.mp4"
+        ])
+    }
+
+    func testVideoCrossfadeFfmpegArgumentsFallsBackToPlainEncodeWhenTooShortToCrossfade() {
+        // Given: only 4 recorded frames, far too few for the default 1.2s
+        // crossfade window to fit twice over.
+        let arguments = SceneVideoRenderer.videoCrossfadeFfmpegArguments(
+            videoURL: URL(filePath: "/tmp/scene-record/scene-render-raw.mp4"),
+            fps: 30,
+            recordedFrameCount: 4,
+            outputURL: URL(filePath: "/tmp/scene-record/output.mp4")
+        )
+
+        // Then
+        XCTAssertEqual(arguments, [
+            "-y",
+            "-i",
+            "/tmp/scene-record/scene-render-raw.mp4",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-crf",
+            "18",
+            "-movflags",
+            "+faststart",
+            "/tmp/scene-record/output.mp4"
+        ])
+    }
+
+    func testFfmpegProgressParsingExtractsFrameCountFromSampleStderrLines() {
+        // Real ffmpeg progress lines look like this (updated in place via
+        // carriage returns, with trailing stats after the frame count).
+        XCTAssertEqual(FfmpegProgressParsing.frameCount(fromLine: "frame=   45 fps=0.0 q=-1.0 Lsize=N/A"), 45)
+        XCTAssertEqual(FfmpegProgressParsing.frameCount(fromLine: "frame=123"), 123)
+        XCTAssertEqual(FfmpegProgressParsing.frameCount(fromLine: "frame=  600 fps=298 q=28.0 size=    2048kB time=00:00:20.00 bitrate= 838.9kbits/s speed=  10x"), 600)
+        // Lines without a frame= token (e.g. other ffmpeg log chatter) yield
+        // no progress update rather than a false reading.
+        XCTAssertNil(FfmpegProgressParsing.frameCount(fromLine: "Output #0, mp4, to 'output.mp4':"))
+        XCTAssertNil(FfmpegProgressParsing.frameCount(fromLine: ""))
+    }
+
     func testSceneVideoLoopCrossfadeMathProducesSeamlessLoopDuration() {
         // Given: a 20s @ 30fps recording (the app's default configuration).
         let fps = 30
@@ -1014,6 +1179,165 @@ final class WallpaperPlayerSuspensionTests: XCTestCase {
         XCTAssertEqual(outputURL, SceneVideoCache.cachedVideoURL(assetId: configuration.assetId))
         let attributes = try FileManager.default.attributesOfItem(atPath: outputURL.path)
         XCTAssertGreaterThan((attributes[.size] as? Int) ?? 0, 0)
+    }
+
+    /// End-to-end coverage of the concurrent raw-pipe pipeline: a fake
+    /// renderer script that (a) advertises `--record-raw` in its `--help`
+    /// output, so `render()` selects the raw-pipe path over the PNG-sequence
+    /// fallback, and (b) writes raw RGBA bytes into the FIFO it's given via
+    /// `--record-raw`, standing in for the real wwb-scene-renderer binary
+    /// until that binary's `--record-raw` support lands.
+    func testSceneVideoRendererUsesRawPipeWhenRendererAdvertisesRecordRaw() throws {
+        guard let ffmpegPath = VideoConverter().ffmpegPath() else {
+            throw XCTSkip("ffmpeg is required to encode the scene render fixture.")
+        }
+
+        // Given
+        let root = try Self.makeTempDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: root)
+        }
+        let previousCacheDirectory = SceneVideoCache.overrideCacheDirectoryURL
+        let cacheDirectory = root.appending(path: "SceneVideoCache")
+        SceneVideoCache.overrideCacheDirectoryURL = cacheDirectory
+        defer {
+            SceneVideoCache.overrideCacheDirectoryURL = previousCacheDirectory
+        }
+
+        // 32x32 RGBA frames = 32*32*4 = 4096 bytes/frame; write exactly 2
+        // (matching fps=2, seconds=1 below) as all-zero (transparent black)
+        // pixels straight into the FIFO the renderer is told to use.
+        let rendererURL = root.appending(path: "fake-raw-scene-renderer")
+        let rendererScript = """
+        #!/bin/sh
+        if [ "$1" = "--help" ]; then
+          echo "Usage: linux-wallpaperengine [--help] [--record-dir VAR] [--record-raw VAR] [--record-seconds VAR] background id"
+          exit 0
+        fi
+        set -e
+        fifo=""
+        while [ "$#" -gt 0 ]; do
+          if [ "$1" = "--record-raw" ]; then
+            fifo="$2"
+          fi
+          shift
+        done
+        dd if=/dev/zero bs=4096 count=2 of="$fifo" >/dev/null 2>&1
+        """
+        try rendererScript.write(to: rendererURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: rendererURL.path)
+
+        let configuration = SceneVideoRenderConfiguration(
+            assetId: "MjQ2ODQ4OTIyMw",
+            projectDirectory: root,
+            assetsDirectory: root,
+            rendererURL: rendererURL,
+            size: CGSize(width: 32, height: 32),
+            fps: 2,
+            seconds: 1
+        )
+
+        // When
+        let reportedProgress = ProgressRecorder()
+        let outputURL = try SceneVideoRenderer.render(
+            configuration: configuration,
+            ffmpegPath: ffmpegPath,
+            progressHandler: { progress in
+                reportedProgress.record(progress)
+            }
+        )
+
+        // Then: the raw-pipe path was taken (the fake renderer never writes
+        // PNG files, so a successful render here can only have gone through
+        // `--record-raw`), producing a valid non-empty cached mp4.
+        XCTAssertEqual(outputURL, SceneVideoCache.cachedVideoURL(assetId: configuration.assetId))
+        let attributes = try FileManager.default.attributesOfItem(atPath: outputURL.path)
+        XCTAssertGreaterThan((attributes[.size] as? Int) ?? 0, 0)
+        let values = reportedProgress.values
+        XCTAssertFalse(values.isEmpty, "Expected the progress handler to be invoked at least once.")
+        XCTAssertEqual(values.last, 1.0, "Rendering should always finish by reporting full progress.")
+    }
+
+    /// Regression coverage for the FIFO handshake race: a renderer that
+    /// advertises `--record-raw` but then hangs instead of writing anything
+    /// into the FIFO (simulating a stalled/crashed render) must not hang
+    /// `render()` forever. With the watchdog timeout overridden to a short
+    /// interval, both the hung renderer and the ffmpeg process blocked
+    /// reading the empty FIFO must be killed, and `render()` must fall back
+    /// to the PNG-sequence pipeline (which also fails here, since the fake
+    /// renderer doesn't handle `--record-dir` either) and return promptly
+    /// rather than hanging the test suite.
+    func testSceneVideoRendererDoesNotHangWhenRawPipeStalls() throws {
+        guard let ffmpegPath = VideoConverter().ffmpegPath() else {
+            throw XCTSkip("ffmpeg is required to encode the scene render fixture.")
+        }
+
+        // Given
+        let root = try Self.makeTempDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: root)
+        }
+        let previousCacheDirectory = SceneVideoCache.overrideCacheDirectoryURL
+        let cacheDirectory = root.appending(path: "SceneVideoCache")
+        SceneVideoCache.overrideCacheDirectoryURL = cacheDirectory
+        defer {
+            SceneVideoCache.overrideCacheDirectoryURL = previousCacheDirectory
+        }
+        let previousWatchdogTimeout = SceneVideoRenderer.rawPipeWatchdogTimeout
+        SceneVideoRenderer.rawPipeWatchdogTimeout = { _ in 0.3 }
+        defer {
+            SceneVideoRenderer.rawPipeWatchdogTimeout = previousWatchdogTimeout
+        }
+
+        // A renderer that advertises --record-raw support but, once invoked
+        // with it, simply hangs (sleeps far longer than the watchdog) instead
+        // of writing any frames - standing in for a crashed/stuck real
+        // renderer. It does nothing useful for --record-dir either, so the
+        // PNG-sequence fallback this triggers is expected to fail fast with
+        // "no frames recorded" rather than itself hanging.
+        let rendererURL = root.appending(path: "fake-hanging-scene-renderer")
+        let rendererScript = """
+        #!/bin/sh
+        if [ "$1" = "--help" ]; then
+          echo "Usage: linux-wallpaperengine [--help] [--record-dir VAR] [--record-raw VAR] [--record-seconds VAR] background id"
+          exit 0
+        fi
+        while [ "$#" -gt 0 ]; do
+          if [ "$1" = "--record-raw" ]; then
+            sleep 30
+            exit 0
+          fi
+          shift
+        done
+        exit 1
+        """
+        try rendererScript.write(to: rendererURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: rendererURL.path)
+
+        let configuration = SceneVideoRenderConfiguration(
+            assetId: "MjQ2ODQ4OTIyMw",
+            projectDirectory: root,
+            assetsDirectory: root,
+            rendererURL: rendererURL,
+            size: CGSize(width: 32, height: 32),
+            fps: 2,
+            seconds: 1
+        )
+
+        // When
+        let start = Date()
+        XCTAssertThrowsError(
+            try SceneVideoRenderer.render(configuration: configuration, ffmpegPath: ffmpegPath)
+        ) { error in
+            XCTAssertEqual(error as? SceneVideoRenderError, .noFramesRecorded)
+        }
+        let elapsed = Date().timeIntervalSince(start)
+
+        // Then: the render call returned in roughly one watchdog interval,
+        // not after waiting out the renderer's 30s sleep (proving the stall
+        // was detected and both processes were killed rather than leaving
+        // `render()` blocked forever).
+        XCTAssertLessThan(elapsed, 10, "render() should abort a stalled raw-pipe pipeline via the watchdog, not hang.")
     }
 
     @MainActor
