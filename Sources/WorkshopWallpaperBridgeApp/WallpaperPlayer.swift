@@ -442,6 +442,13 @@ private final class WallpaperWindow {
 enum SceneWallpaperContentFactory {
     static var lastDiagnostic: String?
     static var statusHandler: ((String) -> Void)?
+    /// Invoked with the asset id once a scene's video render finishes
+    /// (successfully), after `WallpaperPlayer` has already swapped the
+    /// desktop wallpaper over to the freshly cached video. Lets callers also
+    /// refresh anything else derived from "does this scene have a cached
+    /// video yet" (the lock screen animation configuration) without this
+    /// factory needing to know about that dependency directly.
+    static var sceneVideoRenderCompletionHandler: ((String) -> Void)?
     private static var pendingRenderAssetIDs = Set<String>()
 
     static func makeSceneContentView(
@@ -566,6 +573,7 @@ enum SceneWallpaperContentFactory {
                     pendingRenderAssetIDs.remove(assetId)
                     statusHandler?("Playing")
                     WallpaperPlayer.shared.refreshIfNeeded(afterSceneVideoRenderFor: assetId)
+                    sceneVideoRenderCompletionHandler?(assetId)
                 }
             } catch {
                 await MainActor.run {

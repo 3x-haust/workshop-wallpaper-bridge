@@ -124,6 +124,9 @@ final class AppViewModel: ObservableObject {
         SceneWallpaperContentFactory.statusHandler = { [weak self] message in
             self?.status = message
         }
+        SceneWallpaperContentFactory.sceneVideoRenderCompletionHandler = { [weak self] assetId in
+            self?.refreshLockScreenAnimationConfigurationAfterSceneVideoRender(assetId: assetId)
+        }
     }
 
     init(
@@ -692,6 +695,18 @@ extension AppViewModel {
         status = lockScreenError.map {
             "\(playbackStatus) Screen Saver update failed: \($0)"
         } ?? playbackStatus
+    }
+
+    /// A scene's first render is asynchronous: `refreshLockScreenAnimationConfiguration`
+    /// only ever sees the fresh cached video if it's called again once the
+    /// render completes. Without this, the lock screen config would stay
+    /// pinned to the scene's still image (written on the initial play) until
+    /// the user replayed the wallpaper.
+    private func refreshLockScreenAnimationConfigurationAfterSceneVideoRender(assetId: String) {
+        guard let asset = libraryAssets.first(where: { $0.id == assetId }) else {
+            return
+        }
+        _ = refreshLockScreenAnimationConfiguration(asset: asset)
     }
 
     private func refreshLockScreenAnimationConfiguration(asset: WallpaperAsset) -> String? {

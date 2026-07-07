@@ -198,14 +198,20 @@ static void *WorkshopWallpaperPlayerItemStatusContext = &WorkshopWallpaperPlayer
 - (void)showImageAtURL:(NSURL *)url displayMode:(NSString *)displayMode {
     [self removeContent];
     NSImage *image = [[NSImage alloc] initWithContentsOfURL:url];
+    CGImageRef cgImage = image ? [image CGImageForProposedRect:NULL context:nil hints:nil] : NULL;
+    if (!image || !cgImage) {
+        // The configuration pointed at a path that exists on disk but could
+        // not actually be decoded here (e.g. the legacy Screen Saver host
+        // could not read its bytes). Previously this fell through silently,
+        // leaving a solid black screen with no indication anything was
+        // wrong; surface the failure instead so it is diagnosable.
+        [self showFallbackMessage:[NSString stringWithFormat:@"Could not load the wallpaper image at %@.", url.path]];
+        return;
+    }
     self.fallbackImage = image;
     self.fallbackDisplayMode = displayMode;
     self.fallbackMessage = nil;
     [self setNeedsDisplay:YES];
-    CGImageRef cgImage = [image CGImageForProposedRect:NULL context:nil hints:nil];
-    if (!cgImage) {
-        return;
-    }
     self.layer.contents = (__bridge id)cgImage;
     self.layer.contentsGravity = [self contentsGravityForDisplayMode:displayMode];
     self.imageLayer = [CALayer layer];

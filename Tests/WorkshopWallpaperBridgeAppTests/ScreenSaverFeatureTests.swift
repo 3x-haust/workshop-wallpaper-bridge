@@ -98,6 +98,35 @@ final class ScreenSaverFeatureTests: XCTestCase {
         XCTAssertTrue(source.contains("WorkshopWallpaperPlayerItemStatusContext"))
     }
 
+    func testScreenSaverShowsDiagnosticInsteadOfBlackWhenStillImageFailsToLoad() throws {
+        let source = try String(
+            contentsOfFile: "Sources/WorkshopWallpaperLockScreenSaver/WorkshopWallpaperLockScreenSaverView.m"
+        )
+
+        XCTAssertTrue(source.contains("CGImageRef cgImage = image ? [image CGImageForProposedRect:NULL context:nil hints:nil] : NULL;"))
+        XCTAssertTrue(source.contains("if (!image || !cgImage) {"))
+        XCTAssertTrue(source.contains("[self showFallbackMessage:[NSString stringWithFormat:@\"Could not load the wallpaper image at %@.\", url.path]];"))
+    }
+
+    func testSceneVideoRenderCompletionRefreshesLockScreenConfiguration() throws {
+        let wallpaperPlayer = try String(contentsOfFile: "Sources/WorkshopWallpaperBridgeApp/WallpaperPlayer.swift")
+        let viewModel = try String(contentsOfFile: "Sources/WorkshopWallpaperBridgeApp/AppViewModel.swift")
+
+        XCTAssertTrue(wallpaperPlayer.contains("static var sceneVideoRenderCompletionHandler: ((String) -> Void)?"))
+        XCTAssertTrue(wallpaperPlayer.contains("sceneVideoRenderCompletionHandler?(assetId)"))
+        XCTAssertTrue(viewModel.contains("SceneWallpaperContentFactory.sceneVideoRenderCompletionHandler = { [weak self] assetId in"))
+        XCTAssertTrue(viewModel.contains("refreshLockScreenAnimationConfigurationAfterSceneVideoRender(assetId: assetId)"))
+    }
+
+    func testLockScreenAnimationControllerReusesFreshCachedSceneVideoAsSourcePath() throws {
+        let source = try String(
+            contentsOfFile: "Sources/WorkshopWallpaperBridgeApp/LockScreenAnimationController.swift"
+        )
+
+        XCTAssertTrue(source.contains("if asset.kind == .scene {"))
+        XCTAssertTrue(source.contains("SceneVideoCache.freshCachedVideoURL(assetId: asset.id, sourceURL: sourceURL)?.path"))
+    }
+
     func testScreenSaverViewHasAppKitDrawingFallbackForLegacyHosts() throws {
         let source = try String(
             contentsOfFile: "Sources/WorkshopWallpaperLockScreenSaver/WorkshopWallpaperLockScreenSaverView.m"
