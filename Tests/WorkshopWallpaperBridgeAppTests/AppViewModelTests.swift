@@ -366,6 +366,50 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertFalse(model.autoPauseWhenCovered)
     }
 
+    func testInitDefaultsToDisabledWallpaperAudioAtHalfVolume() throws {
+        // Given
+        let defaults = try makeUserDefaults()
+
+        // When
+        let model = AppViewModel(
+            store: LibraryStore(root: try makeTempDirectory()),
+            loginItemController: MockLoginItemController(),
+            userDefaults: defaults
+        )
+
+        // Then: audio defaults off so existing users aren't surprised by
+        // wallpapers suddenly making sound.
+        XCTAssertFalse(model.wallpaperAudioEnabled)
+        XCTAssertEqual(model.wallpaperAudioVolume, 0.5, accuracy: 0.0001)
+    }
+
+    func testWallpaperAudioPreferencesPersistAcrossRestarts() throws {
+        // Given
+        let defaults = try makeUserDefaults()
+        let model = AppViewModel(
+            store: LibraryStore(root: try makeTempDirectory()),
+            loginItemController: MockLoginItemController(),
+            userDefaults: defaults
+        )
+
+        // When
+        model.wallpaperAudioEnabled = true
+        model.wallpaperAudioVolume = 0.85
+
+        // Then
+        XCTAssertTrue(defaults.bool(forKey: "wallpaperAudioEnabled"))
+        XCTAssertEqual(defaults.double(forKey: "wallpaperAudioVolume"), 0.85, accuracy: 0.0001)
+
+        // And: a freshly constructed view model restores them.
+        let restored = AppViewModel(
+            store: LibraryStore(root: try makeTempDirectory()),
+            loginItemController: MockLoginItemController(),
+            userDefaults: defaults
+        )
+        XCTAssertTrue(restored.wallpaperAudioEnabled)
+        XCTAssertEqual(restored.wallpaperAudioVolume, 0.85, accuracy: 0.0001)
+    }
+
     func testInitRestoresLockScreenAnimationPreferenceWithoutInstalling() throws {
         // Given
         let defaults = try makeUserDefaults()

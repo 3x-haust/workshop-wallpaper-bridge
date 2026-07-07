@@ -58,6 +58,7 @@ Wallpaper Engine 프로젝트를 쓰는 경우:
 
 - Dock과 Space 전환 깜빡임을 줄이기 위해 기본값은 연속 재생입니다.
 - **Auto-pause behind apps**는 선택 옵션입니다.
+- **Play wallpaper audio**는 기본적으로 꺼져 있습니다(이전 버전과 동일한 무음 재생). 켜고 볼륨 슬라이더를 조절하면 동영상 월페이퍼의 오디오와, scene 월페이퍼의 경우 캐시된 scene 비디오에 함께 구워진 배경음악/환경음을 들을 수 있습니다. 두 설정 모두 현재 재생 중인 월페이퍼에 재시작 없이 즉시 적용됩니다. 월페이퍼가 다른 앱에 가려져 자동 일시정지되면 소리도 함께 멈춥니다.
 - 설정창을 닫아도 재생은 멈추지 않습니다.
 - **Open at Login**을 켜면 로그인 후 마지막 월페이퍼를 복구합니다.
 - **Play on Desktop**은 macOS 데스크톱 사진을 바꾸지 않습니다. 그래서 투명 메뉴 바 색은 현재 시스템 배경화면 기준으로 유지됩니다.
@@ -85,6 +86,8 @@ scene 지원은 보수적입니다. 데스크톱 scene 재생은 각 scene을 �
 외부 GPL scene renderer subprocess가 번들되어 있고 `ffmpeg`를 사용할 수 있으면, 데스크톱 `scene.pkg` 재생은 그 scene을 화면에 보이지 않는 상태로(renderer 창을 전혀 열지 않고) mp4로 렌더링해 캐시한 뒤 동영상 월페이퍼 경로로 재생합니다; 캐시가 만들어지는 동안, 또는 subprocess/engine assets/`ffmpeg` 중 하나라도 영구적으로 없으면 네이티브 renderer로 fallback합니다. 번들된 macOS 화면 보호기는 아래에 설명한 네이티브/동영상 지원 경로를 계속 사용합니다. 이 프로젝트는 Steam Workshop 항목을 다운로드하지 않고, 제작자 asset을 재배포하지 않고, Steam content를 번들하지 않습니다. renderer binary는 별도 GPL component이며 자체 source notice가 필요합니다.
 
 외부 scene renderer는 사용자가 자기 Windows Wallpaper Engine 설치본에서 복사한 원본 runtime `assets` 폴더도 필요합니다. Workshop Wallpaper Bridge는 이 파일들을 다운로드하거나 함께 배포하지 않습니다. 앱의 **Scene Engine Assets** -> **Choose Assets Folder...**에서 복사한 `steamapps/common/wallpaper_engine/assets` 내용 폴더를 선택하세요. CLI/개발 실행에서는 `WWB_SCENE_ENGINE_ASSETS_DIR=/path/to/assets`가 앱 설정보다 우선하며, 그 외에는 `~/Library/Application Support/WorkshopWallpaperBridge/wallpaper-engine-assets`를 확인합니다. renderer binary가 있어도 engine assets(또는 `ffmpeg`)가 없거나 불완전하면, 실패할 렌더링을 시도하지 않고 네이티브 scene fallback을 계속 사용합니다. 캐시된 scene 비디오는 asset별로 `~/Library/Application Support/WorkshopWallpaperBridge/SceneVideoCache/`에 저장되며, 원본 `scene.pkg`가 바뀌면 자동으로 다시 만들어집니다.
+
+scene 패키지에 저작된 sound layer(배경음악, 환경음 등)가 있으면 해당 오디오 파일을 `scene.pkg`에서 추출해 반복 재생되는 오디오 트랙으로 캐시된 비디오에 함께 인코딩합니다(layer가 여러 개면 scene.json에 지정된 layer별 volume 가중치를 반영해 믹싱). 이렇게 구워진 오디오도 다른 월페이퍼 오디오처럼 기본적으로 음소거 상태이며, 설정의 **Play wallpaper audio**를 켜야 들립니다. 비디오 루프와 달리 이 버전에서는 오디오 트랙에 루프 이음매 크로스페이드가 적용되지 않아 반복 지점에서 미세한 이음매가 들릴 수 있습니다. 오디오 추출이나 믹싱이 실패해도 렌더링 자체는 실패하지 않고 무음 비디오가 생성됩니다.
 
 `preview.jpg`, `thumbnail.jpg`, `cover.png` 같은 Workshop 미리보기 파일은 썸네일로 취급합니다. 프로젝트에 `scene.pkg`가 있으면 낮은 해상도 미리보기를 늘려 쓰지 않고 패키지 내부 scene 데이터를 읽습니다.
 

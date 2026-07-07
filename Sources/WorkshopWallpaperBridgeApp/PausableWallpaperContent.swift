@@ -14,3 +14,8 @@ protocol DisplayModeUpdatableContent: AnyObject {
 protocol WallpaperContentLifecycle: AnyObject {
     func prepareForClose()
 }
+
+@MainActor
+protocol AudioControllableWallpaperContent: AnyObject {
+    func setAudioEnabled(_ enabled: Bool, volume: Double)
+}

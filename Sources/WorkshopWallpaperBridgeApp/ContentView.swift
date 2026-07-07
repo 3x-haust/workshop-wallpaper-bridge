@@ -139,6 +139,7 @@ struct ContentView: View {
                     set: { model.selectLibraryAssets($0) }
                 )
             )
+            audioSection
             sceneAssetsSection
             libraryActions
             Text(
@@ -187,6 +188,28 @@ struct ContentView: View {
                 .keyboardShortcut(.delete, modifiers: [])
                 Spacer()
             }
+        }
+    }
+
+    private var audioSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Audio")
+                .font(.subheadline.weight(.semibold))
+            HStack(spacing: 12) {
+                Toggle(isOn: $model.wallpaperAudioEnabled) {
+                    Text("Play wallpaper audio")
+                }
+                .toggleStyle(.switch)
+                Slider(value: $model.wallpaperAudioVolume, in: 0...1)
+                    .disabled(!model.wallpaperAudioEnabled)
+                    .frame(width: 160)
+            }
+            Text(
+                "Applies to video wallpapers and scene background music/ambience. "
+                    + "If the wallpaper pauses because it's covered by another app, its audio pauses too."
+            )
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 

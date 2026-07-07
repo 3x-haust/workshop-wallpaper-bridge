@@ -34,6 +34,20 @@ final class AppViewModel: ObservableObject {
             userDefaults.set(autoPauseWhenCovered, forKey: PreferenceKey.autoPauseWhenCovered)
         }
     }
+    /// Off by default: the previous behavior was silent playback, so audio
+    /// should never turn on for existing users without them opting in.
+    @Published var wallpaperAudioEnabled = false {
+        didSet {
+            WallpaperPlayer.shared.setAudioSettings(enabled: wallpaperAudioEnabled, volume: wallpaperAudioVolume)
+            userDefaults.set(wallpaperAudioEnabled, forKey: PreferenceKey.wallpaperAudioEnabled)
+        }
+    }
+    @Published var wallpaperAudioVolume = 0.5 {
+        didSet {
+            WallpaperPlayer.shared.setAudioSettings(enabled: wallpaperAudioEnabled, volume: wallpaperAudioVolume)
+            userDefaults.set(wallpaperAudioVolume, forKey: PreferenceKey.wallpaperAudioVolume)
+        }
+    }
     @Published var lockScreenAnimationEnabled = false {
         didSet {
             guard !isSyncingLockScreenAnimation, lockScreenAnimationEnabled != oldValue else {
@@ -573,6 +587,12 @@ extension AppViewModel {
         if userDefaults.object(forKey: PreferenceKey.autoPauseWhenCovered) != nil {
             autoPauseWhenCovered = userDefaults.bool(forKey: PreferenceKey.autoPauseWhenCovered)
         }
+        if userDefaults.object(forKey: PreferenceKey.wallpaperAudioEnabled) != nil {
+            wallpaperAudioEnabled = userDefaults.bool(forKey: PreferenceKey.wallpaperAudioEnabled)
+        }
+        if userDefaults.object(forKey: PreferenceKey.wallpaperAudioVolume) != nil {
+            wallpaperAudioVolume = userDefaults.double(forKey: PreferenceKey.wallpaperAudioVolume)
+        }
         if userDefaults.object(forKey: PreferenceKey.lockScreenAnimationEnabled) != nil {
             isSyncingLockScreenAnimation = true
             lockScreenAnimationEnabled = userDefaults.bool(forKey: PreferenceKey.lockScreenAnimationEnabled)
@@ -638,7 +658,9 @@ extension AppViewModel {
         try WallpaperPlayer.shared.play(
             asset: asset,
             autoPauseWhenCovered: autoPauseWhenCovered,
-            displayMode: displayMode
+            displayMode: displayMode,
+            audioEnabled: wallpaperAudioEnabled,
+            audioVolume: wallpaperAudioVolume
         )
         if remember {
             userDefaults.set(asset.id, forKey: PreferenceKey.lastPlayedAssetId)
@@ -733,4 +755,6 @@ private enum PreferenceKey {
     static let automaticallyCheckForUpdates = "automaticallyCheckForUpdates"
     static let lastUpdateCheckAt = "lastUpdateCheckAt"
     static let sceneEngineAssetsDirectory = "sceneEngineAssetsDirectory"
+    static let wallpaperAudioEnabled = "wallpaperAudioEnabled"
+    static let wallpaperAudioVolume = "wallpaperAudioVolume"
 }

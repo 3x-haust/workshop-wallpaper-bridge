@@ -441,6 +441,213 @@ final class WallpaperPlayerSuspensionTests: XCTestCase {
         XCTAssertTrue(nonExecutableView is SceneWallpaperView)
     }
 
+    @MainActor
+    func testVideoWallpaperViewAppliesAudioSettingsAtInitAndLive() throws {
+        // Given
+        let root = try Self.makeTempDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: root)
+        }
+        let videoURL = root.appending(path: "video.mp4")
+        try "fake-video".write(to: videoURL, atomically: true, encoding: .utf8)
+
+        // When: created with audio enabled at a non-default volume.
+        let view = VideoWallpaperView(
+            url: videoURL,
+            fallbackImageURL: nil,
+            frame: CGRect(x: 0, y: 0, width: 320, height: 200),
+            displayMode: .fit,
+            audioEnabled: true,
+            audioVolume: 0.75
+        )
+        defer {
+            view.prepareForClose()
+        }
+
+        // Then
+        XCTAssertEqual(view.playerLayer.player?.isMuted, false)
+        XCTAssertEqual(Double(try XCTUnwrap(view.playerLayer.player?.volume)), 0.75, accuracy: 0.0001)
+
+        // When: the live setting changes without recreating the view.
+        view.setAudioEnabled(false, volume: 0.2)
+
+        // Then
+        XCTAssertEqual(view.playerLayer.player?.isMuted, true)
+        XCTAssertEqual(Double(try XCTUnwrap(view.playerLayer.player?.volume)), 0.2, accuracy: 0.0001)
+    }
+
+    @MainActor
+    func testVideoWallpaperViewDefaultsToMutedForBackwardCompatibility() throws {
+        // Given
+        let root = try Self.makeTempDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: root)
+        }
+        let videoURL = root.appending(path: "video.mp4")
+        try "fake-video".write(to: videoURL, atomically: true, encoding: .utf8)
+
+        // When: created without specifying audio settings (existing call sites).
+        let view = VideoWallpaperView(
+            url: videoURL,
+            fallbackImageURL: nil,
+            frame: CGRect(x: 0, y: 0, width: 320, height: 200),
+            displayMode: .fit
+        )
+        defer {
+            view.prepareForClose()
+        }
+
+        // Then: playback stays silent, matching the previous hard-muted behavior.
+        XCTAssertEqual(view.playerLayer.player?.isMuted, true)
+    }
+
+    func testSceneAudioExtractorReadsSoundLayersWithAuthoredVolume() {
+        // Given: shaped like the real Dj CUTMAN / wave-ambience test scene.
+        let scene: [String: Any] = [
+            "objects": [
+                [
+                    "name": "Dj CUTMAN - Wigeon (feat. Bird Boy).mp3",
+                    "sound": ["sounds/Dj CUTMAN - Wigeon (feat. Bird Boy).mp3"],
+                    "volume": ["user": "musicvolume", "value": 0.8]
+                ],
+                [
+                    "name": "waves.wav",
+                    "sound": ["sounds/waves.wav"],
+                    "volume": ["user": "wavesvolume", "value": 1.0]
+                ],
+                [
+                    "name": "image-only-layer",
+                    "image": "materials/bg.json"
+                ]
+            ]
+        ]
+
+        // When
+        let tracks = SceneAudioExtractor.audioTracks(scene: scene)
+
+        // Then
+        XCTAssertEqual(tracks, [
+            SceneAudioTrack(path: "sounds/Dj CUTMAN - Wigeon (feat. Bird Boy).mp3", volume: 0.8),
+            SceneAudioTrack(path: "sounds/waves.wav", volume: 1.0)
+        ])
+    }
+
+    func testSceneAudioExtractorDefaultsVolumeToOneWhenMissing() {
+        // Given
+        let scene: [String: Any] = [
+            "objects": [
+                ["sound": ["sounds/ambience.ogg"]]
+            ]
+        ]
+
+        // When
+        let tracks = SceneAudioExtractor.audioTracks(scene: scene)
+
+        // Then
+        XCTAssertEqual(tracks, [SceneAudioTrack(path: "sounds/ambience.ogg", volume: 1.0)])
+    }
+
+    func testSceneAudioExtractorReturnsEmptyWhenNoSoundLayers() {
+        // Given
+        let scene: [String: Any] = [
+            "objects": [
+                ["image": "materials/bg.json"]
+            ]
+        ]
+
+        // Then
+        XCTAssertTrue(SceneAudioExtractor.audioTracks(scene: scene).isEmpty)
+    }
+
+    func testSceneAudioMuxBuildsSingleTrackFfmpegArguments() {
+        // When
+        let arguments = SceneAudioMux.ffmpegArguments(
+            videoURL: URL(filePath: "/tmp/scene-record/scene-render-output.mp4"),
+            audioTracks: [(url: URL(filePath: "/tmp/scene-audio/audio-0.mp3"), weight: 0.8)],
+            outputURL: URL(filePath: "/tmp/scene-record/scene-render-with-audio.mp4")
+        )
+
+        // Then
+        XCTAssertEqual(arguments, [
+            "-y",
+            "-i",
+            "/tmp/scene-record/scene-render-output.mp4",
+            "-stream_loop",
+            "-1",
+            "-i",
+            "/tmp/scene-audio/audio-0.mp3",
+            "-filter_complex",
+            "[1:a]volume=0.800[a]",
+            "-map",
+            "0:v",
+            "-map",
+            "[a]",
+            "-c:v",
+            "copy",
+            "-c:a",
+            "aac",
+            "-shortest",
+            "-movflags",
+            "+faststart",
+            "/tmp/scene-record/scene-render-with-audio.mp4"
+        ])
+    }
+
+    /// Mirrors muxing the real 2-audio-file test scene (music.mp3 + waves.wav)
+    /// referenced in the feature's diagnostics/report: both authored volumes
+    /// (musicvolume 1.0, wavesvolume 1.0 in that fixture) are preserved as
+    /// `amix` weights rather than being auto-normalized down.
+    func testSceneAudioMuxBuildsMultiTrackAmixFfmpegArguments() {
+        // When
+        let arguments = SceneAudioMux.ffmpegArguments(
+            videoURL: URL(filePath: "/tmp/scene-record/scene-render-output.mp4"),
+            audioTracks: [
+                (url: URL(filePath: "/tmp/scene-audio/audio-0.mp3"), weight: 1.0),
+                (url: URL(filePath: "/tmp/scene-audio/audio-1.wav"), weight: 1.0)
+            ],
+            outputURL: URL(filePath: "/tmp/scene-record/scene-render-with-audio.mp4")
+        )
+
+        // Then
+        XCTAssertEqual(arguments, [
+            "-y",
+            "-i",
+            "/tmp/scene-record/scene-render-output.mp4",
+            "-stream_loop",
+            "-1",
+            "-i",
+            "/tmp/scene-audio/audio-0.mp3",
+            "-stream_loop",
+            "-1",
+            "-i",
+            "/tmp/scene-audio/audio-1.wav",
+            "-filter_complex",
+            "[1:a]volume=1.000[a0];[2:a]volume=1.000[a1];[a0][a1]amix=inputs=2:duration=longest:normalize=0[a]",
+            "-map",
+            "0:v",
+            "-map",
+            "[a]",
+            "-c:v",
+            "copy",
+            "-c:a",
+            "aac",
+            "-shortest",
+            "-movflags",
+            "+faststart",
+            "/tmp/scene-record/scene-render-with-audio.mp4"
+        ])
+    }
+
+    func testSceneAudioMuxReturnsNoArgumentsWhenThereAreNoTracks() {
+        // Then: render() never invokes ffmpeg for audio when there's nothing
+        // to mux, leaving the cached video silent as before.
+        XCTAssertTrue(SceneAudioMux.ffmpegArguments(
+            videoURL: URL(filePath: "/tmp/video.mp4"),
+            audioTracks: [],
+            outputURL: URL(filePath: "/tmp/output.mp4")
+        ).isEmpty)
+    }
+
     func testSceneVideoRendererBuildsRecordingAndFfmpegArguments() {
         // Given
         let configuration = SceneVideoRenderConfiguration(

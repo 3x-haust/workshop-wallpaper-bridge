@@ -9,6 +9,8 @@ final class WallpaperPlayer {
     private var activeAsset: WallpaperAsset?
     private var autoPauseWhenCovered = true
     private var displayMode: WallpaperDisplayMode = .fit
+    private var audioEnabled = false
+    private var audioVolume: Double = 0.5
     private var visibilityTimer: Timer?
     private var workspaceObservers: [NSObjectProtocol] = []
     private var isSuspended = false
@@ -19,12 +21,20 @@ final class WallpaperPlayer {
     func play(
         asset: WallpaperAsset,
         autoPauseWhenCovered: Bool = true,
-        displayMode: WallpaperDisplayMode = .fit
+        displayMode: WallpaperDisplayMode = .fit,
+        audioEnabled: Bool? = nil,
+        audioVolume: Double? = nil
     ) throws {
         closeWindows()
         activeAsset = asset
         self.autoPauseWhenCovered = autoPauseWhenCovered
         self.displayMode = displayMode
+        if let audioEnabled {
+            self.audioEnabled = audioEnabled
+        }
+        if let audioVolume {
+            self.audioVolume = audioVolume
+        }
         guard asset.supportStatus == .playable else {
             throw PlaybackError.notPlayable(asset.supportStatus.rawValue)
         }
@@ -35,13 +45,30 @@ final class WallpaperPlayer {
         let screens = NSScreen.screens
         let screenFrames = WallpaperScreenFrames.wallpaperFrames(for: screens)
         windows = try screenFrames.map { frame in
-            try WallpaperWindow(asset: asset, url: url, frame: frame, displayMode: displayMode)
+            try WallpaperWindow(
+                asset: asset,
+                url: url,
+                frame: frame,
+                displayMode: displayMode,
+                audioEnabled: self.audioEnabled,
+                audioVolume: self.audioVolume
+            )
         }
         lastScreenFrames = screenFrames
         windows.forEach { $0.show() }
         startLifecycleObservers()
         startVisibilityTimer()
         updateVisibilityState()
+    }
+
+    /// Applies the wallpaper audio (mute/volume) settings immediately to the
+    /// currently playing wallpaper, without recreating any windows or
+    /// restarting playback. Also remembered for windows created afterwards
+    /// (new plays, auto-reopen after wake/screen changes).
+    func setAudioSettings(enabled: Bool, volume: Double) {
+        audioEnabled = enabled
+        audioVolume = volume
+        windows.forEach { $0.setAudio(enabled: enabled, volume: volume) }
     }
 
     func setDisplayMode(_ displayMode: WallpaperDisplayMode) {
@@ -100,7 +127,14 @@ final class WallpaperPlayer {
         let screens = NSScreen.screens
         let screenFrames = WallpaperScreenFrames.wallpaperFrames(for: screens)
         windows = try screenFrames.map { frame in
-            try WallpaperWindow(asset: asset, url: url, frame: frame, displayMode: displayMode)
+            try WallpaperWindow(
+                asset: asset,
+                url: url,
+                frame: frame,
+                displayMode: displayMode,
+                audioEnabled: audioEnabled,
+                audioVolume: audioVolume
+            )
         }
         lastScreenFrames = screenFrames
         windows.forEach { $0.show() }
@@ -294,8 +328,21 @@ private final class WallpaperWindow {
     private let window: NSWindow
     private let content: NSView
 
-    init(asset: WallpaperAsset, url: URL, frame: CGRect, displayMode: WallpaperDisplayMode) throws {
-        content = try Self.makeContentView(asset: asset, url: url, frame: frame, displayMode: displayMode)
+    init(asset: WallpaperAsset,
+        url: URL,
+        frame: CGRect,
+        displayMode: WallpaperDisplayMode,
+        audioEnabled: Bool = false,
+        audioVolume: Double = 0.5
+    ) throws {
+        content = try Self.makeContentView(
+            asset: asset,
+            url: url,
+            frame: frame,
+            displayMode: displayMode,
+            audioEnabled: audioEnabled,
+            audioVolume: audioVolume
+        )
         window = NSWindow(
             contentRect: frame,
             styleMask: [.borderless],
@@ -339,11 +386,17 @@ private final class WallpaperWindow {
         (content as? DisplayModeUpdatableContent)?.setDisplayMode(displayMode)
     }
 
+    func setAudio(enabled: Bool, volume: Double) {
+        (content as? AudioControllableWallpaperContent)?.setAudioEnabled(enabled, volume: volume)
+    }
+
     private static func makeContentView(
         asset: WallpaperAsset,
         url: URL,
         frame: CGRect,
-        displayMode: WallpaperDisplayMode
+        displayMode: WallpaperDisplayMode,
+        audioEnabled: Bool = false,
+        audioVolume: Double = 0.5
     ) throws -> NSView {
         let contentFrame = WallpaperContentLayout.contentFrame(for: frame)
         switch asset.kind {
@@ -353,7 +406,9 @@ private final class WallpaperWindow {
                 url: url,
                 fallbackImageURL: fallbackImageURL,
                 frame: contentFrame,
-                displayMode: displayMode
+                displayMode: displayMode,
+                audioEnabled: audioEnabled,
+                audioVolume: audioVolume
             )
         case .web:
             return RestrictedWebWallpaperView(
@@ -373,7 +428,9 @@ private final class WallpaperWindow {
                 url: url,
                 previewURL: previewURL,
                 frame: contentFrame,
-                displayMode: displayMode
+                displayMode: displayMode,
+                audioEnabled: audioEnabled,
+                audioVolume: audioVolume
             )
         case .unknown:
             throw PlaybackError.notPlayable(asset.kind.rawValue)
@@ -392,7 +449,9 @@ enum SceneWallpaperContentFactory {
         url: URL,
         previewURL: URL? = nil,
         frame: CGRect,
-        displayMode: WallpaperDisplayMode
+        displayMode: WallpaperDisplayMode,
+        audioEnabled: Bool = false,
+        audioVolume: Double = 0.5
     ) throws -> NSView {
         lastDiagnostic = nil
         guard SceneEngineRendererConfiguration.isScenePackage(url, inside: asset.projectDirectory) else {
@@ -413,7 +472,9 @@ enum SceneWallpaperContentFactory {
                 url: cachedVideoURL,
                 fallbackImageURL: previewURL,
                 frame: frame,
-                displayMode: .fill
+                displayMode: .fill,
+                audioEnabled: audioEnabled,
+                audioVolume: audioVolume
             )
         }
         guard let rendererURL = SceneEngineRendererConfiguration.executableURL(),
@@ -482,7 +543,8 @@ enum SceneWallpaperContentFactory {
             projectDirectory: URL(filePath: asset.projectDirectory).standardizedFileURL,
             assetsDirectory: assetsDirectory,
             rendererURL: rendererURL,
-            size: recordSize
+            size: recordSize,
+            sceneURL: sceneURL
         )
         let assetId = asset.id
         Task.detached(priority: .utility) {

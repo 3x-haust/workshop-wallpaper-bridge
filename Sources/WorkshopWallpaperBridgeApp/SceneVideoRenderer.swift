@@ -16,6 +16,11 @@ struct SceneVideoRenderConfiguration: Sendable {
     let size: CGSize
     let fps: Int
     let seconds: Int
+    // The scene.pkg itself, used only to extract authored sound layers to mux
+    // into the cached video as a looping audio track. Optional (defaulting to
+    // nil) so existing callers/tests that only care about the video pipeline
+    // don't need to supply it; when nil, the render is silent as before.
+    let sceneURL: URL?
 
     init(
         assetId: String,
@@ -28,7 +33,8 @@ struct SceneVideoRenderConfiguration: Sendable {
         // reached less often, making the seam less jarring for scenes whose
         // motion doesn't tile perfectly. The tradeoff is a longer first
         // render, which the rendering-progress status message covers.
-        seconds: Int = 20
+        seconds: Int = 20,
+        sceneURL: URL? = nil
     ) {
         self.assetId = assetId
         self.projectDirectory = projectDirectory
@@ -37,6 +43,7 @@ struct SceneVideoRenderConfiguration: Sendable {
         self.size = size
         self.fps = fps
         self.seconds = seconds
+        self.sceneURL = sceneURL
     }
 }
 
@@ -111,7 +118,13 @@ enum SceneVideoCache {
     /// v5: recordings pass `--record-exclude-live` so live-data elements
     /// (clock text etc.) are no longer baked into the looping video, and the
     /// renderer restored water sparkles with Windows-matched bloom/tone.
-    static let cacheVersion = 5
+    ///
+    /// v6: the scene's authored sound layers (ambience/music) are now muxed
+    /// into the cached mp4 as a looping audio track (see
+    /// `SceneAudioExtractor`/`SceneAudioMux`). Mute/volume are applied at
+    /// playback time (`VideoWallpaperView`), so no further bump is needed
+    /// when only the user's audio preference changes.
+    static let cacheVersion = 6
 
     nonisolated(unsafe) static var overrideCacheDirectoryURL: URL?
 
@@ -267,6 +280,113 @@ enum SceneVideoLoopCrossfade {
             return 0
         }
         return Double(totalFrameCount - crossfadeFrameCount) / Double(fps)
+    }
+}
+
+/// One authored sound layer extracted from a scene package's `scene.json`
+/// (an object with a `sound` array), factored out so it can be tested without
+/// reading an actual `.pkg` file.
+struct SceneAudioTrack: Equatable, Sendable {
+    /// The package-relative path to the audio file (e.g. `sounds/x.mp3`).
+    let path: String
+    /// The layer's authored volume (`volume.value` in scene.json), used as
+    /// the mix weight so louder/quieter authored layers stay proportionate
+    /// to one another. Defaults to 1.0 when the layer doesn't specify one.
+    let volume: Double
+}
+
+/// Reads the sound layers a scene author configured (ambience, background
+/// music, etc.) out of a parsed `scene.json`, factored out of
+/// `SceneVideoRenderer` so the JSON-shape logic can be unit tested without
+/// touching the filesystem.
+enum SceneAudioExtractor {
+    static func audioTracks(scene: [String: Any]) -> [SceneAudioTrack] {
+        let objects = scene["objects"] as? [[String: Any]] ?? []
+        var tracks: [SceneAudioTrack] = []
+        for object in objects {
+            guard let soundPaths = object["sound"] as? [Any] else {
+                continue
+            }
+            let volume = volumeValue(object["volume"]) ?? 1.0
+            for case let path as String in soundPaths {
+                tracks.append(SceneAudioTrack(path: path, volume: volume))
+            }
+        }
+        return tracks
+    }
+
+    private static func volumeValue(_ value: Any?) -> Double? {
+        if let dict = value as? [String: Any] {
+            return volumeValue(dict["value"])
+        }
+        if let number = value as? NSNumber {
+            return number.doubleValue
+        }
+        if let double = value as? Double {
+            return double
+        }
+        return nil
+    }
+}
+
+/// Builds the ffmpeg invocation that muxes one or more looping authored audio
+/// tracks onto an already-encoded (silent) scene video, factored out so the
+/// argument construction can be unit tested without invoking ffmpeg. Each
+/// audio input is looped indefinitely (`-stream_loop -1`) and the output is
+/// trimmed to the video's length (`-shortest`), since the source recording is
+/// an arbitrary-length loop rather than something the audio needs to match
+/// exactly.
+///
+/// v1 note: the audio track itself is not crossfaded at the loop point the
+/// way the video is (see `SceneVideoLoopCrossfade`) - it simply loops, so a
+/// (typically subtle) seam may be audible in the authored track's own loop
+/// point. This is an accepted simplification for the first version.
+enum SceneAudioMux {
+    static func ffmpegArguments(
+        videoURL: URL,
+        audioTracks: [(url: URL, weight: Double)],
+        outputURL: URL
+    ) -> [String] {
+        guard !audioTracks.isEmpty else {
+            return []
+        }
+
+        var arguments = ["-y", "-i", videoURL.path]
+        for track in audioTracks {
+            arguments += ["-stream_loop", "-1", "-i", track.url.path]
+        }
+
+        let filterComplex: String
+        if audioTracks.count == 1 {
+            filterComplex = "[1:a]volume=\(formatWeight(audioTracks[0].weight))[a]"
+        } else {
+            var volumeFilters: [String] = []
+            var mixLabels: [String] = []
+            for (index, track) in audioTracks.enumerated() {
+                let inputIndex = index + 1
+                let label = "a\(index)"
+                volumeFilters.append("[\(inputIndex):a]volume=\(formatWeight(track.weight))[\(label)]")
+                mixLabels.append("[\(label)]")
+            }
+            let mix = "\(mixLabels.joined())amix=inputs=\(audioTracks.count):duration=longest:normalize=0[a]"
+            filterComplex = (volumeFilters + [mix]).joined(separator: ";")
+        }
+
+        arguments += [
+            "-filter_complex", filterComplex,
+            "-map", "0:v",
+            "-map", "[a]",
+            "-c:v", "copy",
+            "-c:a", "aac",
+            "-shortest",
+            "-movflags", "+faststart",
+            outputURL.path
+        ]
+        return arguments
+    }
+
+    private static func formatWeight(_ value: Double) -> String {
+        String(format: "%.3f", value)
     }
 }
 
@@ -438,14 +558,86 @@ enum SceneVideoRenderer {
             )
         )
 
+        let finalOutputURL = configuration.sceneURL.map {
+            muxSceneAudioIfAvailable(
+                sceneURL: $0,
+                silentVideoURL: temporaryOutputURL,
+                tempDirectory: tempDirectory,
+                ffmpegPath: ffmpegPath
+            )
+        } ?? temporaryOutputURL
+
         let cacheDirectory = SceneVideoCache.cacheDirectoryURL()
         try fileManager.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
         let outputURL = SceneVideoCache.cachedVideoURL(assetId: configuration.assetId)
         if fileManager.fileExists(atPath: outputURL.path) {
             try fileManager.removeItem(at: outputURL)
         }
-        try fileManager.moveItem(at: temporaryOutputURL, to: outputURL)
+        try fileManager.moveItem(at: finalOutputURL, to: outputURL)
         return outputURL
+    }
+
+    /// Records why the most recent render's audio mux step didn't produce a
+    /// track with audio (either there was nothing to mux, or muxing failed).
+    /// `nil` after a render that successfully baked audio in. Never causes
+    /// the render itself to fail: any audio-extraction/mux problem falls back
+    /// to the plain silent video.
+    nonisolated(unsafe) static var lastAudioDiagnostic: String?
+
+    /// Extracts the scene's authored sound layers (if any) from `sceneURL`
+    /// and muxes them into `silentVideoURL` as a looping audio track. Falls
+    /// back to returning `silentVideoURL` unchanged (silent) if the scene has
+    /// no sound layers, or if anything about extraction/muxing fails -
+    /// audio is a nice-to-have on top of the video render, never a reason to
+    /// fail it.
+    private static func muxSceneAudioIfAvailable(
+        sceneURL: URL,
+        silentVideoURL: URL,
+        tempDirectory: URL,
+        ffmpegPath: String
+    ) -> URL {
+        lastAudioDiagnostic = nil
+        do {
+            let package = try ScenePackageReader().read(url: sceneURL)
+            guard let sceneData = package.data(forPath: "scene.json"),
+                  let scene = try JSONSerialization.jsonObject(with: sceneData) as? [String: Any] else {
+                return silentVideoURL
+            }
+            let tracks = SceneAudioExtractor.audioTracks(scene: scene)
+            guard !tracks.isEmpty else {
+                return silentVideoURL
+            }
+
+            let audioDirectory = tempDirectory.appending(path: "scene-audio")
+            try FileManager.default.createDirectory(at: audioDirectory, withIntermediateDirectories: true)
+            var writtenTracks: [(url: URL, weight: Double)] = []
+            for (index, track) in tracks.enumerated() {
+                guard let data = package.data(forPath: track.path) else {
+                    continue
+                }
+                let fileExtension = URL(filePath: track.path).pathExtension
+                let fileURL = audioDirectory.appending(path: "audio-\(index).\(fileExtension)")
+                try data.write(to: fileURL)
+                writtenTracks.append((url: fileURL, weight: track.volume))
+            }
+            guard !writtenTracks.isEmpty else {
+                return silentVideoURL
+            }
+
+            let mixedOutputURL = tempDirectory.appending(path: "scene-render-with-audio.mp4")
+            try runProcess(
+                URL(filePath: ffmpegPath),
+                SceneAudioMux.ffmpegArguments(
+                    videoURL: silentVideoURL,
+                    audioTracks: writtenTracks,
+                    outputURL: mixedOutputURL
+                )
+            )
+            return mixedOutputURL
+        } catch {
+            lastAudioDiagnostic = "scene audio mux failed: \(error.localizedDescription)"
+            return silentVideoURL
+        }
     }
 
     private static func windowArgument(for size: CGSize) -> String {
