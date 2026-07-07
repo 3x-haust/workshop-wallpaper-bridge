@@ -63,7 +63,7 @@ struct LibraryTabView: View {
                 )
             ) {
                 ForEach(model.scannedAssets) { asset in
-                    AssetRow(asset: asset)
+                    AssetRow(asset: asset, sceneVideoRenderRevision: model.sceneVideoRenderRevision)
                         .tag(asset.id)
                 }
             }
@@ -98,7 +98,7 @@ struct LibraryTabView: View {
             )
         ) {
             ForEach(model.libraryAssets) { asset in
-                AssetRow(asset: asset)
+                AssetRow(asset: asset, sceneVideoRenderRevision: model.sceneVideoRenderRevision)
                     .tag(asset.id)
                     .contextMenu {
                         contextMenuItems(for: asset)

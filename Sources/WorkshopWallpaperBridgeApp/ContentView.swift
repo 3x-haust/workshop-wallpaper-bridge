@@ -105,6 +105,15 @@ struct HelpPopoverButton: View {
 
 struct AssetRow: View {
     let asset: WallpaperAsset
+    // Unused beyond forcing SwiftUI to re-evaluate this row's body: SwiftUI
+    // skips recomputing a child view's body when its stored properties are
+    // structurally unchanged, even if the enclosing `@ObservedObject`
+    // published an unrelated change. Without a property here that changes
+    // when a scene's video render completes, `displayStatus` below would
+    // keep returning its first-render value until `asset` itself changed
+    // (e.g. on the next library rescan), so the badge would look stuck on
+    // "renders on first play" even after the cached video exists.
+    let sceneVideoRenderRevision: Int
 
     // Derived fresh on every body evaluation (not cached in the row) so the
     // badge picks up a completed scene video render as soon as the list

@@ -35,6 +35,52 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: second.projectDirectory))
     }
 
+    func testSceneVideoRenderCompletionBumpsRevisionSoLibraryRowsRefresh() throws {
+        // Given
+        let model = AppViewModel(
+            store: LibraryStore(root: try makeTempDirectory()),
+            loginItemController: MockLoginItemController(),
+            userDefaults: try makeUserDefaults()
+        )
+        let sceneRoot = try makeTempDirectory()
+        let entrypoint = sceneRoot.appending(path: "scene.pkg")
+        try Data([1]).write(to: entrypoint)
+        let scene = WallpaperAsset(
+            id: "scene-1",
+            title: "Scene",
+            kind: .scene,
+            supportStatus: .playable,
+            source: .localSteamWorkshop,
+            projectDirectory: sceneRoot.path,
+            entrypoint: entrypoint.path,
+            thumbnail: nil,
+            workshopId: nil,
+            redistributionAllowed: false,
+            issues: []
+        )
+        model.libraryAssets = [scene]
+
+        // Then (before any render, the row shows the "renders on first play"
+        // badge because there's no cached video yet)
+        XCTAssertEqual(LibraryRowStatusResolver.status(for: scene), .needsFirstRender)
+        let revisionBeforeRender = model.sceneVideoRenderRevision
+
+        // When a render completes and lands a fresh cache entry
+        let previousCacheDirectory = SceneVideoCache.overrideCacheDirectoryURL
+        let cacheDirectory = sceneRoot.appending(path: "SceneVideoCache")
+        try FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
+        try Data([1]).write(to: cacheDirectory.appending(path: "\(scene.id).mp4"))
+        SceneVideoCache.overrideCacheDirectoryURL = cacheDirectory
+        addTeardownBlock {
+            SceneVideoCache.overrideCacheDirectoryURL = previousCacheDirectory
+        }
+        model.handleSceneVideoRenderCompletion(assetId: scene.id)
+
+        // Then
+        XCTAssertEqual(model.sceneVideoRenderRevision, revisionBeforeRender + 1)
+        XCTAssertEqual(LibraryRowStatusResolver.status(for: scene), .playable)
+    }
+
     func testSelectScannedAssetsIgnoresMissingIds() throws {
         // Given
         let sourceRoot = try makeTempDirectory()

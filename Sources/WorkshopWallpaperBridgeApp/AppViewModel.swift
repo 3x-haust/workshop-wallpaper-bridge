@@ -19,6 +19,14 @@ final class AppViewModel: ObservableObject {
     @Published var status = "Choose a copied Wallpaper Engine Workshop folder to begin."
     @Published var isWorking = false
     @Published private(set) var sceneAssetsDirectory = ""
+    /// Bumped whenever a scene's background video render completes. Library
+    /// rows read this alongside the asset itself so their body actually
+    /// re-evaluates: SwiftUI skips re-invoking a child view's body when its
+    /// input properties are structurally unchanged, even if the enclosing
+    /// `@ObservedObject` published an unrelated change (e.g. `status`), so
+    /// without this the "renders on first play" badge never flips to
+    /// "playable" until something else forces the asset itself to change.
+    @Published private(set) var sceneVideoRenderRevision = 0
     @Published var displayMode: WallpaperDisplayMode = .fit {
         didSet {
             WallpaperPlayer.shared.setDisplayMode(displayMode)
@@ -125,7 +133,7 @@ final class AppViewModel: ObservableObject {
             self?.status = message
         }
         SceneWallpaperContentFactory.sceneVideoRenderCompletionHandler = { [weak self] assetId in
-            self?.refreshLockScreenAnimationConfigurationAfterSceneVideoRender(assetId: assetId)
+            self?.handleSceneVideoRenderCompletion(assetId: assetId)
         }
     }
 
@@ -695,6 +703,16 @@ extension AppViewModel {
         status = lockScreenError.map {
             "\(playbackStatus) Screen Saver update failed: \($0)"
         } ?? playbackStatus
+    }
+
+    /// Fires once a scene's background video render finishes. Bumps
+    /// `sceneVideoRenderRevision` so the library list's "renders on first
+    /// play" badge flips to "playable" immediately (see the doc comment on
+    /// that property for why the plain `libraryAssets`/`status` publishes
+    /// aren't enough), then refreshes the lock screen animation config.
+    func handleSceneVideoRenderCompletion(assetId: String) {
+        sceneVideoRenderRevision += 1
+        refreshLockScreenAnimationConfigurationAfterSceneVideoRender(assetId: assetId)
     }
 
     /// A scene's first render is asynchronous: `refreshLockScreenAnimationConfiguration`
