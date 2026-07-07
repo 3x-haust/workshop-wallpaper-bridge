@@ -63,7 +63,7 @@ Wallpaper Engine 프로젝트를 쓰는 경우:
 - **Open at Login**을 켜면 로그인 후 마지막 월페이퍼를 복구합니다.
 - **Play on Desktop**은 macOS 데스크톱 사진을 바꾸지 않습니다. 그래서 투명 메뉴 바 색은 현재 시스템 배경화면 기준으로 유지됩니다.
 - macOS 데스크톱 및 Lock Screen 정적 이미지를 실제로 바꾸고 싶을 때만 **Set Still Wallpaper**를 사용합니다.
-- **Remove**는 Mac 라이브러리에 복사된 항목만 삭제합니다. 원본 복사 폴더나 원본 영상은 건드리지 않습니다.
+- **Remove**는 확인 절차를 거친 뒤 Mac 라이브러리에 복사된 항목만 휴지통으로 이동합니다(복원 가능). 원본 복사 폴더나 원본 영상은 건드리지 않습니다.
 
 설정 창은 **Library** 탭(가져오기, Mac 라이브러리, Display mode, **Play on Desktop** / **Remove**)과 **Settings** 탭(재생 토글, Audio, Scene Engine Assets, Screen Saver, Language)으로 나뉩니다. **Convert Video**와 **Set Still Wallpaper**는 라이브러리 목록의 우클릭 컨텍스트 메뉴와 **Play on Desktop** 옆 **More**("⋯") 메뉴에서 사용할 수 있으며, 항상 보이는 버튼으로 노출되지 않습니다.
 
@@ -143,7 +143,7 @@ open "dist/Workshop Wallpaper Bridge.app"
 dist/WorkshopWallpaperBridge-macOS-arm64.dmg
 ```
 
-선택적인 외부 GPL scene renderer를 로컬 패키지에 포함하려면 `Scripts/package-app.sh`를 실행하기 전에 `SCENE_RENDERER_BINARY=/path/to/wwb-scene-renderer`를 설정하거나 실행 파일을 `ExternalRenderers/wwb-scene-renderer`에 둡니다. 패키지 script는 renderer가 있으면 app resources로 복사하고, [Almamu/linux-wallpaperengine](https://github.com/Almamu/linux-wallpaperengine)의 기본 pinned source ref `b016d7d1fdcf4e5fd2f9c9fa420a8aaa07fee02d`와 source link를 담은 `Renderer Notices/GPL Scene Renderer Notice.txt`를 항상 씁니다. 다른 renderer build를 배포한다면 해당 공개 source에 맞게 `SCENE_RENDERER_SOURCE_URL`과 `SCENE_RENDERER_SOURCE_REF`를 설정하세요.
+선택적인 외부 GPL scene renderer를 로컬 패키지에 포함하려면 `Scripts/package-app.sh`를 실행하기 전에 `SCENE_RENDERER_BINARY=/path/to/wwb-scene-renderer`를 설정하거나 실행 파일을 `ExternalRenderers/wwb-scene-renderer`에 둡니다. 패키지 script는 renderer가 있으면 app resources로 복사하고, [3x-haust/wallpaperengine-mac-renderer](https://github.com/3x-haust/wallpaperengine-mac-renderer)의 기본 pinned source ref `b79ac590ff5ddcfdae2d26f5c3a5d289b3e4b058`와 source link를 담은 `Renderer Notices/GPL Scene Renderer Notice.txt`를 항상 씁니다. 다른 renderer build를 배포한다면 해당 공개 source에 맞게 `SCENE_RENDERER_SOURCE_URL`과 `SCENE_RENDERER_SOURCE_REF`를 설정하세요.
 
 패키지는 Wallpaper Engine runtime assets를 절대 포함하지 않습니다. 외부 scene 렌더링을 쓰려면 본인의 Windows Wallpaper Engine `steamapps/common/wallpaper_engine/assets` 내용 폴더를 복사한 뒤, 앱의 **Scene Engine Assets** -> **Choose Assets Folder...**에서 선택하세요. CLI/개발 실행에서는 `WWB_SCENE_ENGINE_ASSETS_DIR`가 앱 설정보다 우선하며, 기본 fallback은 `~/Library/Application Support/WorkshopWallpaperBridge/wallpaper-engine-assets`입니다. `swift run wwbctl doctor`로 renderer binary와 필수 engine asset 파일의 사용 가능 여부를 확인할 수 있습니다.
 

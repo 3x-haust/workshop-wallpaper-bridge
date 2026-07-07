@@ -63,7 +63,7 @@ Playback notes:
 - **Open at Login** restores the last played wallpaper after login.
 - **Play on Desktop** does not change the macOS desktop picture, so the translucent menu bar keeps using your current system wallpaper tint.
 - Use **Set Still Wallpaper** only when you explicitly want to replace the macOS desktop and Lock Screen still image.
-- **Remove** deletes the imported Mac-library copy only. It does not touch the original copied folder or video.
+- **Remove** asks for confirmation, then moves the imported Mac-library copy to the Trash (recoverable) only. It does not touch the original copied folder or video.
 
 The settings window has a **Library** tab (import, your Mac library, Display mode, **Play on Desktop** / **Remove**) and a **Settings** tab (playback toggles, Audio, Scene Engine Assets, Screen Saver, and Language). **Convert Video** and **Set Still Wallpaper** are reachable from the library list's right-click context menu and from the **More** ("⋯") menu next to **Play on Desktop**, not as always-visible buttons.
 
@@ -143,7 +143,7 @@ The script writes:
 dist/WorkshopWallpaperBridge-macOS-arm64.dmg
 ```
 
-To include the optional external GPL scene renderer in a local package, set `SCENE_RENDERER_BINARY=/path/to/wwb-scene-renderer` or place the executable at `ExternalRenderers/wwb-scene-renderer` before running `Scripts/package-app.sh`. The package script copies the binary into app resources when present and always writes `Renderer Notices/GPL Scene Renderer Notice.txt` with the source link and default pinned source ref `b016d7d1fdcf4e5fd2f9c9fa420a8aaa07fee02d` for [Almamu/linux-wallpaperengine](https://github.com/Almamu/linux-wallpaperengine). If you ship a different renderer build, set `SCENE_RENDERER_SOURCE_URL` and `SCENE_RENDERER_SOURCE_REF` to the corresponding published source.
+To include the optional external GPL scene renderer in a local package, set `SCENE_RENDERER_BINARY=/path/to/wwb-scene-renderer` or place the executable at `ExternalRenderers/wwb-scene-renderer` before running `Scripts/package-app.sh`. The package script copies the binary into app resources when present and always writes `Renderer Notices/GPL Scene Renderer Notice.txt` with the source link and default pinned source ref `b79ac590ff5ddcfdae2d26f5c3a5d289b3e4b058` for [3x-haust/wallpaperengine-mac-renderer](https://github.com/3x-haust/wallpaperengine-mac-renderer) (a macOS port of [Almamu/linux-wallpaperengine](https://github.com/Almamu/linux-wallpaperengine)). If you ship a different renderer build, set `SCENE_RENDERER_SOURCE_URL` and `SCENE_RENDERER_SOURCE_REF` to the corresponding published source.
 
 The package never bundles Wallpaper Engine runtime assets. For external scene rendering, copy your own Windows Wallpaper Engine `steamapps/common/wallpaper_engine/assets` contents folder, then choose it in the app under **Scene Engine Assets** -> **Choose Assets Folder...**. `WWB_SCENE_ENGINE_ASSETS_DIR` still overrides the app setting for CLI/dev launches, and the default fallback remains `~/Library/Application Support/WorkshopWallpaperBridge/wallpaper-engine-assets`. `swift run wwbctl doctor` reports whether the renderer binary and required engine asset files are available.
 
