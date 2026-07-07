@@ -19,6 +19,35 @@ struct LibraryTabView: View {
             actionRow
         }
         .padding()
+        .confirmationDialog(
+            removeConfirmationTitle,
+            isPresented: Binding(
+                get: { model.pendingLibraryRemoval != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        model.cancelPendingLibraryRemoval()
+                    }
+                }
+            ),
+            titleVisibility: .visible,
+            presenting: model.pendingLibraryRemoval
+        ) { _ in
+            Button(model.L("library.remove.confirm.button"), role: .destructive) {
+                model.removeSelectedLibraryAssets()
+            }
+            Button(model.L("common.cancel"), role: .cancel) {
+                model.cancelPendingLibraryRemoval()
+            }
+        } message: { _ in
+            Text(model.L("library.remove.confirm.message"))
+        }
+    }
+
+    private var removeConfirmationTitle: String {
+        guard let pending = model.pendingLibraryRemoval else {
+            return model.L("library.remove.confirm.title.fallback")
+        }
+        return String(format: model.L("library.remove.confirm.title"), pending.title)
     }
 
     private var importRow: some View {
@@ -129,7 +158,7 @@ struct LibraryTabView: View {
         Divider()
         Button(model.L("library.remove")) {
             model.selectLibraryAssets([asset.id])
-            model.removeSelectedLibraryAssets()
+            model.requestRemoveSelectedLibraryAssets()
         }
     }
 
@@ -142,7 +171,7 @@ struct LibraryTabView: View {
             .keyboardShortcut(.defaultAction)
             .disabled(model.selectedLibraryAsset == nil)
             Button(removeButtonTitle) {
-                model.removeSelectedLibraryAssets()
+                model.requestRemoveSelectedLibraryAssets()
             }
             .disabled(model.selectedLibraryAssetIds.isEmpty)
             .keyboardShortcut(.delete, modifiers: [])

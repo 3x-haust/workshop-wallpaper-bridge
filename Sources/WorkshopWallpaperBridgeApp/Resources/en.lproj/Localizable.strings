@@ -26,6 +26,10 @@
 "library.play" = "Play on Desktop";
 "library.remove" = "Remove";
 "library.remove.selected" = "Remove Selected";
+"library.remove.confirm.title" = "Move \"%@\" to the Trash?";
+"library.remove.confirm.title.fallback" = "Move to the Trash?";
+"library.remove.confirm.message" = "This moves the imported copy to the Trash, where it can be restored. The original copied Workshop folder is not touched.";
+"library.remove.confirm.button" = "Move to Trash";
 "library.more" = "More";
 "library.convert" = "Convert Video";
 "library.setStillWallpaper" = "Set Still Wallpaper";
@@ -65,3 +69,4 @@
 
 /* Common */
 "common.ok" = "OK";
+"common.cancel" = "Cancel";

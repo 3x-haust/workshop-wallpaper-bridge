@@ -177,6 +177,70 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: secondVideo.path))
     }
 
+    func testRequestRemoveSelectedLibraryAssetsSetsPendingConfirmationWithoutDeleting() throws {
+        // Given
+        let sourceRoot = try makeTempDirectory()
+        let video = sourceRoot.appending(path: "keep-until-confirmed.mp4")
+        FileManager.default.createFile(atPath: video.path, contents: Data([1]))
+        let store = LibraryStore(root: try makeTempDirectory())
+        let imported = try store.importVideoFile(video)
+        let model = AppViewModel(
+            store: store,
+            loginItemController: MockLoginItemController(),
+            userDefaults: try makeUserDefaults()
+        )
+        model.selectedLibraryAssetId = imported.id
+
+        // When
+        model.requestRemoveSelectedLibraryAssets()
+
+        // Then
+        XCTAssertEqual(model.pendingLibraryRemoval?.assetIds, [imported.id])
+        XCTAssertEqual(model.pendingLibraryRemoval?.title, imported.title)
+        XCTAssertFalse(model.libraryAssets.isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: imported.projectDirectory))
+    }
+
+    func testCancelPendingLibraryRemovalClearsConfirmationWithoutDeleting() throws {
+        // Given
+        let sourceRoot = try makeTempDirectory()
+        let video = sourceRoot.appending(path: "cancel-me.mp4")
+        FileManager.default.createFile(atPath: video.path, contents: Data([1]))
+        let store = LibraryStore(root: try makeTempDirectory())
+        let imported = try store.importVideoFile(video)
+        let model = AppViewModel(
+            store: store,
+            loginItemController: MockLoginItemController(),
+            userDefaults: try makeUserDefaults()
+        )
+        model.selectedLibraryAssetId = imported.id
+        model.requestRemoveSelectedLibraryAssets()
+
+        // When
+        model.cancelPendingLibraryRemoval()
+
+        // Then
+        XCTAssertNil(model.pendingLibraryRemoval)
+        XCTAssertFalse(model.libraryAssets.isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: imported.projectDirectory))
+    }
+
+    func testRequestRemoveSelectedLibraryAssetsWithNoSelectionReportsStatus() throws {
+        // Given
+        let model = AppViewModel(
+            store: LibraryStore(root: try makeTempDirectory()),
+            loginItemController: MockLoginItemController(),
+            userDefaults: try makeUserDefaults()
+        )
+
+        // When
+        model.requestRemoveSelectedLibraryAssets()
+
+        // Then
+        XCTAssertNil(model.pendingLibraryRemoval)
+        XCTAssertEqual(model.status, "Select a library project first.")
+    }
+
     func testLaunchAtLoginToggleRegistersLoginItem() throws {
         // Given
         let loginItems = MockLoginItemController()

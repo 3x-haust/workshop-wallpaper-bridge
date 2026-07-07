@@ -332,6 +332,43 @@ final class LibraryStoreTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: video.path))
     }
 
+    func testRemoveAssetUsesTrashRatherThanPermanentDelete() throws {
+        // Given
+        let sourceRoot = try Fixture.makeTempDirectory()
+        let video = sourceRoot.appending(path: "trash-me.mp4")
+        FileManager.default.createFile(atPath: video.path, contents: Data([1]))
+        let trasher = SpyAssetTrasher()
+        let store = LibraryStore(root: try Fixture.makeTempDirectory(), trasher: trasher)
+        let imported = try store.importVideoFile(video)
+
+        // When
+        try store.removeAsset(id: imported.id)
+
+        // Then
+        XCTAssertEqual(trasher.trashedURLs.map(\.path), [imported.projectDirectory])
+        XCTAssertTrue(trasher.removedURLs.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: imported.projectDirectory))
+    }
+
+    func testRemoveAssetFallsBackToPermanentDeleteWhenTrashFails() throws {
+        // Given
+        let sourceRoot = try Fixture.makeTempDirectory()
+        let video = sourceRoot.appending(path: "fallback-me.mp4")
+        FileManager.default.createFile(atPath: video.path, contents: Data([1]))
+        let trasher = SpyAssetTrasher()
+        trasher.trashItemError = CocoaError(.fileWriteVolumeReadOnly)
+        let store = LibraryStore(root: try Fixture.makeTempDirectory(), trasher: trasher)
+        let imported = try store.importVideoFile(video)
+
+        // When
+        try store.removeAsset(id: imported.id)
+
+        // Then
+        XCTAssertEqual(trasher.trashedURLs.map(\.path), [imported.projectDirectory])
+        XCTAssertEqual(trasher.removedURLs.map(\.path), [imported.projectDirectory])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: imported.projectDirectory))
+    }
+
     func testRemoveMissingAssetIsNoOp() throws {
         // Given
         let sourceRoot = try Fixture.makeTempDirectory()
@@ -590,5 +627,27 @@ final class LibraryStoreTests: XCTestCase {
 
     private func standardPath(_ path: String?) -> String? {
         path.map { URL(filePath: $0).standardizedFileURL.resolvingSymlinksInPath().path }
+    }
+}
+
+/// Test double for `AssetTrashing` that records every call so removal tests
+/// can assert Trash is preferred, and can simulate a volume that rejects
+/// `trashItem` to exercise the permanent-delete fallback.
+private final class SpyAssetTrasher: AssetTrashing, @unchecked Sendable {
+    private(set) var trashedURLs: [URL] = []
+    private(set) var removedURLs: [URL] = []
+    var trashItemError: Error?
+
+    func trashItem(at url: URL) throws {
+        trashedURLs.append(url)
+        if let trashItemError {
+            throw trashItemError
+        }
+        try FileManager.default.removeItem(at: url)
+    }
+
+    func removeItem(at url: URL) throws {
+        removedURLs.append(url)
+        try FileManager.default.removeItem(at: url)
     }
 }

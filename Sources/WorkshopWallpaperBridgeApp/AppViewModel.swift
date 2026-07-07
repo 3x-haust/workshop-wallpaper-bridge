@@ -9,6 +9,15 @@ struct UpdateAlert: Identifiable {
     let message: String
 }
 
+/// Drives the "Remove" confirmation dialog: holds the assets awaiting the
+/// user's confirmation before `AppViewModel.removeSelectedLibraryAssets()`
+/// actually moves their library folders to the Trash.
+struct PendingLibraryRemoval: Identifiable {
+    let id = UUID()
+    let assetIds: Set<WallpaperAsset.ID>
+    let title: String
+}
+
 @MainActor
 final class AppViewModel: ObservableObject {
     @Published var sourcePath = ""
@@ -27,6 +36,7 @@ final class AppViewModel: ObservableObject {
     /// without this the "renders on first play" badge never flips to
     /// "playable" until something else forces the asset itself to change.
     @Published private(set) var sceneVideoRenderRevision = 0
+    @Published var pendingLibraryRemoval: PendingLibraryRemoval?
     @Published var displayMode: WallpaperDisplayMode = .fit {
         didSet {
             WallpaperPlayer.shared.setDisplayMode(displayMode)
@@ -421,8 +431,29 @@ extension AppViewModel {
         removeSelectedLibraryAssets()
     }
 
+    /// Prepares the confirmation dialog state for the currently selected
+    /// library asset(s). The view presents `.confirmationDialog` bound to
+    /// `pendingLibraryRemoval`; only its destructive action actually calls
+    /// `removeSelectedLibraryAssets()`.
+    func requestRemoveSelectedLibraryAssets() {
+        let assets = selectedLibraryAssets
+        guard !assets.isEmpty else {
+            status = "Select a library project first."
+            return
+        }
+        let title = assets.count == 1
+            ? assets[0].title
+            : "\(assets.count) items"
+        pendingLibraryRemoval = PendingLibraryRemoval(assetIds: Set(assets.map(\.id)), title: title)
+    }
+
+    func cancelPendingLibraryRemoval() {
+        pendingLibraryRemoval = nil
+    }
+
     func removeSelectedLibraryAssets() {
         let assets = selectedLibraryAssets
+        pendingLibraryRemoval = nil
         guard !assets.isEmpty else {
             status = "Select a library project first."
             return
@@ -433,9 +464,9 @@ extension AppViewModel {
             }
             loadLibrary()
             if assets.count == 1, let asset = assets.first {
-                status = "Removed \(asset.title) from your Mac library."
+                status = "Moved \(asset.title) to the Trash. The original copied folder was not touched."
             } else {
-                status = "Removed \(assets.count) items from your Mac library."
+                status = "Moved \(assets.count) items to the Trash. The original copied folders were not touched."
             }
         } catch {
             status = error.localizedDescription

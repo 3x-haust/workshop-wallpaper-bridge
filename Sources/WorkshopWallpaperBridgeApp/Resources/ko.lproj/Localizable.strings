@@ -26,6 +26,10 @@
 "library.play" = "데스크톱에서 재생";
 "library.remove" = "삭제";
 "library.remove.selected" = "선택 항목 삭제";
+"library.remove.confirm.title" = "\"%@\"을(를) 휴지통으로 이동할까요?";
+"library.remove.confirm.title.fallback" = "휴지통으로 이동할까요?";
+"library.remove.confirm.message" = "가져온 사본이 휴지통으로 이동하며, 필요하면 복원할 수 있습니다. 원본으로 복사해 둔 Workshop 폴더는 그대로 유지됩니다.";
+"library.remove.confirm.button" = "휴지통으로 이동";
 "library.more" = "더 보기";
 "library.convert" = "동영상 변환";
 "library.setStillWallpaper" = "정지 배경화면으로 설정";
@@ -65,3 +69,4 @@
 
 /* Common */
 "common.ok" = "확인";
+"common.cancel" = "취소";
