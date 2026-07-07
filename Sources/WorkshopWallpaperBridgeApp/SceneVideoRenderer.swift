@@ -124,7 +124,15 @@ enum SceneVideoCache {
     /// `SceneAudioExtractor`/`SceneAudioMux`). Mute/volume are applied at
     /// playback time (`VideoWallpaperView`), so no further bump is needed
     /// when only the user's audio preference changes.
-    static let cacheVersion = 6
+    ///
+    /// v7: the cached video is now stretched - by repeating its own
+    /// seamless loop clip (see `SceneVideoLoopExtension`) - to match the
+    /// longest authored audio track's duration (capped at
+    /// `SceneAudioMasterDuration.maximumSeconds`), and that track plays once
+    /// per wallpaper loop instead of being cut off mid-phrase at the video's
+    /// own short, arbitrary loop point. Shorter authored layers (ambience
+    /// etc.) keep looping underneath it.
+    static let cacheVersion = 7
 
     nonisolated(unsafe) static var overrideCacheDirectoryURL: URL?
 
@@ -329,23 +337,175 @@ enum SceneAudioExtractor {
     }
 }
 
-/// Builds the ffmpeg invocation that muxes one or more looping authored audio
-/// tracks onto an already-encoded (silent) scene video, factored out so the
-/// argument construction can be unit tested without invoking ffmpeg. Each
-/// audio input is looped indefinitely (`-stream_loop -1`) and the output is
-/// trimmed to the video's length (`-shortest`), since the source recording is
-/// an arbitrary-length loop rather than something the audio needs to match
-/// exactly.
+/// Parses ffmpeg's own `Duration: HH:MM:SS.ss` line - printed to stderr while
+/// probing any input file, even when no output is given - so a track's
+/// length can be discovered without adding a dependency on a separate
+/// `ffprobe` binary. Factored out so the text parsing can be unit tested
+/// without invoking a process.
+enum SceneAudioDurationProbe {
+    static func durationSeconds(fromFfmpegOutput text: String) -> Double? {
+        guard let range = text.range(of: "Duration: ") else {
+            return nil
+        }
+        let afterLabel = text[range.upperBound...]
+        guard let commaIndex = afterLabel.firstIndex(of: ",") else {
+            return nil
+        }
+        let timeComponents = afterLabel[afterLabel.startIndex..<commaIndex].split(separator: ":")
+        guard timeComponents.count == 3,
+              let hours = Double(timeComponents[0]),
+              let minutes = Double(timeComponents[1]),
+              let seconds = Double(timeComponents[2]) else {
+            return nil
+        }
+        return hours * 3600 + minutes * 60 + seconds
+    }
+
+    /// Injectable so tests can stub the ffmpeg invocation. Runs ffmpeg with
+    /// only an input (no output file); ffmpeg still prints the input's
+    /// metadata, including its `Duration:` line, to stderr before erroring
+    /// out for lack of an output - the error itself is irrelevant here since
+    /// only stderr's text is inspected.
+    nonisolated(unsafe) static var ffmpegProbeOutput: (String, URL) -> String = { ffmpegPath, url in
+        let process = Process()
+        process.executableURL = URL(filePath: ffmpegPath)
+        process.arguments = ["-i", url.path]
+        let stderrPipe = Pipe()
+        process.standardError = stderrPipe
+        process.standardOutput = Pipe()
+        do {
+            try process.run()
+        } catch {
+            return ""
+        }
+        let data = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return String(data: data, encoding: .utf8) ?? ""
+    }
+
+    static func durationSeconds(ffmpegPath: String, url: URL) -> Double? {
+        durationSeconds(fromFfmpegOutput: ffmpegProbeOutput(ffmpegPath, url))
+    }
+}
+
+/// Derives the "master" duration a scene's cached wallpaper video is
+/// stretched to match: the longest authored audio track's own length, so
+/// that track (typically the background music) always plays all the way
+/// through once per wallpaper loop instead of being cut off mid-phrase at a
+/// short, arbitrary video loop point.
+enum SceneAudioMasterDuration {
+    /// Caps how far a scene's video is stretched to match its soundtrack.
+    /// Without a cap, an unusually long authored track (an entire album,
+    /// say) would blow up the cached mp4's size and first-render encode
+    /// time; 4 minutes comfortably covers ordinary wallpaper background
+    /// music/ambience loops while keeping both bounded.
+    static let maximumSeconds: Double = 240
+
+    static func masterDurationSeconds(trackDurationsSeconds: [Double]) -> Double? {
+        guard let longest = trackDurationsSeconds.max(), longest > 0 else {
+            return nil
+        }
+        return min(longest, maximumSeconds)
+    }
+}
+
+/// Pure math (plus the one ffmpeg invocation) for stretching an already
+/// seamlessly-looping video clip to cover a longer authored soundtrack by
+/// repeating the clip itself, factored out of `SceneVideoRenderer` so the
+/// repeat-count arithmetic can be unit tested without invoking ffmpeg.
+enum SceneVideoLoopExtension {
+    /// How many times the seamless `loopSeconds`-long clip needs to repeat to
+    /// reach (or just exceed) `masterDurationSeconds`. Returns 1 (no
+    /// stretching) when the clip is already at least as long as the
+    /// soundtrack, so short authored tracks never shrink the video.
+    static func repeatCount(loopSeconds: Double, masterDurationSeconds: Double) -> Int {
+        guard loopSeconds > 0, masterDurationSeconds > loopSeconds else {
+            return 1
+        }
+        return Int((masterDurationSeconds / loopSeconds).rounded(.up))
+    }
+
+    static func totalSeconds(loopSeconds: Double, repeatCount: Int) -> Double {
+        loopSeconds * Double(max(1, repeatCount))
+    }
+
+    /// Repeats `loopableVideoURL` (itself already a seamlessly-looping clip)
+    /// `repeatCount` times using `-stream_loop` with a stream copy (`-c
+    /// copy`), rather than re-encoding N concatenated copies: since every
+    /// repeat is byte-identical to the one seamless clip, a copy remux costs
+    /// no quality or time beyond the original encode, and the internal seams
+    /// between repeats are exactly the same (already-verified) loop point as
+    /// the outer wallpaper loop. `-t` guards against sub-frame float drift in
+    /// the repeated stream so the output is exactly `repeatCount *
+    /// loopSeconds` long.
+    static func ffmpegArguments(
+        loopableVideoURL: URL,
+        repeatCount: Int,
+        totalSeconds: Double,
+        outputURL: URL
+    ) -> [String] {
+        [
+            "-y",
+            "-stream_loop", String(max(0, repeatCount - 1)),
+            "-i", loopableVideoURL.path,
+            "-c", "copy",
+            "-t", formatSeconds(totalSeconds),
+            "-movflags", "+faststart",
+            outputURL.path
+        ]
+    }
+
+    private static func formatSeconds(_ value: Double) -> String {
+        String(format: "%.3f", value)
+    }
+}
+
+/// Chooses how many times one authored track should repeat (ffmpeg's
+/// `-stream_loop` value) so it fits some whole number of complete
+/// playthroughs inside `totalDurationSeconds` without ever being cut off
+/// mid-play - unlike an unconditional `-stream_loop -1`, which tiles the
+/// track exactly but then truncates whatever repeat is in progress the
+/// instant `totalDurationSeconds` is reached, which can chop a musical phrase
+/// off mid-way if the track's own duration doesn't happen to divide evenly
+/// into the total. Factored out of `SceneAudioMux` so the arithmetic can be
+/// unit tested without invoking ffmpeg.
+enum SceneAudioTrackLoop {
+    /// The literal value to pass to ffmpeg's `-stream_loop` flag: `-1` means
+    /// loop forever, `0` means play once, `N` means play `N + 1` times total.
+    /// Here it's always >= 0 (never `-1`) so every track completes cleanly;
+    /// any remaining time before `totalDurationSeconds` is silence, added by
+    /// `SceneAudioMux`'s `apad`.
+    static func streamLoopValue(trackDurationSeconds: Double, totalDurationSeconds: Double) -> Int {
+        guard trackDurationSeconds > 0, totalDurationSeconds > 0 else {
+            return 0
+        }
+        let wholePlaythroughs = max(1, Int((totalDurationSeconds / trackDurationSeconds).rounded(.down)))
+        return wholePlaythroughs - 1
+    }
+}
+
+/// Builds the ffmpeg invocation that muxes one or more authored audio tracks
+/// onto an already-encoded (silent) scene video, factored out so the
+/// argument construction can be unit tested without invoking ffmpeg.
 ///
-/// v1 note: the audio track itself is not crossfaded at the loop point the
-/// way the video is (see `SceneVideoLoopCrossfade`) - it simply loops, so a
-/// (typically subtle) seam may be audible in the authored track's own loop
-/// point. This is an accepted simplification for the first version.
+/// Each track carries its own `-stream_loop` value (see
+/// `SceneAudioTrackLoop`): rather than singling out one "master" track to
+/// play once while every other track loops forever (which would still cut a
+/// shorter, non-master track off mid-phrase the instant the video's
+/// stretched duration is reached - exactly the bug this design avoids), every
+/// track is given an exact whole-number repeat count that fits inside the
+/// video's total duration, so no authored track is ever truncated mid-play.
+/// The mixed bed is padded with silence (`apad`) up to the video's exact
+/// duration - covering the (typically short) remainder after every track's
+/// last complete playthrough - then trimmed with an explicit `-t` (rather
+/// than `-shortest`) so `AVPlayerLooper` sees matching track lengths and
+/// never introduces a silent/black gap at the loop point.
 enum SceneAudioMux {
     static func ffmpegArguments(
         videoURL: URL,
-        audioTracks: [(url: URL, weight: Double)],
-        outputURL: URL
+        audioTracks: [(url: URL, weight: Double, streamLoopValue: Int)],
+        outputURL: URL,
+        totalDurationSeconds: Double
     ) -> [String] {
         guard !audioTracks.isEmpty else {
             return []
@@ -353,32 +513,31 @@ enum SceneAudioMux {
 
         var arguments = ["-y", "-i", videoURL.path]
         for track in audioTracks {
-            arguments += ["-stream_loop", "-1", "-i", track.url.path]
+            arguments += ["-stream_loop", String(track.streamLoopValue), "-i", track.url.path]
         }
 
-        let filterComplex: String
+        var filters: [String] = []
         if audioTracks.count == 1 {
-            filterComplex = "[1:a]volume=\(formatWeight(audioTracks[0].weight))[a]"
+            filters.append("[1:a]volume=\(formatWeight(audioTracks[0].weight))[mix]")
         } else {
-            var volumeFilters: [String] = []
             var mixLabels: [String] = []
             for (index, track) in audioTracks.enumerated() {
                 let inputIndex = index + 1
                 let label = "a\(index)"
-                volumeFilters.append("[\(inputIndex):a]volume=\(formatWeight(track.weight))[\(label)]")
+                filters.append("[\(inputIndex):a]volume=\(formatWeight(track.weight))[\(label)]")
                 mixLabels.append("[\(label)]")
             }
-            let mix = "\(mixLabels.joined())amix=inputs=\(audioTracks.count):duration=longest:normalize=0[a]"
-            filterComplex = (volumeFilters + [mix]).joined(separator: ";")
+            filters.append("\(mixLabels.joined())amix=inputs=\(audioTracks.count):duration=longest:normalize=0[mix]")
         }
+        filters.append("[mix]apad=whole_dur=\(formatSeconds(totalDurationSeconds))[a]")
 
         arguments += [
-            "-filter_complex", filterComplex,
+            "-filter_complex", filters.joined(separator: ";"),
             "-map", "0:v",
             "-map", "[a]",
             "-c:v", "copy",
             "-c:a", "aac",
-            "-shortest",
+            "-t", formatSeconds(totalDurationSeconds),
             "-movflags", "+faststart",
             outputURL.path
         ]
@@ -386,6 +545,10 @@ enum SceneAudioMux {
     }
 
     private static func formatWeight(_ value: Double) -> String {
+        String(format: "%.3f", value)
+    }
+
+    private static func formatSeconds(_ value: Double) -> String {
         String(format: "%.3f", value)
     }
 }
@@ -712,7 +875,7 @@ enum SceneVideoRenderer {
         ffmpegPath: String,
         tempDirectory: URL,
         progressHandler: (@Sendable (Double) -> Void)?
-    ) throws -> URL {
+    ) throws -> (url: URL, recordedFrameCount: Int) {
         let fileManager = FileManager.default
         let fifoURL = tempDirectory.appending(path: "scene-raw.fifo")
         guard mkfifo(fifoURL.path, 0o600) == 0 else {
@@ -830,7 +993,7 @@ enum SceneVideoRenderer {
                 outputURL: temporaryOutputURL
             )
         )
-        return temporaryOutputURL
+        return (temporaryOutputURL, recordedFrameCount)
     }
 
     /// Runs the original serial pipeline: the renderer writes a PNG frame
@@ -842,7 +1005,7 @@ enum SceneVideoRenderer {
         ffmpegPath: String,
         tempDirectory: URL,
         progressHandler: (@Sendable (Double) -> Void)?
-    ) throws -> URL {
+    ) throws -> (url: URL, recordedFrameCount: Int) {
         let fileManager = FileManager.default
         let progressMonitor = progressHandler.map {
             SceneVideoRenderProgressMonitor(
@@ -875,7 +1038,7 @@ enum SceneVideoRenderer {
                 outputURL: temporaryOutputURL
             )
         )
-        return temporaryOutputURL
+        return (temporaryOutputURL, recordedFrameCount)
     }
 
     /// Runs the renderer to capture offscreen frames, encodes them with
@@ -910,9 +1073,10 @@ enum SceneVideoRenderer {
         }
 
         let temporaryOutputURL: URL
+        let recordedFrameCount: Int
         if supportsRecordRaw(rendererURL: configuration.rendererURL) {
             do {
-                temporaryOutputURL = try renderUsingRawPipe(
+                (temporaryOutputURL, recordedFrameCount) = try renderUsingRawPipe(
                     configuration: configuration,
                     ffmpegPath: ffmpegPath,
                     tempDirectory: tempDirectory,
@@ -923,7 +1087,7 @@ enum SceneVideoRenderer {
                 // both processes were already killed, so fall back to the
                 // original serial PNG-sequence pipeline rather than failing
                 // the render outright.
-                temporaryOutputURL = try renderUsingPNGSequence(
+                (temporaryOutputURL, recordedFrameCount) = try renderUsingPNGSequence(
                     configuration: configuration,
                     ffmpegPath: ffmpegPath,
                     tempDirectory: tempDirectory,
@@ -931,7 +1095,7 @@ enum SceneVideoRenderer {
                 )
             }
         } else {
-            temporaryOutputURL = try renderUsingPNGSequence(
+            (temporaryOutputURL, recordedFrameCount) = try renderUsingPNGSequence(
                 configuration: configuration,
                 ffmpegPath: ffmpegPath,
                 tempDirectory: tempDirectory,
@@ -939,12 +1103,29 @@ enum SceneVideoRenderer {
             )
         }
 
+        // The video's own final (post-crossfade) loop duration, i.e. the
+        // length of one seamless playthrough of `temporaryOutputURL`, so the
+        // audio mux can decide how many times to repeat it to cover a longer
+        // authored soundtrack (see `muxSceneAudioIfAvailable`).
+        let crossfadeFrameCount = SceneVideoLoopCrossfade.frameCount(
+            totalFrameCount: recordedFrameCount,
+            fps: configuration.fps
+        )
+        let loopSeconds = crossfadeFrameCount > 0
+            ? SceneVideoLoopCrossfade.outputSeconds(
+                totalFrameCount: recordedFrameCount,
+                crossfadeFrameCount: crossfadeFrameCount,
+                fps: configuration.fps
+            )
+            : Double(recordedFrameCount) / Double(configuration.fps)
+
         let finalOutputURL = configuration.sceneURL.map {
             muxSceneAudioIfAvailable(
                 sceneURL: $0,
                 silentVideoURL: temporaryOutputURL,
                 tempDirectory: tempDirectory,
-                ffmpegPath: ffmpegPath
+                ffmpegPath: ffmpegPath,
+                loopSeconds: loopSeconds
             )
         } ?? temporaryOutputURL
 
@@ -966,16 +1147,29 @@ enum SceneVideoRenderer {
     nonisolated(unsafe) static var lastAudioDiagnostic: String?
 
     /// Extracts the scene's authored sound layers (if any) from `sceneURL`
-    /// and muxes them into `silentVideoURL` as a looping audio track. Falls
-    /// back to returning `silentVideoURL` unchanged (silent) if the scene has
-    /// no sound layers, or if anything about extraction/muxing fails -
-    /// audio is a nice-to-have on top of the video render, never a reason to
-    /// fail it.
+    /// and muxes them into `silentVideoURL` (a `loopSeconds`-long seamlessly
+    /// looping clip). Falls back to returning `silentVideoURL` unchanged
+    /// (silent) if the scene has no sound layers, or if anything about
+    /// extraction/muxing fails - audio is a nice-to-have on top of the video
+    /// render, never a reason to fail it.
+    ///
+    /// The video is stretched - by repeating its own seamless loop via
+    /// `SceneVideoLoopExtension` - to match the longest authored track's
+    /// duration (capped, see `SceneAudioMasterDuration`), so that track
+    /// (typically background music) always plays through in full once per
+    /// wallpaper loop instead of being cut off mid-phrase at the short,
+    /// arbitrary video loop point. Every track (not just the longest) is then
+    /// given its own exact, non-truncating repeat count (see
+    /// `SceneAudioTrackLoop`) rather than singling out one "master" track to
+    /// play once while the rest loop forever - a shorter authored track whose
+    /// duration doesn't evenly divide the stretched total would otherwise
+    /// still be cut off mid-phrase right at that boundary.
     private static func muxSceneAudioIfAvailable(
         sceneURL: URL,
         silentVideoURL: URL,
         tempDirectory: URL,
-        ffmpegPath: String
+        ffmpegPath: String,
+        loopSeconds: Double
     ) -> URL {
         lastAudioDiagnostic = nil
         do {
@@ -1005,13 +1199,75 @@ enum SceneVideoRenderer {
                 return silentVideoURL
             }
 
+            let durations = writtenTracks.map {
+                SceneAudioDurationProbe.durationSeconds(ffmpegPath: ffmpegPath, url: $0.url)
+            }
+            // Every track's duration needs to be known to compute an exact,
+            // non-truncating repeat count for it (see `SceneAudioTrackLoop`);
+            // if even one probe fails, fall back entirely to the plain
+            // single-pass loop (no stretching, every track loops forever)
+            // rather than risk a partially-correct stretch.
+            let allDurationsKnown = durations.allSatisfy { $0 != nil }
+            let masterDurationSeconds = allDurationsKnown
+                ? SceneAudioMasterDuration.masterDurationSeconds(trackDurationsSeconds: durations.compactMap { $0 })
+                : nil
+
+            let repeatCount: Int
+            let totalDurationSeconds: Double
+            if let masterDurationSeconds {
+                repeatCount = SceneVideoLoopExtension.repeatCount(
+                    loopSeconds: loopSeconds,
+                    masterDurationSeconds: masterDurationSeconds
+                )
+                totalDurationSeconds = SceneVideoLoopExtension.totalSeconds(
+                    loopSeconds: loopSeconds,
+                    repeatCount: repeatCount
+                )
+            } else {
+                repeatCount = 1
+                totalDurationSeconds = loopSeconds
+            }
+
+            let extendedVideoURL: URL
+            if repeatCount > 1 {
+                extendedVideoURL = tempDirectory.appending(path: "scene-render-extended.mp4")
+                try runProcess(
+                    URL(filePath: ffmpegPath),
+                    SceneVideoLoopExtension.ffmpegArguments(
+                        loopableVideoURL: silentVideoURL,
+                        repeatCount: repeatCount,
+                        totalSeconds: totalDurationSeconds,
+                        outputURL: extendedVideoURL
+                    )
+                )
+            } else {
+                extendedVideoURL = silentVideoURL
+            }
+
+            let audioTracksWithLoopValue = writtenTracks.enumerated().map { index, track -> (url: URL, weight: Double, streamLoopValue: Int) in
+                guard allDurationsKnown, let duration = durations[index] else {
+                    // Shouldn't happen (guarded above), but loop forever
+                    // rather than produce a broken/zero-length track.
+                    return (track.url, track.weight, -1)
+                }
+                return (
+                    track.url,
+                    track.weight,
+                    SceneAudioTrackLoop.streamLoopValue(
+                        trackDurationSeconds: duration,
+                        totalDurationSeconds: totalDurationSeconds
+                    )
+                )
+            }
+
             let mixedOutputURL = tempDirectory.appending(path: "scene-render-with-audio.mp4")
             try runProcess(
                 URL(filePath: ffmpegPath),
                 SceneAudioMux.ffmpegArguments(
-                    videoURL: silentVideoURL,
-                    audioTracks: writtenTracks,
-                    outputURL: mixedOutputURL
+                    videoURL: extendedVideoURL,
+                    audioTracks: audioTracksWithLoopValue,
+                    outputURL: mixedOutputURL,
+                    totalDurationSeconds: totalDurationSeconds
                 )
             )
             return mixedOutputURL

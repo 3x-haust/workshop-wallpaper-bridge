@@ -559,12 +559,15 @@ final class WallpaperPlayerSuspensionTests: XCTestCase {
         XCTAssertTrue(SceneAudioExtractor.audioTracks(scene: scene).isEmpty)
     }
 
-    func testSceneAudioMuxBuildsSingleTrackFfmpegArguments() {
-        // When
+    func testSceneAudioMuxBuildsSingleTrackFfmpegArgumentsWithExactRepeatCount() {
+        // When: a single track whose own exact repeat count within the
+        // stretched total is 1 playthrough (streamLoopValue 0, i.e. no
+        // -stream_loop needed beyond the default single play).
         let arguments = SceneAudioMux.ffmpegArguments(
             videoURL: URL(filePath: "/tmp/scene-record/scene-render-output.mp4"),
-            audioTracks: [(url: URL(filePath: "/tmp/scene-audio/audio-0.mp3"), weight: 0.8)],
-            outputURL: URL(filePath: "/tmp/scene-record/scene-render-with-audio.mp4")
+            audioTracks: [(url: URL(filePath: "/tmp/scene-audio/audio-0.mp3"), weight: 0.8, streamLoopValue: 0)],
+            outputURL: URL(filePath: "/tmp/scene-record/scene-render-with-audio.mp4"),
+            totalDurationSeconds: 150.4
         )
 
         // Then
@@ -573,11 +576,11 @@ final class WallpaperPlayerSuspensionTests: XCTestCase {
             "-i",
             "/tmp/scene-record/scene-render-output.mp4",
             "-stream_loop",
-            "-1",
+            "0",
             "-i",
             "/tmp/scene-audio/audio-0.mp3",
             "-filter_complex",
-            "[1:a]volume=0.800[a]",
+            "[1:a]volume=0.800[mix];[mix]apad=whole_dur=150.400[a]",
             "-map",
             "0:v",
             "-map",
@@ -586,7 +589,8 @@ final class WallpaperPlayerSuspensionTests: XCTestCase {
             "copy",
             "-c:a",
             "aac",
-            "-shortest",
+            "-t",
+            "150.400",
             "-movflags",
             "+faststart",
             "/tmp/scene-record/scene-render-with-audio.mp4"
@@ -596,16 +600,18 @@ final class WallpaperPlayerSuspensionTests: XCTestCase {
     /// Mirrors muxing the real 2-audio-file test scene (music.mp3 + waves.wav)
     /// referenced in the feature's diagnostics/report: both authored volumes
     /// (musicvolume 1.0, wavesvolume 1.0 in that fixture) are preserved as
-    /// `amix` weights rather than being auto-normalized down.
-    func testSceneAudioMuxBuildsMultiTrackAmixFfmpegArguments() {
+    /// `amix` weights, and each track carries its own exact repeat count
+    /// rather than one arbitrarily being singled out to loop forever.
+    func testSceneAudioMuxBuildsMultiTrackAmixFfmpegArgumentsWithPerTrackRepeatCounts() {
         // When
         let arguments = SceneAudioMux.ffmpegArguments(
             videoURL: URL(filePath: "/tmp/scene-record/scene-render-output.mp4"),
             audioTracks: [
-                (url: URL(filePath: "/tmp/scene-audio/audio-0.mp3"), weight: 1.0),
-                (url: URL(filePath: "/tmp/scene-audio/audio-1.wav"), weight: 1.0)
+                (url: URL(filePath: "/tmp/scene-audio/audio-0.mp3"), weight: 1.0, streamLoopValue: 0),
+                (url: URL(filePath: "/tmp/scene-audio/audio-1.wav"), weight: 1.0, streamLoopValue: 29)
             ],
-            outputURL: URL(filePath: "/tmp/scene-record/scene-render-with-audio.mp4")
+            outputURL: URL(filePath: "/tmp/scene-record/scene-render-with-audio.mp4"),
+            totalDurationSeconds: 150.4
         )
 
         // Then
@@ -614,15 +620,15 @@ final class WallpaperPlayerSuspensionTests: XCTestCase {
             "-i",
             "/tmp/scene-record/scene-render-output.mp4",
             "-stream_loop",
-            "-1",
+            "0",
             "-i",
             "/tmp/scene-audio/audio-0.mp3",
             "-stream_loop",
-            "-1",
+            "29",
             "-i",
             "/tmp/scene-audio/audio-1.wav",
             "-filter_complex",
-            "[1:a]volume=1.000[a0];[2:a]volume=1.000[a1];[a0][a1]amix=inputs=2:duration=longest:normalize=0[a]",
+            "[1:a]volume=1.000[a0];[2:a]volume=1.000[a1];[a0][a1]amix=inputs=2:duration=longest:normalize=0[mix];[mix]apad=whole_dur=150.400[a]",
             "-map",
             "0:v",
             "-map",
@@ -631,7 +637,8 @@ final class WallpaperPlayerSuspensionTests: XCTestCase {
             "copy",
             "-c:a",
             "aac",
-            "-shortest",
+            "-t",
+            "150.400",
             "-movflags",
             "+faststart",
             "/tmp/scene-record/scene-render-with-audio.mp4"
@@ -644,8 +651,106 @@ final class WallpaperPlayerSuspensionTests: XCTestCase {
         XCTAssertTrue(SceneAudioMux.ffmpegArguments(
             videoURL: URL(filePath: "/tmp/video.mp4"),
             audioTracks: [],
-            outputURL: URL(filePath: "/tmp/output.mp4")
+            outputURL: URL(filePath: "/tmp/output.mp4"),
+            totalDurationSeconds: 18.8
         ).isEmpty)
+    }
+
+    func testSceneAudioTrackLoopComputesExactRepeatCountWithoutMidPhraseCut() {
+        // A 143.57s music track inside a 150.32s total plays exactly once
+        // (150.32/143.57 rounds down to 1 playthrough), leaving the tail as
+        // silence rather than looping and being cut off ~6.75s into a second
+        // playthrough.
+        XCTAssertEqual(
+            SceneAudioTrackLoop.streamLoopValue(trackDurationSeconds: 143.57, totalDurationSeconds: 150.32),
+            0
+        )
+        // A short 5s ambience loop inside the same total fits exactly 30
+        // whole playthroughs (150.32/5 = 30.06, rounds down to 30), so
+        // streamLoopValue is 29 (30 total plays = 29 extra loops).
+        XCTAssertEqual(
+            SceneAudioTrackLoop.streamLoopValue(trackDurationSeconds: 5.0, totalDurationSeconds: 150.32),
+            29
+        )
+        // A track exactly as long as the total plays once.
+        XCTAssertEqual(
+            SceneAudioTrackLoop.streamLoopValue(trackDurationSeconds: 150.32, totalDurationSeconds: 150.32),
+            0
+        )
+    }
+
+    func testSceneAudioDurationProbeParsesFfmpegDurationLine() {
+        // Given: a representative slice of real ffmpeg -i stderr output.
+        let output = """
+        Input #0, mp3, from '/tmp/audio-0.mp3':
+          Duration: 00:02:23.57, start: 0.025056, bitrate: 257 kb/s
+        """
+
+        // Then
+        XCTAssertEqual(SceneAudioDurationProbe.durationSeconds(fromFfmpegOutput: output) ?? 0, 143.57, accuracy: 0.001)
+    }
+
+    func testSceneAudioDurationProbeReturnsNilWhenNoDurationLinePresent() {
+        XCTAssertNil(SceneAudioDurationProbe.durationSeconds(fromFfmpegOutput: "some unrelated ffmpeg error output"))
+    }
+
+    func testSceneAudioMasterDurationPicksLongestTrackCappedAtMaximum() {
+        // Given/Then: ordinary case picks the longest track untouched.
+        XCTAssertEqual(
+            SceneAudioMasterDuration.masterDurationSeconds(trackDurationsSeconds: [143.57, 150.0]),
+            150.0
+        )
+        // An unusually long authored track is capped rather than stretching
+        // the cached video/render time unbounded.
+        XCTAssertEqual(
+            SceneAudioMasterDuration.masterDurationSeconds(trackDurationsSeconds: [1000]),
+            SceneAudioMasterDuration.maximumSeconds
+        )
+        // No usable durations (e.g. every probe failed) yields nil so the
+        // caller can fall back to the plain non-stretched loop.
+        XCTAssertNil(SceneAudioMasterDuration.masterDurationSeconds(trackDurationsSeconds: []))
+    }
+
+    func testSceneVideoLoopExtensionComputesRepeatCountToCoverMasterDuration() {
+        // A ~18.8s loop covering a ~150s soundtrack needs 8 repeats (150/18.8
+        // rounds up to 8), for a total of 150.4s.
+        let repeatCount = SceneVideoLoopExtension.repeatCount(loopSeconds: 18.8, masterDurationSeconds: 150.0)
+        XCTAssertEqual(repeatCount, 8)
+        XCTAssertEqual(
+            SceneVideoLoopExtension.totalSeconds(loopSeconds: 18.8, repeatCount: repeatCount),
+            150.4,
+            accuracy: 0.001
+        )
+    }
+
+    func testSceneVideoLoopExtensionSkipsStretchingWhenTrackIsShorterThanTheLoop() {
+        // A soundtrack shorter than the video's own seamless loop should
+        // never shrink the video - it just plays once within that loop.
+        XCTAssertEqual(SceneVideoLoopExtension.repeatCount(loopSeconds: 18.8, masterDurationSeconds: 5.0), 1)
+        XCTAssertEqual(SceneVideoLoopExtension.totalSeconds(loopSeconds: 18.8, repeatCount: 1), 18.8, accuracy: 0.001)
+    }
+
+    func testSceneVideoLoopExtensionBuildsStreamLoopCopyFfmpegArguments() {
+        let arguments = SceneVideoLoopExtension.ffmpegArguments(
+            loopableVideoURL: URL(filePath: "/tmp/scene-record/scene-render-output.mp4"),
+            repeatCount: 8,
+            totalSeconds: 150.4,
+            outputURL: URL(filePath: "/tmp/scene-record/scene-render-extended.mp4")
+        )
+        XCTAssertEqual(arguments, [
+            "-y",
+            "-stream_loop",
+            "7",
+            "-i",
+            "/tmp/scene-record/scene-render-output.mp4",
+            "-c",
+            "copy",
+            "-t",
+            "150.400",
+            "-movflags",
+            "+faststart",
+            "/tmp/scene-record/scene-render-extended.mp4"
+        ])
     }
 
     func testSceneVideoRendererBuildsRecordingAndFfmpegArguments() {
@@ -1737,6 +1842,7 @@ final class WallpaperPlayerSuspensionTests: XCTestCase {
             issues: []
         )
     }
+
 }
 
 /// Collects progress values reported from the background queue the scene
