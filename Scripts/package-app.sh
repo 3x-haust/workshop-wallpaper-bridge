@@ -178,6 +178,12 @@ rm -rf "$ROOT/dist"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR" "$SAVER_MACOS_DIR"
 cp "$ROOT/.build/release/WorkshopWallpaperBridge" "$MACOS_DIR/Workshop Wallpaper Bridge"
 cp "$ROOT/.build/release/wwbctl" "$MACOS_DIR/wwbctl"
+RESOURCE_BUNDLE="$ROOT/.build/release/WorkshopWallpaperBridge_WorkshopWallpaperBridgeApp.bundle"
+if [ ! -d "$RESOURCE_BUNDLE" ]; then
+  printf '%s\n' "missing app resource bundle: $RESOURCE_BUNDLE" >&2
+  exit 1
+fi
+cp -R "$RESOURCE_BUNDLE" "$RESOURCES_DIR/"
 bundle_scene_renderer_if_available
 cat > "$APP_DIR/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
