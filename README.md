@@ -3,6 +3,7 @@
 [![Swift](https://img.shields.io/badge/Swift-6-orange.svg)](Package.swift)
 [![Platform](https://img.shields.io/badge/platform-macOS%2014%2B-lightgrey.svg)](README.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Downloads](https://img.shields.io/github/downloads/3x-haust/workshop-wallpaper-bridge/total.svg)](https://github.com/3x-haust/workshop-wallpaper-bridge/releases)
 
 Use local Wallpaper Engine Workshop files on macOS.
 
