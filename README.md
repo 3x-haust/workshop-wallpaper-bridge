@@ -33,9 +33,15 @@ Download the latest `WorkshopWallpaperBridge-macOS-arm64.dmg` from [Releases](ht
 
 1. Open the DMG.
 2. Drag **Workshop Wallpaper Bridge.app** to **Applications**.
-3. Open the app. It runs as a menu bar utility, not a Dock app.
+3. Remove download quarantine from the copy in Applications:
 
-Public releases are Developer ID signed, notarized, and Gatekeeper-checked with download quarantine applied before upload. If macOS reports that a downloaded release is damaged, use the next release and file an issue with the macOS version and release tag.
+   ```bash
+   xattr -r -d com.apple.quarantine "/Applications/Workshop Wallpaper Bridge.app"
+   ```
+
+4. Open the app. It runs as a menu bar utility, not a Dock app.
+
+The current public build is ad-hoc signed rather than Apple-notarized because the project does not have a paid Apple Developer account. macOS may otherwise report the downloaded app as damaged. Only remove quarantine from a DMG downloaded from this repository's official [Releases](https://github.com/3x-haust/workshop-wallpaper-bridge/releases) page.
 
 The app checks GitHub Releases for updates automatically when **Auto-check Updates** is enabled. Use **Check Updates** from the settings window, or **Check for Updates** from the menu bar menu, to check manually. When a newer release exists, **Download Update** downloads the latest DMG.
 

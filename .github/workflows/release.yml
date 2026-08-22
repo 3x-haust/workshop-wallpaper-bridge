@@ -27,23 +27,27 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v5
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
 
       - name: Resolve release version
         id: version
         shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PUSH_TAG: ${{ github.ref_name }}
+          REQUESTED_TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            tag="${{ inputs.tag }}"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            tag="$REQUESTED_TAG"
           else
-            tag="${GITHUB_REF_NAME}"
+            tag="$PUSH_TAG"
           fi
-          version="${tag#v}"
-          if [ -z "$version" ] || [ "$version" = "$tag" ]; then
-            echo "Release tag must use v<version>, got: $tag" >&2
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tag must use v<major>.<minor>.<patch>, got: $tag" >&2
             exit 1
           fi
+          version="${tag#v}"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
@@ -88,11 +92,11 @@ jobs:
 
           if [ "$present" -eq 0 ]; then
             echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::Release signing secrets are absent; publishing an unsigned DMG. Configure ${required[*]} for signed and notarized releases."
+            echo "::warning::Release signing secrets are absent; publishing a DMG with an ad-hoc signed app. Configure ${required[*]} for Developer ID signed and notarized releases."
             {
               echo "### Release signing"
               echo
-              echo "Signing secrets are absent, so this run will publish an unsigned DMG."
+              echo "Signing secrets are absent, so this run will publish a DMG containing an ad-hoc signed app."
               echo "Configure all required macOS signing and notarization secrets to publish a Developer ID signed and notarized DMG."
             } >> "$GITHUB_STEP_SUMMARY"
             exit 0
@@ -171,7 +175,12 @@ jobs:
           fi
           artifact="$(find dist -maxdepth 1 -type f \( -name "*.dmg" -o -name "*.zip" \) | sort | head -n 1)"
           checksum="$artifact.sha256"
-          shasum -a 256 "$artifact" > "$checksum"
+          artifact_dir="$(dirname "$artifact")"
+          artifact_name="$(basename "$artifact")"
+          (
+            cd "$artifact_dir"
+            shasum -a 256 "$artifact_name" > "$artifact_name.sha256"
+          )
           echo "path=$artifact" >> "$GITHUB_OUTPUT"
           echo "checksum=$checksum" >> "$GITHUB_OUTPUT"
 
@@ -181,20 +190,33 @@ jobs:
           TAG_NAME: ${{ steps.version.outputs.tag }}
           RELEASE_ARTIFACT: ${{ steps.artifact.outputs.path }}
           RELEASE_CHECKSUM: ${{ steps.artifact.outputs.checksum }}
+          SIGNING_AVAILABLE: ${{ steps.signing.outputs.available }}
         run: |
           set -euo pipefail
+          release_notes="$(Scripts/render-release-notes.sh "$SIGNING_AVAILABLE" </dev/null)"
           if gh release view "$TAG_NAME" >/dev/null 2>&1; then
             gh release upload "$TAG_NAME" \
               "$RELEASE_ARTIFACT" \
               "$RELEASE_CHECKSUM" \
               --clobber
+            existing_notes="$(gh release view "$TAG_NAME" --json body --jq .body)"
+            updated_notes="$(printf '%s' "$existing_notes" | Scripts/render-release-notes.sh "$SIGNING_AVAILABLE")"
+            if [ "$existing_notes" != "$updated_notes" ]; then
+              gh release edit "$TAG_NAME" --notes "$updated_notes"
+            fi
           else
+            release_args=(
+              --title "$TAG_NAME"
+              --generate-notes
+              --verify-tag
+            )
+            if [ -n "$release_notes" ]; then
+              release_args+=(--notes "$release_notes")
+            fi
             gh release create "$TAG_NAME" \
               "$RELEASE_ARTIFACT" \
               "$RELEASE_CHECKSUM" \
-              --title "$TAG_NAME" \
-              --generate-notes \
-              --verify-tag
+              "${release_args[@]}"
           fi
 
       - name: Clean up signing keychain
