@@ -14,8 +14,8 @@ SAVER_DIR="$RESOURCES_DIR/$SAVER_NAME.saver"
 SAVER_MACOS_DIR="$SAVER_DIR/Contents/MacOS"
 SAVER_EXECUTABLE="Workshop Wallpaper Bridge Lock Screen"
 DMG_PATH="$ROOT/dist/WorkshopWallpaperBridge-macOS-arm64.dmg"
-APP_VERSION="${APP_VERSION:-1.4.0}"
-BUNDLE_VERSION="${BUNDLE_VERSION:-12}"
+APP_VERSION="${APP_VERSION:-1.4.1}"
+BUNDLE_VERSION="${BUNDLE_VERSION:-13}"
 SCENE_RENDERER_BINARY="${SCENE_RENDERER_BINARY:-}"
 SCENE_RENDERER_CONVENTIONAL_PATH="$ROOT/ExternalRenderers/wwb-scene-renderer"
 SCENE_RENDERER_BUNDLED_PATH=""
@@ -183,7 +183,8 @@ if [ ! -d "$RESOURCE_BUNDLE" ]; then
   printf '%s\n' "missing app resource bundle: $RESOURCE_BUNDLE" >&2
   exit 1
 fi
-cp -R "$RESOURCE_BUNDLE" "$RESOURCES_DIR/"
+RESOURCE_BUNDLE_DESTINATION="$RESOURCES_DIR/WorkshopWallpaperBridge_WorkshopWallpaperBridgeApp.bundle"
+cp -R "$RESOURCE_BUNDLE" "$RESOURCE_BUNDLE_DESTINATION"
 bundle_scene_renderer_if_available
 cat > "$APP_DIR/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -259,16 +260,36 @@ if [ -n "$SIGN_IDENTITY" ]; then
   codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$MACOS_DIR/wwbctl"
   codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$MACOS_DIR/Workshop Wallpaper Bridge"
   if [ -n "$SCENE_RENDERER_BUNDLED_PATH" ]; then
+    for dylib in "$RENDERERS_DIR"/*.dylib; do
+      if [ -f "$dylib" ]; then
+        codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$dylib"
+      fi
+    done
     codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$SCENE_RENDERER_BUNDLED_PATH"
   fi
   codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$SAVER_DIR"
   codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$APP_DIR"
+  codesign --verify --strict --verbose=2 "$SAVER_DIR"
   codesign --verify --strict --verbose=2 "$APP_DIR"
 elif [ "$REQUIRE_SIGNING" = "1" ]; then
   printf '%s\n' "SIGN_IDENTITY is required when REQUIRE_SIGNING=1." >&2
   exit 1
 else
-  printf '%s\n' "warning: building an unsigned app; set SIGN_IDENTITY for Developer ID distribution." >&2
+  codesign --force --sign - "$MACOS_DIR/wwbctl"
+  codesign --force --sign - "$MACOS_DIR/Workshop Wallpaper Bridge"
+  if [ -n "$SCENE_RENDERER_BUNDLED_PATH" ]; then
+    for dylib in "$RENDERERS_DIR"/*.dylib; do
+      if [ -f "$dylib" ]; then
+        codesign --force --sign - "$dylib"
+      fi
+    done
+    codesign --force --sign - "$SCENE_RENDERER_BUNDLED_PATH"
+  fi
+  codesign --force --sign - "$SAVER_DIR"
+  codesign --force --sign - "$APP_DIR"
+  codesign --verify --strict --verbose=2 "$SAVER_DIR"
+  codesign --verify --deep --strict --verbose=2 "$APP_DIR"
+  printf '%s\n' "warning: building an ad-hoc signed app; set SIGN_IDENTITY for Developer ID distribution." >&2
 fi
 DMG_STAGING="$(mktemp -d)"
 cp -R "$APP_DIR" "$DMG_STAGING/"
