@@ -43,9 +43,29 @@ enum AppLanguage: String, CaseIterable, Identifiable {
 @MainActor
 enum Localization {
     private static var bundleCache: [String: Bundle] = [:]
+    private static let resourceBundle: Bundle = {
+        resolveResourceBundle(candidates: resourceBundleCandidates()) ?? .module
+    }()
 
     static func string(_ key: String, language: AppLanguage) -> String {
         bundle(for: language).localizedString(forKey: key, value: key, table: nil)
+    }
+
+    static func resourceBundleCandidates(
+        bundleURL: URL = Bundle.main.bundleURL,
+        resourceURL: URL? = Bundle.main.resourceURL
+    ) -> [URL] {
+        let bundleName = "WorkshopWallpaperBridge_WorkshopWallpaperBridgeApp.bundle"
+        var candidates: [URL] = []
+        if let resourceURL {
+            candidates.append(resourceURL.appending(path: bundleName, directoryHint: .isDirectory))
+        }
+        candidates.append(bundleURL.appending(path: bundleName, directoryHint: .isDirectory))
+        return candidates
+    }
+
+    static func resolveResourceBundle(candidates: [URL]) -> Bundle? {
+        candidates.lazy.compactMap(Bundle.init(url:)).first
     }
 
     private static func bundle(for language: AppLanguage) -> Bundle {
@@ -54,11 +74,11 @@ enum Localization {
             return cached
         }
         let resolved: Bundle
-        if let path = Bundle.module.path(forResource: code, ofType: "lproj"),
+        if let path = resourceBundle.path(forResource: code, ofType: "lproj"),
            let languageBundle = Bundle(path: path) {
             resolved = languageBundle
         } else {
-            resolved = .module
+            resolved = resourceBundle
         }
         bundleCache[code] = resolved
         return resolved

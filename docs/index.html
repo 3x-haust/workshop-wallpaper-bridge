@@ -13,7 +13,7 @@
         --text: #f4f7fb;
         --muted: #aab4c0;
         --line: #2a323c;
-        --accent: #4f8cff;
+        --accent: #2f6fd6;
         --accent-strong: #76a7ff;
       }
 
@@ -91,6 +91,12 @@
         background: transparent;
       }
 
+      .demo-toggle {
+        width: fit-content;
+        cursor: pointer;
+        font: inherit;
+      }
+
       .grid {
         display: grid;
         grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -126,6 +132,31 @@
 
       .steps li {
         padding-left: 4px;
+      }
+
+      .notice {
+        display: grid;
+        gap: 10px;
+        max-width: 760px;
+        margin-top: 16px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel);
+        padding: 18px;
+      }
+
+      .notice p {
+        font-size: 0.95rem;
+      }
+
+      .command {
+        overflow-x: auto;
+        margin: 0;
+        border-radius: 6px;
+        background: var(--bg);
+        padding: 12px;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
       }
 
       .status {
@@ -168,7 +199,8 @@
           <a class="button secondary" href="https://github.com/3x-haust/workshop-wallpaper-bridge">GitHub</a>
         </div>
         <p id="release-status" class="status">Checking the latest GitHub release...</p>
-        <img class="demo" src="https://raw.githubusercontent.com/3x-haust/workshop-wallpaper-bridge/main/assets/workshop-wallpaper-bridge-demo.gif" alt="Workshop Wallpaper Bridge importing and playing a wallpaper on macOS">
+        <button id="demo-toggle" class="button secondary demo-toggle" type="button" aria-controls="demo-animation" aria-expanded="true">Hide animation</button>
+        <img id="demo-animation" class="demo" src="https://raw.githubusercontent.com/3x-haust/workshop-wallpaper-bridge/main/assets/workshop-wallpaper-bridge-demo.gif" alt="Workshop Wallpaper Bridge importing and playing a wallpaper on macOS">
       </header>
 
       <section>
@@ -191,7 +223,13 @@
 
       <section>
         <h2>Install</h2>
-        <p>Open the DMG, drag the app into Applications, then launch it from the menu bar. The download button uses the GitHub API to resolve the newest <code>WorkshopWallpaperBridge-macOS-arm64.dmg</code> asset automatically.</p>
+        <p>Open the DMG and drag the app into Applications. The download button uses the GitHub API to resolve the newest <code>WorkshopWallpaperBridge-macOS-arm64.dmg</code> asset automatically.</p>
+        <div class="notice" role="note" aria-label="Ad-hoc signed app installation">
+          <strong>Apple Developer account not available</strong>
+          <p>The current app is ad-hoc signed and not Apple-notarized, so macOS may report it as damaged. Only use the DMG from this repository's official GitHub Releases page. After copying the app to Applications, run:</p>
+          <pre class="command"><code>xattr -r -d com.apple.quarantine "/Applications/Workshop Wallpaper Bridge.app"</code></pre>
+          <p>Then open the app. It runs in the menu bar rather than the Dock.</p>
+        </div>
       </section>
 
       <section>
@@ -210,6 +248,14 @@
       const releaseApiUrl = "https://api.github.com/repos/3x-haust/workshop-wallpaper-bridge/releases/latest";
       const downloadLink = document.querySelector("#latest-release-download");
       const statusText = document.querySelector("#release-status");
+      const demoAnimation = document.querySelector("#demo-animation");
+      const demoToggle = document.querySelector("#demo-toggle");
+
+      demoToggle.addEventListener("click", () => {
+        demoAnimation.hidden = !demoAnimation.hidden;
+        demoToggle.setAttribute("aria-expanded", String(!demoAnimation.hidden));
+        demoToggle.textContent = demoAnimation.hidden ? "Show animation" : "Hide animation";
+      });
 
       async function resolveLatestRelease() {
         try {

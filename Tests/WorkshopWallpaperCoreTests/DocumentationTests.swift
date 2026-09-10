@@ -90,13 +90,22 @@ final class DocumentationTests: XCTestCase {
 
     func testDownloadSiteUsesLatestReleaseAsset() throws {
         let site = try String(contentsOfFile: "docs/index.html")
+        let releaseAPI = "https://api.github.com/repos/3x-haust/" +
+            "workshop-wallpaper-bridge/releases/latest"
+        let directDownload = "https://github.com/3x-haust/workshop-wallpaper-bridge/" +
+            "releases/latest/download/WorkshopWallpaperBridge-macOS-arm64.dmg"
 
-        XCTAssertTrue(site.contains("https://api.github.com/repos/3x-haust/workshop-wallpaper-bridge/releases/latest"))
-        XCTAssertTrue(site.contains("https://github.com/3x-haust/workshop-wallpaper-bridge/releases/latest/download/WorkshopWallpaperBridge-macOS-arm64.dmg"))
+        XCTAssertTrue(site.contains(releaseAPI))
+        XCTAssertTrue(site.contains(directDownload))
         XCTAssertTrue(site.contains("WorkshopWallpaperBridge-macOS-arm64.dmg"))
         XCTAssertTrue(site.contains("assets/workshop-wallpaper-bridge-demo.gif"))
+        XCTAssertTrue(site.contains("id=\"demo-toggle\""))
+        XCTAssertTrue(site.contains("aria-controls=\"demo-animation\""))
+        XCTAssertTrue(site.contains("demoAnimation.hidden"))
         XCTAssertTrue(site.contains("latest-release-download"))
         XCTAssertTrue(site.contains("download"))
+        XCTAssertTrue(site.contains("ad-hoc signed"))
+        XCTAssertTrue(site.contains("xattr -r -d com.apple.quarantine"))
         XCTAssertTrue(site.contains("Use it"))
         XCTAssertTrue(site.contains("steamapps/workshop/content/431960"))
         XCTAssertTrue(site.contains("Play on Desktop"))
@@ -113,23 +122,51 @@ final class DocumentationTests: XCTestCase {
 
     func testReleaseWorkflowPublishesReleaseArchiveAndChecksum() throws {
         let workflow = try String(contentsOfFile: ".github/workflows/release.yml")
+        let releaseNotesScript = try String(contentsOfFile: "Scripts/render-release-notes.sh")
 
         XCTAssertTrue(workflow.contains("Scripts/package-app.sh"))
-        XCTAssertTrue(workflow.contains("shasum -a 256"))
+        XCTAssertTrue(workflow.contains("Scripts/render-release-notes.sh"))
+        XCTAssertTrue(workflow.contains("artifact_name=\"$(basename \"$artifact\")\""))
+        XCTAssertTrue(workflow.contains("shasum -a 256 \"$artifact_name\""))
         XCTAssertTrue(workflow.contains("gh release upload"))
+        XCTAssertTrue(workflow.contains("gh release edit"))
+        XCTAssertTrue(releaseNotesScript.contains("<!-- unsigned-install:start -->"))
+        XCTAssertTrue(releaseNotesScript.contains("<!-- unsigned-install:end -->"))
+        XCTAssertTrue(releaseNotesScript.contains("xattr -r -d com.apple.quarantine"))
+        XCTAssertTrue(workflow.contains("[ \"$existing_notes\" != \"$updated_notes\" ]"))
         XCTAssertTrue(workflow.contains("-name \"*.dmg\""))
         XCTAssertTrue(workflow.contains("-name \"*.zip\""))
         XCTAssertTrue(workflow.contains("RELEASE_ARTIFACT"))
         XCTAssertTrue(workflow.contains("RELEASE_CHECKSUM"))
+        XCTAssertTrue(workflow.contains("SIGNING_AVAILABLE"))
         XCTAssertTrue(workflow.contains("contents: write"))
+    }
+
+    func testReleaseWorkflowRejectsUnsafeDispatchTags() throws {
+        let workflow = try String(contentsOfFile: ".github/workflows/release.yml")
+
+        XCTAssertTrue(workflow.contains("format('refs/tags/{0}', inputs.tag)"))
+        XCTAssertTrue(workflow.contains("REQUESTED_TAG:"))
+        XCTAssertTrue(workflow.contains("[[ ! \"$tag\" =~ ^v[0-9]+\\.[0-9]+\\.[0-9]+$ ]]"))
+        XCTAssertFalse(workflow.contains("tag=\"${{ inputs.tag }}\""))
     }
 
     func testReleaseWorkflowSupportsSigningWhenSecretsExistAndUnsignedFallbackOtherwise() throws {
         let workflow = try String(contentsOfFile: ".github/workflows/release.yml")
+        let unsignedWarning = "Release signing secrets are absent; " +
+            "publishing a DMG with an ad-hoc signed app"
+        let signingEnvironment = [
+            "SIGN_IDENTITY: ${{ steps.signing.outputs.available == 'true' && " +
+                "'Developer ID Application' || '' }}",
+            "NOTARY_PROFILE: ${{ steps.signing.outputs.available == 'true' && " +
+                "'workshop-wallpaper-bridge-notary' || '' }}",
+            "REQUIRE_SIGNING: ${{ steps.signing.outputs.available == 'true' && '1' || '0' }}",
+            "REQUIRE_NOTARIZATION: ${{ steps.signing.outputs.available == 'true' && '1' || '0' }}"
+        ]
 
         XCTAssertTrue(workflow.contains("Resolve release signing mode"))
         XCTAssertTrue(workflow.contains("available=false"))
-        XCTAssertTrue(workflow.contains("Release signing secrets are absent; publishing an unsigned DMG"))
+        XCTAssertTrue(workflow.contains(unsignedWarning))
         XCTAssertTrue(workflow.contains("MACOS_DEVELOPER_ID_APPLICATION_CERTIFICATE_BASE64"))
         XCTAssertTrue(workflow.contains("MACOS_DEVELOPER_ID_APPLICATION_CERTIFICATE_PASSWORD"))
         XCTAssertTrue(workflow.contains("MACOS_NOTARY_APPLE_ID"))
@@ -138,10 +175,9 @@ final class DocumentationTests: XCTestCase {
         XCTAssertTrue(workflow.contains("is required when any release signing secret is configured"))
         XCTAssertTrue(workflow.contains("xcrun notarytool store-credentials"))
         XCTAssertTrue(workflow.contains("if: steps.signing.outputs.available == 'true'"))
-        XCTAssertTrue(workflow.contains("SIGN_IDENTITY: ${{ steps.signing.outputs.available == 'true' && 'Developer ID Application' || '' }}"))
-        XCTAssertTrue(workflow.contains("NOTARY_PROFILE: ${{ steps.signing.outputs.available == 'true' && 'workshop-wallpaper-bridge-notary' || '' }}"))
-        XCTAssertTrue(workflow.contains("REQUIRE_SIGNING: ${{ steps.signing.outputs.available == 'true' && '1' || '0' }}"))
-        XCTAssertTrue(workflow.contains("REQUIRE_NOTARIZATION: ${{ steps.signing.outputs.available == 'true' && '1' || '0' }}"))
+        for environmentVariable in signingEnvironment {
+            XCTAssertTrue(workflow.contains(environmentVariable))
+        }
     }
 
     func testProfileRosterIsGeneratedFromGitHubMetadata() throws {
@@ -179,11 +215,28 @@ final class DocumentationTests: XCTestCase {
         XCTAssertTrue(script.contains("com.apple.quarantine"))
     }
 
+    func testPackagingScriptAdHocSignsUnsignedAppAfterAddingResources() throws {
+        let script = try String(contentsOfFile: "Scripts/package-app.sh")
+        let resourceDestination = "RESOURCE_BUNDLE_DESTINATION=\"$RESOURCES_DIR/" +
+            "WorkshopWallpaperBridge_WorkshopWallpaperBridgeApp.bundle\""
+        let signedDylib = "codesign --force --options runtime --timestamp " +
+            "--sign \"$SIGN_IDENTITY\" \"$dylib\""
+
+        XCTAssertTrue(script.contains(resourceDestination))
+        XCTAssertTrue(script.contains(signedDylib))
+        XCTAssertTrue(script.contains("codesign --force --sign - \"$MACOS_DIR/wwbctl\""))
+        XCTAssertTrue(script.contains("codesign --force --sign - \"$MACOS_DIR/Workshop Wallpaper Bridge\""))
+        XCTAssertTrue(script.contains("codesign --force --sign - \"$SAVER_DIR\""))
+        XCTAssertTrue(script.contains("codesign --force --sign - \"$APP_DIR\""))
+        XCTAssertTrue(script.contains("codesign --verify --strict --verbose=2 \"$SAVER_DIR\""))
+        XCTAssertTrue(script.contains("codesign --verify --deep --strict --verbose=2 \"$APP_DIR\""))
+    }
+
     func testPackagedAppDefaultsToCurrentReleaseVersion() throws {
         let script = try String(contentsOfFile: "Scripts/package-app.sh")
 
-        XCTAssertTrue(script.contains("APP_VERSION=\"${APP_VERSION:-1.4.0}\""))
-        XCTAssertTrue(script.contains("BUNDLE_VERSION=\"${BUNDLE_VERSION:-12}\""))
+        XCTAssertTrue(script.contains("APP_VERSION=\"${APP_VERSION:-1.4.1}\""))
+        XCTAssertTrue(script.contains("BUNDLE_VERSION=\"${BUNDLE_VERSION:-13}\""))
     }
 
     func testFrameDiffScriptBoundsImageAllocationBeforeDecodingPixels() throws {

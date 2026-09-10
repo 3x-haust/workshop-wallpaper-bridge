@@ -33,9 +33,15 @@ Workshop Wallpaper Bridge가 도움이 되었다면 [Patreon](https://www.patreo
 
 1. DMG를 엽니다.
 2. **Workshop Wallpaper Bridge.app**을 **Applications**로 드래그합니다.
-3. 앱을 엽니다. Dock 앱이 아니라 메뉴바 유틸리티로 실행됩니다.
+3. Applications에 복사한 앱의 다운로드 quarantine을 제거합니다.
 
-공개 릴리즈는 Developer ID로 서명하고 공증한 뒤, 다운로드 quarantine이 붙은 상태의 Gatekeeper 검증까지 통과한 DMG만 업로드합니다. 다운로드한 릴리즈가 손상되었다고 표시되면 다음 릴리즈를 받고, macOS 버전과 릴리즈 태그를 이슈에 남겨 주세요.
+   ```bash
+   xattr -r -d com.apple.quarantine "/Applications/Workshop Wallpaper Bridge.app"
+   ```
+
+4. 앱을 엽니다. Dock 앱이 아니라 메뉴바 유틸리티로 실행됩니다.
+
+현재 공개 빌드는 유료 Apple Developer 계정이 없어 Apple 공증 대신 ad-hoc 서명을 사용합니다. 따라서 quarantine을 제거하지 않으면 macOS가 다운로드한 앱이 손상되었다고 표시할 수 있습니다. 이 저장소의 공식 [Releases](https://github.com/3x-haust/workshop-wallpaper-bridge/releases) 페이지에서 받은 DMG에만 위 명령을 사용하세요.
 
 **Auto-check Updates**가 켜져 있으면 앱이 GitHub Releases에서 업데이트를 자동 확인합니다. 설정 창의 **Check Updates** 또는 메뉴바 메뉴의 **Check for Updates**로 수동 확인할 수 있습니다. 새 릴리즈가 있으면 **Download Update**가 최신 DMG를 다운로드합니다.
 
