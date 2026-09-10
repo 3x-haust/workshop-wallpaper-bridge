@@ -1,7 +1,9 @@
 import Accelerate
 import AppKit
 import AVFoundation
-import ScreenCaptureKit
+// Older SDKs lack Sendable annotations on the newly returned content snapshot.
+// Stream configuration stays on the main actor; PCM analysis has its own queue.
+@preconcurrency import ScreenCaptureKit
 
 struct WallpaperAudioSpectrum: Sendable {
     var left = Array(repeating: Float(0), count: 64)
