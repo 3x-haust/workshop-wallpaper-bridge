@@ -1,6 +1,6 @@
 import AppKit
 import CoreImage
-import AVFoundation
+@preconcurrency import AVFoundation
 import XCTest
 @testable import WorkshopWallpaperBridgeApp
 
