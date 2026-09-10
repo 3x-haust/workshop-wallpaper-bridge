@@ -21,7 +21,7 @@ final class LibraryRowStatusResolverTests: XCTestCase {
 
         // Then
         XCTAssertEqual(status, .needsFirstRender)
-        XCTAssertEqual(status.label, "renders on first play")
+        XCTAssertEqual(status.label, "may render on first play")
         XCTAssertFalse(status.isPositive)
     }
 

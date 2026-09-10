@@ -1,5 +1,6 @@
 import AppKit
 import AVFoundation
+import CoreImage
 
 @MainActor
 final class VideoWallpaperView: NSView,
@@ -13,6 +14,27 @@ final class VideoWallpaperView: NSView,
     // Not private so tests can assert on the configured video gravity
     // (e.g. that scene-rendered wallpaper videos are forced to fill).
     let playerLayer: AVPlayerLayer
+    private weak var sampledItem: AVPlayerItem?
+    private var frameOutput: AVPlayerItemVideoOutput?
+    private var sampledFrame: CIImage?
+
+    /// Attach lazily to the current looper item; AVPlayerLayer continues normal
+    /// presentation. Compose effects sample that same item and playback time.
+    func currentFrame() -> CIImage? {
+        guard let item = player.currentItem else { return nil }
+        if sampledItem !== item {
+            if let sampledItem, let frameOutput { sampledItem.remove(frameOutput) }
+            let output = AVPlayerItemVideoOutput(pixelBufferAttributes: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA])
+            item.add(output); sampledItem = item; frameOutput = output; sampledFrame = nil
+        }
+        if let frameOutput {
+            let time = frameOutput.itemTime(forHostTime: CACurrentMediaTime())
+            if frameOutput.hasNewPixelBuffer(forItemTime: time), let buffer = frameOutput.copyPixelBuffer(forItemTime: time, itemTimeForDisplay: nil) {
+                sampledFrame = CIImage(cvPixelBuffer: buffer)
+            }
+        }
+        return sampledFrame
+    }
 
     init(
         url: URL,
@@ -74,6 +96,8 @@ final class VideoWallpaperView: NSView,
     }
 
     func prepareForClose() {
+        if let sampledItem, let frameOutput { sampledItem.remove(frameOutput) }
+        frameOutput = nil; sampledItem = nil; sampledFrame = nil
         player.pause()
         player.removeAllItems()
         playerLayer.player = nil

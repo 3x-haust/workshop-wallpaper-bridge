@@ -80,3 +80,16 @@
 /* Common */
 "common.ok" = "확인";
 "common.cancel" = "취소";
+
+"settings.interaction.toggle" = "월페이퍼 직접 조작";
+"settings.interaction.help" = "씬·웹 월페이퍼를 클릭하고 드래그합니다. 바탕화면 아이콘은 잠시 가려지며, 메뉴바에서 끄면 다시 사용할 수 있습니다.";
+"settings.audioReactive.toggle" = "시스템 소리에 반응";
+"settings.audioReactive.help" = "Mac에서 재생되는 소리에 월페이퍼가 반응합니다. macOS에서 캡처 권한을 요청하며, 소리는 기기에서 분석하고 녹음하지 않습니다.";
+"settings.liveScenes.toggle" = "실시간 씬 우선 재생";
+"settings.liveScenes.help" = "씬 스크립트로 시계와 입력 반응을 실행합니다. 효과가 다르게 보이면 끄고 렌더링 영상으로 재생하세요. 정지 후 바탕화면 재생을 누르면 적용됩니다.";
+"library.playInteractive" = "재생 및 조작";
+"playback.interaction.on" = "마우스·키보드 조작이 켜져 있습니다. 바탕화면 아이콘을 사용하려면 메뉴바에서 조작을 끄세요.";
+"playback.interaction.off" = "조작이 꺼져 있습니다. 클릭하거나 드래그하려면 ‘재생 및 조작’을 누르세요.";
+"web.openExternal" = "%@ 브라우저에서 열기";
+"settings.media.toggle" = "음악 정보 표시";
+"settings.media.help" = "Music·Spotify의 곡명, 앨범 표지와 재생 시간을 표시합니다. macOS 자동화 권한이 필요하며, Spotify 표지는 이미지 서비스에서 불러옵니다.";

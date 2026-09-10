@@ -9,6 +9,7 @@ struct StatusMenu: View {
             SettingsWindowCoordinator.shared.show(model: model)
         }
         Divider()
+        Toggle(model.L("settings.interaction.toggle"), isOn: $model.wallpaperInteractionEnabled)
         Toggle("Open at Login", isOn: $model.launchAtLogin)
         Toggle("Auto-pause Behind Apps", isOn: $model.autoPauseWhenCovered)
         Toggle("Animate Screen Saver", isOn: $model.lockScreenAnimationEnabled)

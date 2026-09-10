@@ -21,6 +21,7 @@ struct SceneVideoRenderConfiguration: Sendable {
     // nil) so existing callers/tests that only care about the video pipeline
     // don't need to supply it; when nil, the render is silent as before.
     let sceneURL: URL?
+    let excludedObjectIDs: [Int]
 
     init(
         assetId: String,
@@ -34,7 +35,8 @@ struct SceneVideoRenderConfiguration: Sendable {
         // motion doesn't tile perfectly. The tradeoff is a longer first
         // render, which the rendering-progress status message covers.
         seconds: Int = 20,
-        sceneURL: URL? = nil
+        sceneURL: URL? = nil,
+        excludedObjectIDs: [Int] = []
     ) {
         self.assetId = assetId
         self.projectDirectory = projectDirectory
@@ -44,6 +46,7 @@ struct SceneVideoRenderConfiguration: Sendable {
         self.fps = fps
         self.seconds = seconds
         self.sceneURL = sceneURL
+        self.excludedObjectIDs = Array(Set(excludedObjectIDs.prefix(256))).sorted()
     }
 }
 
@@ -175,15 +178,24 @@ enum SceneVideoCache {
         let url = cachedVideoURL(assetId: assetId)
         return isFresh(cacheURL: url, sourceURL: sourceURL) ? url : nil
     }
+
+    /// v7 changed audio duration only. Its v6 pictures are still usable while
+    /// rebuilding, including when the renderer is temporarily unavailable.
+    /// Do not search older versions whose visual pipeline was different.
+    static func previousCompatibleCachedVideoURL(assetId: String, sourceURL: URL) -> URL? {
+        let current = cacheDirectoryURL()
+        guard current.lastPathComponent == "v7", cacheVersion == 7 else { return nil }
+        let previous = current.deletingLastPathComponent().appending(path: "v6/\(assetId).mp4")
+        return isFresh(cacheURL: previous, sourceURL: sourceURL) ? previous : nil
+    }
 }
 
 /// The status a library row should display for an asset. This is purely
 /// presentational: it never touches `WallpaperAsset.supportStatus`, which
 /// stays scan-derived and is what's persisted to `library.json`. Scenes are
-/// special-cased because playing one for the first time renders an offscreen
-/// video (see `SceneWallpaperContentFactory`), which takes about a minute -
-/// showing the same "playable" badge a video/image asset gets would make
-/// that first play look broken while it renders.
+/// special-cased because their first play may render a video, which takes
+/// about a minute. Scripted scenes can play live instead; rows do not parse
+/// packages just to determine the badge.
 enum LibraryRowDisplayStatus: Equatable {
     case playable
     case needsFirstRender
@@ -194,7 +206,7 @@ enum LibraryRowDisplayStatus: Equatable {
         case .playable:
             return SupportStatus.playable.rawValue
         case .needsFirstRender:
-            return "renders on first play"
+            return "may render on first play"
         case .notPlayable(let status):
             return status.rawValue
         }
@@ -575,12 +587,19 @@ enum SceneVideoRenderer {
     /// every requested frame, so the exit code alone is not a reliable
     /// success signal here; `render(configuration:ffmpegPath:)` verifies
     /// success by checking that frames were actually recorded instead.
-    nonisolated(unsafe) static var runRendererProcess: (URL, [String]) -> Void = { executableURL, arguments in
+    nonisolated(unsafe) static var runRendererProcess: (URL, [String]) throws -> Void = { executableURL, arguments in
         let process = Process()
         process.executableURL = executableURL
         process.arguments = arguments
-        try? process.run()
-        process.waitUntilExit()
+        try process.run()
+        let secondsIndex = arguments.firstIndex(of: "--record-seconds")
+        let seconds = secondsIndex.flatMap { arguments.indices.contains($0 + 1) ? Double(arguments[$0 + 1]) : nil } ?? 20
+        let deadline = ProcessInfo.processInfo.systemUptime + min(600, max(30, seconds * 6 + 30))
+        while process.isRunning, ProcessInfo.processInfo.systemUptime < deadline { Thread.sleep(forTimeInterval: 0.05) }
+        if process.isRunning {
+            kill(process.processIdentifier, SIGKILL)
+            throw SceneVideoRenderError.rendererTimedOut
+        }
     }
 
     static func canRender(rendererURL: URL?, assetsDirectory: URL?, ffmpegPath: String?) -> Bool {
@@ -600,7 +619,8 @@ enum SceneVideoRenderer {
             "--record-dir", recordDirectory.path,
             "--record-seconds", String(configuration.seconds),
             "--record-fps", String(configuration.fps),
-            "--record-exclude-live",
+            "--record-exclude-live"
+        ] + configuration.excludedObjectIDs.flatMap { ["--render-debug", "skip-object=\($0)"] } + [
             "--assets-dir", configuration.assetsDirectory.path,
             configuration.projectDirectory.path
         ]
@@ -674,21 +694,44 @@ enum SceneVideoRenderer {
     /// binary. Failures (missing binary, non-zero exit, etc.) resolve to an
     /// empty string, which `supportsRecordRaw` treats as "not supported" so
     /// the caller falls back to the PNG-sequence pipeline.
-    nonisolated(unsafe) static var rendererHelpOutput: (URL) -> String = { rendererURL in
+    nonisolated(unsafe) static var rendererHelpOutput: (URL) -> String = { readRendererHelp($0) }
+
+    /// Loading a renderer's dependencies can stall before main(). Never let
+    /// this capability probe leave the wallpaper at 0% indefinitely. Nonblocking
+    /// reads also handle a child that inherits stdout without closing it.
+    static func readRendererHelp(_ rendererURL: URL, timeout: TimeInterval = 3) -> String {
         let process = Process()
         process.executableURL = rendererURL
         process.arguments = ["--help"]
         let stdoutPipe = Pipe()
         process.standardOutput = stdoutPipe
-        process.standardError = Pipe()
+        process.standardError = FileHandle.nullDevice
+        let reader = stdoutPipe.fileHandleForReading
+        let fd = reader.fileDescriptor
+        guard fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK) != -1 else { return "" }
+        defer { try? reader.close() }
         do {
             try process.run()
         } catch {
             return ""
         }
-        let data = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        return String(data: data, encoding: .utf8) ?? ""
+        try? stdoutPipe.fileHandleForWriting.close()
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 8192)
+        let deadline = ProcessInfo.processInfo.systemUptime + max(0.01, timeout)
+        while ProcessInfo.processInfo.systemUptime < deadline {
+            let count = read(fd, &buffer, buffer.count)
+            if count > 0 {
+                data.append(contentsOf: buffer.prefix(count))
+                if data.count > 256 * 1024 { break }
+            } else if !process.isRunning {
+                return process.terminationStatus == 0 ? String(data: data, encoding: .utf8) ?? "" : ""
+            } else {
+                Thread.sleep(forTimeInterval: 0.01)
+            }
+        }
+        if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+        return ""
     }
 
     /// Pure check factored out of `rendererHelpOutput` so the detection logic
@@ -719,7 +762,8 @@ enum SceneVideoRenderer {
             "--record-raw", fifoURL.path,
             "--record-seconds", String(configuration.seconds),
             "--record-fps", String(configuration.fps),
-            "--record-exclude-live",
+            "--record-exclude-live"
+        ] + configuration.excludedObjectIDs.flatMap { ["--render-debug", "skip-object=\($0)"] } + [
             "--assets-dir", configuration.assetsDirectory.path,
             configuration.projectDirectory.path
         ]
@@ -811,10 +855,11 @@ enum SceneVideoRenderer {
     /// FIFO) *before* the renderer is started writing to it. `stderrPipe`,
     /// when provided, is wired up as the process's standard error so its
     /// `frame=` progress lines can be parsed as they're written.
-    nonisolated(unsafe) static var startProcess: (URL, [String], Pipe?) throws -> Process = { executableURL, arguments, stderrPipe in
+    nonisolated(unsafe) static var startProcess: (URL, [String], Pipe?, FileHandle?) throws -> Process = { executableURL, arguments, stderrPipe, stdin in
         let process = Process()
         process.executableURL = executableURL
         process.arguments = arguments
+        process.standardInput = stdin
         if let stderrPipe {
             process.standardError = stderrPipe
         }
@@ -842,28 +887,14 @@ enum SceneVideoRenderer {
     /// finished, the intermediate file is passed through the existing
     /// crossfade-loop encode to produce the final silent video.
     ///
-    /// Race fix: a FIFO's blocking `open(2)` only rendezvous correctly when
-    /// *both* processes actually reach their own open call. If either one is
-    /// slow to start (library init, dynamic loading, etc.) or fails to start
-    /// at all (crash, missing binary, bad arguments) before doing so, the
-    /// other can hang forever inside `open()` waiting for a counterpart that
-    /// is late or will never arrive - e.g. a fast-writing renderer (or a
-    /// short-lived fake one in tests) can write everything and exit before a
-    /// slower-initializing ffmpeg has even reached its own `open()` of the
-    /// FIFO, so ffmpeg then blocks forever waiting for a writer that already
-    /// came and went. To avoid that, this function itself opens the FIFO
-    /// `O_RDWR` (`anchorFD`) before starting either child process. An
-    /// `O_RDWR` open of a FIFO never blocks and counts as both a reader and
-    /// a writer, so for as long as it's held, ffmpeg's read-open and the
-    /// renderer's write-open both succeed immediately no matter how late
-    /// either process is to actually call `open()`, and no matter what order
-    /// they start in or whether one fails outright. The anchor is kept open
-    /// until the renderer process has actually finished (see below) - only
-    /// then is it safe to close: closing it any earlier would just
-    /// reconstruct the same race (ffmpeg might still not have reached its
-    /// own open() yet), while an anchor left open past that point would
-    /// itself count as a permanent second writer and prevent ffmpeg from
-    /// ever observing EOF.
+    /// Open the FIFO's reader before launching either process and pass it
+    /// as ffmpeg's stdin. A temporary read/write anchor permits that open
+    /// without blocking. Holding only the anchor until the renderer exits
+    /// is insufficient: a fast writer can finish before ffmpeg opens the
+    /// path, leaving it waiting forever for a new writer. The inherited
+    /// reader preserves buffered frames even when ffmpeg starts slowly.
+    /// The anchor must not be inherited, and is closed after recording to
+    /// let ffmpeg observe EOF.
     ///
     /// Belt-and-braces: an overall watchdog (`rawPipeWatchdogTimeout`) kills
     /// both processes and signals a stall if the pipeline runs far longer
@@ -882,7 +913,7 @@ enum SceneVideoRenderer {
             throw SceneVideoRenderError.fifoCreationFailed(errno)
         }
 
-        let anchorFD = open(fifoURL.path, O_RDWR)
+        let anchorFD = open(fifoURL.path, O_RDWR | O_CLOEXEC)
         guard anchorFD != -1 else {
             let openErrno = errno
             try? fileManager.removeItem(at: fifoURL)
@@ -898,6 +929,13 @@ enum SceneVideoRenderer {
         }
         defer { closeAnchor() }
 
+        let readerFD = open(fifoURL.path, O_RDONLY | O_CLOEXEC)
+        guard readerFD != -1 else {
+            throw SceneVideoRenderError.fifoCreationFailed(errno)
+        }
+        let reader = FileHandle(fileDescriptor: readerFD, closeOnDealloc: true)
+        defer { try? reader.close() }
+
         let intermediateOutputURL = tempDirectory.appending(path: "scene-render-raw.mp4")
         let stderrPipe = Pipe()
         let ffmpegProcess: Process
@@ -905,13 +943,15 @@ enum SceneVideoRenderer {
             ffmpegProcess = try startProcess(
                 URL(filePath: ffmpegPath),
                 rawEncodeFfmpegArguments(
-                    fifoURL: fifoURL,
+                    fifoURL: URL(filePath: "/dev/stdin"),
                     size: configuration.size,
                     fps: configuration.fps,
                     outputURL: intermediateOutputURL
                 ),
-                stderrPipe
+                stderrPipe,
+                reader
             )
+            try? reader.close()
         } catch {
             try? fileManager.removeItem(at: fifoURL)
             throw error
@@ -930,6 +970,7 @@ enum SceneVideoRenderer {
             rendererProcess = try startProcess(
                 configuration.rendererURL,
                 rawRecordingArguments(fifoURL: fifoURL, configuration: configuration),
+                nil,
                 nil
             )
         } catch {
@@ -958,12 +999,8 @@ enum SceneVideoRenderer {
         // it.
         rendererProcess.waitUntilExit()
 
-        // Only now - once the renderer has actually finished (normally or
-        // via the watchdog above) - is it safe to release the anchor fd.
-        // ffmpeg keeps reading happily regardless of when it got around to
-        // opening the FIFO for real, and closing the anchor here lets it see
-        // a normal EOF right as the renderer's own write end goes away, with
-        // no gap in which either side could still be waiting on the other.
+        // ffmpeg already owns a reader, so release the last extra writer
+        // after recording and allow it to drain buffered frames through EOF.
         closeAnchor()
 
         ffmpegProcess.waitUntilExit()
@@ -1015,7 +1052,8 @@ enum SceneVideoRenderer {
             )
         }
         progressMonitor?.start()
-        runRendererProcess(
+        defer { progressMonitor?.stop() }
+        try runRendererProcess(
             configuration.rendererURL,
             recordingArguments(recordDirectory: tempDirectory, configuration: configuration)
         )
@@ -1413,6 +1451,7 @@ enum SceneVideoRenderError: Error, LocalizedError, Equatable {
     case noFramesRecorded
     case fifoCreationFailed(Int32)
     case rawPipeStalled
+    case rendererTimedOut
 
     var errorDescription: String? {
         switch self {
@@ -1424,6 +1463,8 @@ enum SceneVideoRenderError: Error, LocalizedError, Equatable {
             return "Could not create the recording FIFO (errno \(errnoValue))."
         case .rawPipeStalled:
             return "The concurrent scene render pipeline stalled and was aborted."
+        case .rendererTimedOut:
+            return "The scene renderer timed out. The previous wallpaper remains visible."
         }
     }
 }

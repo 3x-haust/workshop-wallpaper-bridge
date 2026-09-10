@@ -6,11 +6,17 @@ import WorkshopWallpaperCore
 /// with a `HelpPopoverButton` for the full explanation.
 struct SettingsTabView: View {
     @ObservedObject var model: AppViewModel
+    @ObservedObject private var audioAnalysis = SystemAudioAnalysis.shared
+    @ObservedObject private var musicMetadata = MusicMetadataSource.shared
 
     var body: some View {
         Form {
             Section(model.L("settings.playback.title")) {
                 Toggle(model.L("settings.autoPause"), isOn: $model.autoPauseWhenCovered)
+                Toggle(model.L("settings.liveScenes.toggle"), isOn: $model.preferLiveScenes)
+                Text(model.L("settings.liveScenes.help")).font(.caption).foregroundStyle(.secondary)
+                Toggle(model.L("settings.interaction.toggle"), isOn: $model.wallpaperInteractionEnabled)
+                Text(model.L("settings.interaction.help")).font(.caption).foregroundStyle(.secondary)
                 Toggle(model.L("settings.openAtLogin"), isOn: $model.launchAtLogin)
                 Toggle(model.L("settings.animateScreenSaver"), isOn: $model.lockScreenAnimationEnabled)
                 HStack(spacing: 8) {
@@ -42,6 +48,22 @@ struct SettingsTabView: View {
                     Slider(value: $model.wallpaperAudioVolume, in: 0...1)
                         .disabled(!model.wallpaperAudioEnabled)
                         .frame(width: 180)
+                }
+            }
+
+            Section {
+                Toggle(model.L("settings.media.toggle"), isOn: $model.mediaIntegrationEnabled)
+                Text(model.L("settings.media.help")).font(.caption).foregroundStyle(.secondary)
+                if !musicMetadata.status.isEmpty {
+                    Text(musicMetadata.status).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+
+            Section {
+                Toggle(model.L("settings.audioReactive.toggle"), isOn: $model.audioReactiveEnabled)
+                Text(model.L("settings.audioReactive.help")).font(.caption).foregroundStyle(.secondary)
+                if !audioAnalysis.status.isEmpty {
+                    Text(audioAnalysis.status).font(.caption).foregroundStyle(.secondary)
                 }
             }
 

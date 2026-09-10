@@ -7,6 +7,16 @@ final class SceneWallpaperView: NSView,
     PausableWallpaperContent,
     DisplayModeUpdatableContent,
     WallpaperContentLifecycle {
+    private let projectURL: URL
+    private var scriptSession: SceneScriptSession?
+    private var audioConsumer: UUID?
+    private var mediaConsumer: UUID?
+    private var scriptLayers: [Int: CALayer] = [:]
+    private var scriptTransforms: [Int: (scale: SceneVector3, angles: SceneVector3)] = [:]
+    private var cursorPressed = false
+    private var cursorEvents: [[String: Any]] = []
+    private(set) var scriptDiagnostic: String?
+    private(set) var isShowingDecodedScene = false
     private var plan: SceneRenderPlan
     private var displayMode: WallpaperDisplayMode
     private let previewLayer = CALayer()
@@ -269,9 +279,11 @@ final class SceneWallpaperView: NSView,
         previewURL: URL?,
         frame: CGRect,
         displayMode: WallpaperDisplayMode,
-        sceneTickSource: SceneTickSource = CADisplayLinkSceneTickSource()
+        sceneTickSource: SceneTickSource = CADisplayLinkSceneTickSource(),
+        decodedPlan: SceneRenderPlan? = nil
     ) throws {
-        plan = try SceneRenderPlanBuilder().buildLayout(url: url)
+        projectURL = url.deletingLastPathComponent()
+        plan = try decodedPlan ?? SceneRenderPlanBuilder().buildLayout(url: url)
         self.displayMode = displayMode
         self.sceneTickSource = sceneTickSource
         super.init(frame: frame)
@@ -286,7 +298,8 @@ final class SceneWallpaperView: NSView,
         layer?.addSublayer(sceneLayer)
         configureSceneLayer()
         layoutScene()
-        startTextureDecode(url: url)
+        if let decodedPlan { applyDecodedPlan(.success(decodedPlan)) }
+        else { startTextureDecode(url: url) }
     }
 
     @available(*, unavailable)
@@ -304,6 +317,18 @@ final class SceneWallpaperView: NSView,
             return
         }
         isSuspended = suspended
+        scriptSession?.setSuspended(suspended)
+        if suspended {
+            cursorPressed = false
+            cursorEvents = []
+            if let audioConsumer { SystemAudioAnalysis.shared.release(audioConsumer) }
+            audioConsumer = nil
+            if let mediaConsumer { MusicMetadataSource.shared.release(mediaConsumer) }
+            mediaConsumer = nil
+        } else if scriptSession != nil, audioConsumer == nil {
+            audioConsumer = SystemAudioAnalysis.shared.acquire()
+            mediaConsumer = MusicMetadataSource.shared.acquire()
+        }
         setLayerTreePaused(suspended)
         if suspended {
             sceneTickSource.suspend()
@@ -320,6 +345,12 @@ final class SceneWallpaperView: NSView,
 
     func prepareForClose() {
         isClosed = true
+        scriptSession?.close()
+        scriptSession = nil
+        if let audioConsumer { SystemAudioAnalysis.shared.release(audioConsumer) }
+        audioConsumer = nil
+        if let mediaConsumer { MusicMetadataSource.shared.release(mediaConsumer) }
+        mediaConsumer = nil
         decodeTask?.cancel()
         decodeTask = nil
         sceneLayer.removeAllAnimations()
@@ -380,6 +411,14 @@ final class SceneWallpaperView: NSView,
         guard !isClosed, case .success(let decodedPlan) = result else {
             return
         }
+        guard decodedPlan.omittedLayerCount == 0 else {
+            scriptDiagnostic = "Scene preview retained: \(decodedPlan.omittedLayerCount) layers could not be rendered."
+            return
+        }
+        scriptSession?.close()
+        scriptSession = nil
+        scriptLayers = [:]
+        scriptTransforms = [:]
         plan = decodedPlan
         contentLayers.forEach {
             $0.removeAllAnimations()
@@ -394,6 +433,11 @@ final class SceneWallpaperView: NSView,
         textRefreshTimer = nil
         sceneTickSource.stop()
         buildLayers()
+        // The thumbnail is a loading surface, not a background texture. Leaving
+        // it beneath transparent or moving layers creates frozen duplicate objects.
+        previewLayer.isHidden = true
+        layer?.backgroundColor = Self.cgColor(from: plan.backgroundColor)
+        isShowingDecodedScene = true
         layoutScene()
         if isSuspended {
             setLayerTreePaused(true)
@@ -402,6 +446,16 @@ final class SceneWallpaperView: NSView,
 
     private func buildLayers() {
         resetShaderEffectClock()
+        if plan.runtimeLayers.contains(where: { !$0.scripts.isEmpty || $0.text?.script != nil }) {
+            scriptSession = SceneScriptSession(plan: plan, projectURL: projectURL)
+            if audioConsumer == nil { audioConsumer = SystemAudioAnalysis.shared.acquire() }
+            if mediaConsumer == nil { mediaConsumer = MusicMetadataSource.shared.acquire() }
+            scriptSession?.onChanges = { [weak self] changes in self?.applyScriptChanges(changes) }
+            scriptSession?.onDiagnostic = { [weak self] message in
+                self?.scriptDiagnostic = message
+                SceneWallpaperContentFactory.statusHandler?(message)
+            }
+        }
         for layerPlan in plan.layers {
             if layerPlan.isEffectOnly {
                 guard let contentLayer = buildEffectOnlyShaderLayer(for: layerPlan) else {
@@ -416,7 +470,7 @@ final class SceneWallpaperView: NSView,
             }
             let contentLayer: CALayer
             if let text = layerPlan.text {
-                let scriptEvaluator = text.script.map { SceneScriptTextEvaluator(script: $0) }
+                let scriptEvaluator = scriptSession == nil ? text.script.map { SceneScriptTextEvaluator(script: $0) } : nil
                 let textLayer = CATextLayer()
                 textLayer.string = string(for: text, scriptEvaluator: scriptEvaluator)
                 textLayer.fontSize = text.pointSize
@@ -425,7 +479,7 @@ final class SceneWallpaperView: NSView,
                 textLayer.isWrapped = true
                 textLayer.truncationMode = .none
                 textLayer.contentsScale = NSScreen.main?.backingScaleFactor ?? 2
-                if text.dynamicText != nil || text.script != nil {
+                if (text.dynamicText != nil || text.script != nil) && (scriptSession == nil || text.script == nil) {
                     dynamicTextLayers.append(DynamicTextLayer(
                         layer: textLayer,
                         text: text,
@@ -758,7 +812,7 @@ final class SceneWallpaperView: NSView,
         frameTime: TimeInterval = 1,
         includeScripted: Bool = true
     ) {
-        guard !isClosed else {
+        guard !isClosed, !isSuspended else {
             return
         }
         for item in dynamicTextLayers where includeScripted || item.scriptEvaluator == nil {
@@ -795,6 +849,9 @@ final class SceneWallpaperView: NSView,
     }
 
     private func configure(_ layer: CALayer, with plan: SceneLayer) {
+        scriptLayers[plan.id] = layer
+        scriptTransforms[plan.id] = (plan.scale, plan.angles)
+        layer.isHidden = !plan.visible
         let width = max(1, abs(plan.size.width))
         let height = max(1, abs(plan.size.height))
         layer.bounds = CGRect(x: 0, y: 0, width: width, height: height)
@@ -1068,15 +1125,109 @@ final class SceneWallpaperView: NSView,
     }
 
     private var needsSceneTickSource: Bool {
-        !shaderEffectLayers.isEmpty
+        scriptSession != nil || !shaderEffectLayers.isEmpty
             || !puppetLayers.isEmpty
             || dynamicTextLayers.contains { $0.scriptEvaluator != nil }
     }
 
     private func refreshSceneTickDrivenLayers(_ tick: SceneTick) {
+        advanceScripts(tick)
         refreshPuppetLayers(time: tick.elapsedTime)
         refreshShaderEffectLayers(time: tick.elapsedTime)
         refreshDynamicTextLayers(frameTime: tick.frameTime)
+    }
+
+    override func mouseDown(with event: NSEvent) { recordCursorEvent(event, down: true) }
+    override func mouseUp(with event: NSEvent) { recordCursorEvent(event, down: false) }
+
+    private func recordCursorEvent(_ event: NSEvent, down: Bool) {
+        guard !isClosed, !isSuspended, window?.ignoresMouseEvents == false else { return }
+        cursorPressed = down
+        let local = convert(event.locationInWindow, from: nil)
+        let world = sceneLayer.convert(local, from: layer)
+        if cursorEvents.count < 64 {
+            cursorEvents.append(["cursor": [Double(world.x), Double(world.y), 0], "down": down, "up": !down,
+                                 "cursorInside": bounds.contains(local) && sceneLayer.bounds.contains(world)])
+        }
+    }
+
+    private func advanceScripts(_ tick: SceneTick) {
+        guard let scriptSession, !isSuspended, !isClosed else { return }
+        let screenPoint = NSEvent.mouseLocation
+        let local = window.map { convert($0.convertPoint(fromScreen: screenPoint), from: nil) } ?? .zero
+        let world = sceneLayer.convert(local, from: layer)
+        let scale = window?.backingScaleFactor ?? 1
+        let audio = SystemAudioAnalysis.shared.currentSpectrum
+        if window?.ignoresMouseEvents != false { cursorPressed = false; cursorEvents = [] }
+        let accepted = scriptSession.advance(frame: [
+            "time": tick.elapsedTime, "frameTime": tick.frameTime, "now": Date().timeIntervalSince1970 * 1000,
+            "screen": [Double(bounds.width * scale), Double(bounds.height * scale)],
+            "cursor": [Double(world.x), Double(world.y), 0],
+            "cursorScreen": [Double(local.x * scale), Double((bounds.height - local.y) * scale)],
+            "cursorInside": window != nil && bounds.contains(local) && sceneLayer.bounds.contains(world),
+            "leftDown": cursorPressed && window?.ignoresMouseEvents == false, "cursorEvents": cursorEvents,
+            "audioLeft": audio.left, "audioRight": audio.right,
+            "media": MusicMetadataSource.shared.snapshot.frame()
+        ])
+        if accepted { cursorEvents = [] }
+    }
+
+    func applyScriptChanges(_ changes: [[String: Any]]) {
+        guard !isClosed, !isSuspended else { return }
+        func vector(_ value: Any?) -> SceneVector3? {
+            guard let v = value as? [Double], v.count == 3,
+                  v.allSatisfy({ $0.isFinite && abs($0) <= 1e7 }) else { return nil }
+            return SceneVector3(x: v[0], y: v[1], z: v[2])
+        }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+        for change in changes.prefix(256) {
+            guard let id = change["id"] as? Int, let target = scriptLayers[id],
+                  let values = change["values"] as? [String: Any],
+                  let layerPlan = plan.layers.first(where: { $0.id == id }) else { continue }
+            if let origin = vector(values["origin"]) {
+                target.removeAnimation(forKey: "scene-origin")
+                target.position = CGPoint(x: origin.x, y: origin.y)
+                target.zPosition = origin.z
+            }
+            if var transform = scriptTransforms[id] {
+                var changed = false
+                if let scale = vector(values["scale"]) {
+                    target.removeAnimation(forKey: "scene-scale-x")
+                    target.removeAnimation(forKey: "scene-scale-y")
+                    transform.scale = scale
+                    changed = true
+                }
+                if let angles = vector(values["angles"]) {
+                    target.removeAnimation(forKey: "scene-angle-z")
+                    transform.angles = angles
+                    changed = true
+                }
+                if changed {
+                    var matrix = CATransform3DMakeRotation(Self.radians(fromDegrees: transform.angles.z), 0, 0, 1)
+                    matrix = CATransform3DRotate(matrix, Self.radians(fromDegrees: transform.angles.y), 0, 1, 0)
+                    matrix = CATransform3DRotate(matrix, Self.radians(fromDegrees: transform.angles.x), 1, 0, 0)
+                    target.transform = CATransform3DScale(matrix, transform.scale.x, transform.scale.y, transform.scale.z)
+                    scriptTransforms[id] = transform
+                }
+            }
+            if let alpha = values["alpha"] as? Double, alpha.isFinite {
+                target.removeAnimation(forKey: "scene-alpha")
+                target.opacity = Float(max(0, min(1, alpha * opacityMultiplier(for: layerPlan))))
+            }
+            if let visible = values["visible"] as? Bool { target.isHidden = !visible }
+            if let text = values["text"] as? String, text.utf8.count <= 65_536, let textLayer = target as? CATextLayer { textLayer.string = text }
+            if let color = vector(values["color"]) {
+                let r = max(0,min(1,color.x)), g = max(0,min(1,color.y)), b = max(0,min(1,color.z))
+                if let textLayer = target as? CATextLayer {
+                    textLayer.foregroundColor = NSColor(srgbRed: r, green: g, blue: b, alpha: 1).cgColor
+                } else if let tint = CIFilter(name: "CIColorMatrix", parameters: [
+                    "inputRVector": CIVector(x:r,y:0,z:0,w:0), "inputGVector": CIVector(x:0,y:g,z:0,w:0),
+                    "inputBVector": CIVector(x:0,y:0,z:b,w:0), "inputAVector": CIVector(x:0,y:0,z:0,w:1)
+                ]) { target.filters = [tint] }
+            }
+        }
     }
 
     private static let puppetFrameInterval: TimeInterval = 1.0 / 30.0

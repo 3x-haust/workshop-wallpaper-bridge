@@ -52,6 +52,11 @@ protocol WallpaperPlaying: AnyObject {
     func stop()
     func setDisplayMode(_ mode: WallpaperDisplayMode)
     func setAutoPauseWhenCovered(_ enabled: Bool)
+    func setInteractionEnabled(_ enabled: Bool)
+}
+
+extension WallpaperPlaying {
+    func setInteractionEnabled(_ enabled: Bool) {}
 }
 
 extension WallpaperPlayer: WallpaperPlaying {}
@@ -91,8 +96,32 @@ final class AppViewModel: ObservableObject {
             userDefaults.set(autoPauseWhenCovered, forKey: PreferenceKey.autoPauseWhenCovered)
         }
     }
-    /// Off by default: the previous behavior was silent playback, so audio
-    /// should never turn on for existing users without them opting in.
+    /// Opt in once, then retain the user's choice across app launches.
+    @Published var wallpaperInteractionEnabled = false {
+        didSet {
+            wallpaperPlayer.setInteractionEnabled(wallpaperInteractionEnabled)
+            userDefaults.set(wallpaperInteractionEnabled, forKey: PreferenceKey.wallpaperInteractionEnabled)
+        }
+    }
+    @Published var preferLiveScenes = true {
+        didSet {
+            SceneWallpaperContentFactory.prefersLivePlayback = preferLiveScenes
+            userDefaults.set(preferLiveScenes, forKey: PreferenceKey.preferLiveScenes)
+        }
+    }
+    @Published var audioReactiveEnabled = false {
+        didSet {
+            SystemAudioAnalysis.shared.setEnabled(audioReactiveEnabled)
+            userDefaults.set(audioReactiveEnabled, forKey: PreferenceKey.audioReactiveEnabled)
+        }
+    }
+    @Published var mediaIntegrationEnabled = false {
+        didSet {
+            MusicMetadataSource.shared.setEnabled(mediaIntegrationEnabled)
+            userDefaults.set(mediaIntegrationEnabled, forKey: PreferenceKey.mediaIntegrationEnabled)
+        }
+    }
+    /// Existing users retain silent playback until they opt in.
     @Published var wallpaperAudioEnabled = false {
         didSet {
             WallpaperPlayer.shared.setAudioSettings(enabled: wallpaperAudioEnabled, volume: wallpaperAudioVolume)
@@ -540,6 +569,16 @@ extension AppViewModel {
         }
     }
 
+    func playSelectedInteractively() {
+        guard let asset = selectedLibraryAsset, asset.supportStatus == .playable,
+              asset.kind == .web || asset.kind == .scene else {
+            playSelected()
+            return
+        }
+        wallpaperInteractionEnabled = true
+        playSelected()
+    }
+
     func setStillWallpaper() {
         guard let asset = selectedLibraryAsset else {
             status = "Select a library project first."
@@ -805,6 +844,10 @@ extension AppViewModel {
         if userDefaults.object(forKey: PreferenceKey.autoPauseWhenCovered) != nil {
             autoPauseWhenCovered = userDefaults.bool(forKey: PreferenceKey.autoPauseWhenCovered)
         }
+        preferLiveScenes = userDefaults.object(forKey: PreferenceKey.preferLiveScenes) as? Bool ?? true
+        wallpaperInteractionEnabled = userDefaults.bool(forKey: PreferenceKey.wallpaperInteractionEnabled)
+        audioReactiveEnabled = userDefaults.bool(forKey: PreferenceKey.audioReactiveEnabled)
+        mediaIntegrationEnabled = userDefaults.bool(forKey: PreferenceKey.mediaIntegrationEnabled)
         if userDefaults.object(forKey: PreferenceKey.wallpaperAudioEnabled) != nil {
             wallpaperAudioEnabled = userDefaults.bool(forKey: PreferenceKey.wallpaperAudioEnabled)
         }
@@ -924,9 +967,12 @@ extension AppViewModel {
             userDefaults.set(asset.id, forKey: PreferenceKey.lastPlayedAssetId)
         }
         let lockScreenError = refreshLockScreenAnimationConfiguration(asset: asset)
-        let playbackStatus = autoPauseWhenCovered
+        var playbackStatus = autoPauseWhenCovered
             ? "Playing on the desktop layer. You can minimize this app; playback pauses only behind other apps."
             : "Playing continuously on the desktop layer. You can minimize this app."
+        if asset.kind == .web || asset.kind == .scene {
+            playbackStatus += " " + L(wallpaperInteractionEnabled ? "playback.interaction.on" : "playback.interaction.off")
+        }
         status = lockScreenError.map {
             "\(playbackStatus) Screen Saver update failed: \($0)"
         } ?? playbackStatus
@@ -1169,6 +1215,10 @@ private enum PreferenceKey {
     static let automaticallyCheckForUpdates = "automaticallyCheckForUpdates"
     static let lastUpdateCheckAt = "lastUpdateCheckAt"
     static let sceneEngineAssetsDirectory = "sceneEngineAssetsDirectory"
+    static let audioReactiveEnabled = "audioReactiveEnabled"
+    static let mediaIntegrationEnabled = "mediaIntegrationEnabled"
+    static let preferLiveScenes = "preferLiveScenes"
+    static let wallpaperInteractionEnabled = "wallpaperInteractionEnabled"
     static let wallpaperAudioEnabled = "wallpaperAudioEnabled"
     static let wallpaperAudioVolume = "wallpaperAudioVolume"
     static let language = "language"
