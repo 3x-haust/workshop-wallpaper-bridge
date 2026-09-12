@@ -80,18 +80,61 @@ private final class WallpaperAudioOutput: NSObject, SCStreamOutput, SCStreamDele
 }
 
 @MainActor
+protocol SystemAudioCapturing: AnyObject {
+    func stop() async
+}
+
+@MainActor
+private final class SystemAudioCapture: SystemAudioCapturing {
+    let stream: SCStream
+    let output: WallpaperAudioOutput
+    init(stream: SCStream, output: WallpaperAudioOutput) { self.stream = stream; self.output = output }
+    func stop() async { try? await stream.stopCapture() }
+}
+
+@MainActor
 final class SystemAudioAnalysis: ObservableObject {
+    typealias StartCapture = @MainActor (
+        @escaping @Sendable (WallpaperAudioSpectrum) -> Void,
+        @escaping @Sendable (String) -> Void
+    ) async throws -> any SystemAudioCapturing
+
     static let shared = SystemAudioAnalysis()
     @Published private(set) var status = ""
+    @Published private(set) var needsPermission = false
     private(set) var spectrum = WallpaperAudioSpectrum()
     private var lastSample = Date.distantPast
     private var desired = false
+    private var granted: Bool
+    private var requestedPermission = false
+    private var requestingPermission = false
+    private var captureFailed = false
     private var consumers = Set<UUID>()
     private var generation = 0
     private var transition: Task<Void, Never>?
-    private var stream: SCStream?
-    private var output: WallpaperAudioOutput?
-    private let queue = DispatchQueue(label: "dev.3xhaust.wallpaper-audio")
+    private var capture: (any SystemAudioCapturing)?
+    private var permissionTimer: Timer?
+    private let permissionCheck: @MainActor () -> Bool
+    private let permissionRequest: @MainActor () -> Bool
+    private let openSettings: @MainActor () -> Void
+    private let automaticallyRefreshPermission: Bool
+    private let startCapture: StartCapture
+
+    init(permissionCheck: @escaping @MainActor () -> Bool = { CGPreflightScreenCaptureAccess() },
+         permissionRequest: @escaping @MainActor () -> Bool = { CGRequestScreenCaptureAccess() },
+         openSettings: @escaping @MainActor () -> Void = {
+             if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
+                 NSWorkspace.shared.open(url)
+             }
+         }, automaticallyRefreshPermission: Bool = true,
+         startCapture: @escaping StartCapture = SystemAudioAnalysis.startSystemCapture) {
+        self.permissionCheck = permissionCheck
+        self.permissionRequest = permissionRequest
+        self.openSettings = openSettings
+        self.automaticallyRefreshPermission = automaticallyRefreshPermission
+        self.startCapture = startCapture
+        granted = permissionCheck()
+    }
 
     var currentSpectrum: WallpaperAudioSpectrum {
         Date().timeIntervalSince(lastSample) < 0.3 ? spectrum : WallpaperAudioSpectrum()
@@ -105,66 +148,126 @@ final class SystemAudioAnalysis: ObservableObject {
     }
 
     func release(_ id: UUID) {
-        consumers.remove(id)
+        guard consumers.remove(id) != nil else { return }
         if consumers.isEmpty { reconcile() }
     }
 
     func setEnabled(_ enabled: Bool) {
+        guard desired != enabled else { refreshPermission(); return }
         desired = enabled
+        captureFailed = false
+        permissionTimer?.invalidate(); permissionTimer = nil
+        if enabled && automaticallyRefreshPermission {
+            // Preflight never prompts. Observe changes made in System Settings,
+            // including while this menu-bar app has no active settings window.
+            permissionTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] timer in
+                guard let self else { timer.invalidate(); return }
+                Task { @MainActor in self.refreshPermission() }
+            }
+        }
+        granted = permissionCheck()
+        reconcile()
+    }
+
+    func refreshPermission() {
+        let next = permissionCheck()
+        needsPermission = desired && !next
+        guard next != granted else { return }
+        granted = next
+        captureFailed = false
+        reconcile()
+    }
+
+    /// Called only from the user's authorization button, never from playback,
+    /// activation, permission polling or a restored preference.
+    func authorize() {
+        guard desired, !requestingPermission else { return }
+        refreshPermission()
+        guard !granted else { return }
+        requestingPermission = true
+        defer { requestingPermission = false }
+        if !requestedPermission {
+            requestedPermission = true
+            _ = permissionRequest()
+        }
+        refreshPermission()
+        if !granted { openSettings() }
+    }
+
+    func waitForTransition() async { await transition?.value }
+
+    func retryCapture() {
+        guard desired else { return }
+        refreshPermission()
+        guard granted, captureFailed else { return }
+        captureFailed = false
         reconcile()
     }
 
     private func reconcile() {
         generation += 1
         let token = generation, previous = transition
-        spectrum = WallpaperAudioSpectrum()
-        status = ""
+        spectrum = WallpaperAudioSpectrum(); lastSample = .distantPast
+        needsPermission = desired && !granted
+        if !captureFailed || !desired || needsPermission { status = "" }
         transition = Task { [weak self] in
             await previous?.value
             guard let self, self.generation == token else { return }
-            if let stream = self.stream { try? await stream.stopCapture() }
-            self.stream = nil
-            self.output = nil
-            guard self.desired, !self.consumers.isEmpty, self.generation == token else { return }
+            if let capture = self.capture { await capture.stop() }
+            self.capture = nil
+            guard self.desired, !self.consumers.isEmpty, self.granted, !self.captureFailed, self.generation == token else { return }
+            // Recheck immediately before invoking an API that could prompt.
+            guard self.permissionCheck() else { self.refreshPermission(); return }
             do {
-                let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-                guard self.generation == token, self.desired else { return }
-                guard let display = content.displays.first else { throw SceneScriptProcessError.unavailable }
-                let filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
-                let config = SCStreamConfiguration()
-                config.width = 2
-                config.height = 2
-                config.minimumFrameInterval = CMTime(value: 1, timescale: 1)
-                config.capturesAudio = true
-                config.excludesCurrentProcessAudio = true
-                config.sampleRate = 48_000
-                config.channelCount = 2
-                let output = WallpaperAudioOutput(receive: { [weak self] spectrum in
+                let capture = try await self.startCapture({ [weak self] spectrum in
                     Task { @MainActor in
-                        guard let self, self.generation == token, self.desired else { return }
+                        guard let self, self.generation == token, self.desired, self.granted, !self.captureFailed else { return }
                         self.spectrum = spectrum
                         self.lastSample = Date()
                     }
-                }, stopped: { [weak self] message in
+                }, { [weak self] message in
                     Task { @MainActor in
                         guard let self, self.generation == token else { return }
                         self.spectrum = WallpaperAudioSpectrum()
                         self.lastSample = .distantPast
-                        self.status = message
+                        self.captureFailed = true
+                        self.refreshPermission()
+                        if !self.needsPermission { self.status = message }
                     }
                 })
-                let stream = SCStream(filter: filter, configuration: config, delegate: output)
-                try stream.addStreamOutput(output, type: .audio, sampleHandlerQueue: self.queue)
-                self.stream = stream
-                self.output = output
-                try await stream.startCapture()
-                if self.generation != token || !self.desired { try? await stream.stopCapture() }
+                guard self.generation == token, self.desired, self.granted, !self.captureFailed else { await capture.stop(); return }
+                self.capture = capture
             } catch {
-                if self.generation == token {
-                    self.status = error.localizedDescription
-                    self.spectrum = WallpaperAudioSpectrum()
+                guard self.generation == token else { return }
+                self.captureFailed = true
+                self.refreshPermission()
+                if !self.needsPermission {
+                    let failure = error as NSError
+                    self.status = failure.domain == SCStreamErrorDomain && failure.code == -3801
+                        ? "settings.audioReactive.restart" : error.localizedDescription
                 }
+                self.spectrum = WallpaperAudioSpectrum()
             }
         }
+    }
+
+    private static func startSystemCapture(
+        receive: @escaping @Sendable (WallpaperAudioSpectrum) -> Void,
+        stopped: @escaping @Sendable (String) -> Void
+    ) async throws -> any SystemAudioCapturing {
+        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+        guard let display = content.displays.first else { throw SceneScriptProcessError.unavailable }
+        let filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
+        let config = SCStreamConfiguration()
+        config.width = 2; config.height = 2
+        config.minimumFrameInterval = CMTime(value: 1, timescale: 1)
+        config.capturesAudio = true; config.excludesCurrentProcessAudio = true
+        config.sampleRate = 48_000; config.channelCount = 2
+        let output = WallpaperAudioOutput(receive: receive, stopped: stopped)
+        let stream = SCStream(filter: filter, configuration: config, delegate: output)
+        try stream.addStreamOutput(output, type: .audio, sampleHandlerQueue: DispatchQueue(label: "dev.3xhaust.wallpaper-audio"))
+        do { try await stream.startCapture() }
+        catch { try? await stream.stopCapture(); throw error }
+        return SystemAudioCapture(stream: stream, output: output)
     }
 }

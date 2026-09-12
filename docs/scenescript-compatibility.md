@@ -1,6 +1,6 @@
 # Live SceneScript playback
 
-The `feat/live-scenescript-runtime` development branch adds a local SceneScript runtime and experimental media overlays. It is not a complete implementation of the Windows engine. Successful script execution does not establish visual or timing parity.
+Version 1.5.0 adds a local SceneScript runtime and experimental media overlays. It is not a complete implementation of the Windows engine. Successful script execution does not establish visual or timing parity.
 
 ## Running it
 
@@ -13,7 +13,7 @@ Run these commands from the repository root. Build with `bash Scripts/package-ap
 - Web animations continue while the desktop window is inactive. A trusted click requesting an online document presents **Open … in browser**. That button opens the document in the default browser; remote resources remain blocked inside the wallpaper.
 - The screen saver uses static images or existing whole-scene video caches. It does not execute live scripts or media overlays.
 
-For denied audio permission, open **System Settings → Privacy & Security → Screen & System Audio Recording** (or **Screen Recording** on older macOS versions), enable the app, and restart if macOS requests it. Permission is controlled by macOS; the bridge does not reset or bypass it. Audio capture on the current test Mac was denied, so actual system-audio response is not yet verified there.
+For denied audio permission, open **System Settings → Privacy & Security → Screen & System Audio Recording** (or **Screen Recording** on older macOS versions), enable the app, and restart if macOS requests it. Permission is controlled by macOS; the bridge does not reset or bypass it. The app checks capture permission without prompting. When access is missing, Settings shows **Allow access…**; only clicking that button can request permission. Changes in System Settings are checked every two seconds while audio response is enabled. Existing access hides the authorization notice. Capture failures are not retried on scene changes; use **Retry audio capture** after resolving the error. If macOS reports that enabled permission has not taken effect, the app asks you to quit and reopen it.
 
 Local development bundles are ad-hoc signed with a build-specific code hash. Replacing the app can require macOS permission again, even if its older entry still appears enabled. Reauthorize the final installed build in System Settings; any Touch ID or password request must be completed by the user.
 
@@ -25,7 +25,7 @@ brew install lz4 sdl2 ffmpeg glfw glew mpv freetype
 
 Select the copied assets directory in **Scene Engine Assets → Choose Assets Folder…**. Web and ordinary AVFoundation video playback do not need these renderer libraries. Local renderer builds use the host's Homebrew libraries; building with a macOS 14 deployment target does not establish that those libraries run on macOS 14.
 
-Our examples contain no Workshop assets. Run `python3 Scripts/build-live-scene-example.py`, then scan `.tmp/live-examples` for **Live SceneScript demo**. Scan `Examples` for **Live interaction demo**. Use **Scan**, select the discovered project and import it. Check the clock, cursor marker/counter or cube, and pause/resume. With capture permission, audio bars should react to another app’s audio; when capture is unavailable they stay flat. That live-capture check is pending on the test Mac. Stopping and replaying starts a new script session.
+Our examples contain no Workshop assets. Run `python3 Scripts/build-live-scene-example.py`, then scan `.tmp/live-examples` for **Live SceneScript demo**. Scan `Examples` for **Live interaction demo**. Use **Scan**, select the discovered project and import it. Check the clock, cursor marker/counter or cube, and pause/resume. With capture permission, audio bars should react to another app’s audio; when capture is unavailable they stay flat. Deterministic FFT tests verify buffer processing; they do not establish real-device gain or Windows parity. Stopping and replaying starts a new script session.
 
 ## Implemented interfaces
 
@@ -64,7 +64,7 @@ Limits remain:
 - Large DXT atlases can be reduced block by block within the existing output memory budget. This avoids allocating the full atlas in RGBA, but reduces image detail.
 - The video background is a loop. Effects baked into it do not become live merely because the script graph runs.
 
-These are known gaps, not a compatibility percentage. The current development build is not cleared for a release claiming all scene functionality or complete Windows parity. No creator source, package or engine assets are committed with the tests.
+These are known gaps, not a compatibility percentage. The release provides the documented supported interfaces, not all scene functionality or complete Windows parity. No creator source, package or engine assets are committed with the tests.
 
 ## Resource and lifecycle boundaries
 

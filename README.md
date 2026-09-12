@@ -123,6 +123,7 @@ Choose **Play & Interact** to play scene/web content with mouse and keyboard inp
 
 ### How scene playback works
 
+- System-audio permission is checked before capture starts. When access is missing, **Allow access…** appears in Settings; already-granted access hides it. Permission changes are picked up automatically, and playback does not repeatedly request access.
 - With **Prefer live scenes** on, basic image/text scenes run supported property bindings live only after the entire composition passes structural checks and texture decoding. Effects, particles, models, parented layers, custom materials, bloom, unsupported bindings, and missing or over-budget layers retain the video path. This prevents a partial native scene from replacing a full rendered scene.
 - An audited media overlay path runs song information, clocks, artwork transitions and day/night layers over a background rendered at the original canvas ratio. Original package shaders now drive artwork blends, glitch, CRT and pixelate passes, including live compose layers. It remains experimental; Windows visual/timing parity is unverified. [Evidence and limits](docs/scenescript-compatibility.md#summer-in-the-city).
 - For other scenes, the first play renders the scene offscreen (no renderer window is ever shown) into a cached, looping mp4, using a bundled/configured external GPL scene renderer plus `ffmpeg`.

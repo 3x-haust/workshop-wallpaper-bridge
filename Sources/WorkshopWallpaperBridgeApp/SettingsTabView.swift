@@ -62,8 +62,19 @@ struct SettingsTabView: View {
             Section {
                 Toggle(model.L("settings.audioReactive.toggle"), isOn: $model.audioReactiveEnabled)
                 Text(model.L("settings.audioReactive.help")).font(.caption).foregroundStyle(.secondary)
-                if !audioAnalysis.status.isEmpty {
-                    Text(audioAnalysis.status).font(.caption).foregroundStyle(.secondary)
+                if model.audioReactiveEnabled && audioAnalysis.needsPermission {
+                    HStack {
+                        Text(model.L("settings.audioReactive.permission"))
+                            .font(.caption).foregroundStyle(.secondary)
+                        Spacer()
+                        Button(model.L("settings.audioReactive.authorize")) { audioAnalysis.authorize() }
+                    }
+                } else if model.audioReactiveEnabled && !audioAnalysis.status.isEmpty {
+                    HStack {
+                        Text(model.L(audioAnalysis.status)).font(.caption).foregroundStyle(.secondary)
+                        Spacer()
+                        Button(model.L("settings.audioReactive.retry")) { audioAnalysis.retryCapture() }
+                    }
                 }
             }
 
@@ -119,5 +130,6 @@ struct SettingsTabView: View {
             }
         }
         .formStyle(.grouped)
+        .onAppear { audioAnalysis.refreshPermission() }
     }
 }
