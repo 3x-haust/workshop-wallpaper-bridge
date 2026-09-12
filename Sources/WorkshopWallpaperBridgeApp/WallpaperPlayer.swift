@@ -9,6 +9,7 @@ final class WallpaperPlayer {
     private var activeAsset: WallpaperAsset?
     private var autoPauseWhenCovered = true
     private var displayMode: WallpaperDisplayMode = .fit
+    private var interactionEnabled = false
     private var audioEnabled = false
     private var audioVolume: Double = 0.5
     private var visibilityTimer: Timer?
@@ -55,16 +56,19 @@ final class WallpaperPlayer {
             )
         }
         lastScreenFrames = screenFrames
-        windows.forEach { $0.show() }
+        windows.forEach { $0.setInteractionEnabled(interactionEnabled); $0.show() }
         startLifecycleObservers()
         startVisibilityTimer()
         updateVisibilityState()
     }
 
-    /// Applies the wallpaper audio (mute/volume) settings immediately to the
-    /// currently playing wallpaper, without recreating any windows or
-    /// restarting playback. Also remembered for windows created afterwards
-    /// (new plays, auto-reopen after wake/screen changes).
+    /// Updates mouse handling on current and future wallpaper windows.
+    func setInteractionEnabled(_ enabled: Bool) {
+        interactionEnabled = enabled
+        windows.forEach { $0.setInteractionEnabled(enabled) }
+    }
+
+    /// Applies mute/volume without recreating windows or restarting playback.
     func setAudioSettings(enabled: Bool, volume: Double) {
         audioEnabled = enabled
         audioVolume = volume
@@ -137,7 +141,7 @@ final class WallpaperPlayer {
             )
         }
         lastScreenFrames = screenFrames
-        windows.forEach { $0.show() }
+        windows.forEach { $0.setInteractionEnabled(interactionEnabled); $0.show() }
         updateVisibilityState()
     }
 
@@ -323,9 +327,34 @@ enum WallpaperScreenFrames {
     }
 }
 
+/// Borderless wallpapers need explicit focus support for native web controls.
+@MainActor
+final class DesktopWallpaperWindow: NSWindow {
+    private var interactionEnabled = false
+    override var canBecomeKey: Bool { interactionEnabled }
+    override var canBecomeMain: Bool { false }
+
+    func setInteractionEnabled(_ enabled: Bool) {
+        interactionEnabled = enabled
+        ignoresMouseEvents = !enabled
+        acceptsMouseMovedEvents = enabled
+        level = enabled
+            ? NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.desktopIconWindow)) + 1)
+            : WallpaperWindowLevel.desktopWallpaper
+        if !enabled, isKeyWindow { resignKey() }
+    }
+}
+
+@MainActor
+enum WallpaperInteraction {
+    static func supports(_ content: NSView) -> Bool {
+        content is SceneWallpaperView || content is RestrictedWebWallpaperView || content is MediaSceneWallpaperView
+    }
+}
+
 @MainActor
 private final class WallpaperWindow {
-    private let window: NSWindow
+    private let window: DesktopWallpaperWindow
     private let content: NSView
 
     init(asset: WallpaperAsset,
@@ -343,7 +372,7 @@ private final class WallpaperWindow {
             audioEnabled: audioEnabled,
             audioVolume: audioVolume
         )
-        window = NSWindow(
+        window = DesktopWallpaperWindow(
             contentRect: frame,
             styleMask: [.borderless],
             backing: .buffered,
@@ -384,6 +413,11 @@ private final class WallpaperWindow {
 
     func setDisplayMode(_ displayMode: WallpaperDisplayMode) {
         (content as? DisplayModeUpdatableContent)?.setDisplayMode(displayMode)
+    }
+
+    func setInteractionEnabled(_ enabled: Bool) {
+        let interactive = enabled && WallpaperInteraction.supports(content)
+        window.setInteractionEnabled(interactive)
     }
 
     func setAudio(enabled: Bool, volume: Double) {
@@ -440,6 +474,7 @@ private final class WallpaperWindow {
 
 @MainActor
 enum SceneWallpaperContentFactory {
+    static var prefersLivePlayback = true
     static var lastDiagnostic: String?
     static var statusHandler: ((String) -> Void)?
     /// Invoked with the asset id once a scene's video render finishes
@@ -469,6 +504,42 @@ enum SceneWallpaperContentFactory {
                 displayMode: displayMode
             )
         }
+        // A script alone does not make the native renderer suitable for a scene.
+        // Check the entire composition and decoding before replacing a working video.
+        let layout = try? SceneRenderPlanBuilder().buildLayout(url: url)
+        if prefersLivePlayback, layout?.canPreferLivePlayback == true,
+           let decoded = try? SceneRenderPlanBuilder().build(url: url), decoded.canPreferLivePlayback {
+            lastDiagnostic = "live SceneScript playback"
+            return try SceneWallpaperView(url: url, previewURL: previewURL, frame: frame,
+                                          displayMode: displayMode, decodedPlan: decoded)
+        }
+        if prefersLivePlayback, let mediaPlan = try? SceneMediaOverlayPlan.build(url: url) {
+            let cacheID = asset.id + mediaPlan.cacheSuffix
+            if let video = SceneVideoCache.freshCachedVideoURL(assetId: cacheID, sourceURL: url) {
+                lastDiagnostic = "live media scene playback"
+                return MediaSceneWallpaperView(videoURL: video, previewURL: previewURL, plan: mediaPlan,
+                    frame: frame, audioEnabled: audioEnabled, audioVolume: audioVolume)
+            }
+            if let renderer = SceneEngineRendererConfiguration.executableURL(),
+               let assets = SceneEngineRendererConfiguration.assetsDirectoryURL(),
+               let ffmpeg = VideoConverter().ffmpegPath() {
+                scheduleSceneVideoRender(asset: asset, sceneURL: url, rendererURL: renderer,
+                    assetsDirectory: assets, ffmpegPath: ffmpeg, frame: frame,
+                    cacheAssetID: cacheID, excludedObjectIDs: mediaPlan.excludedIDs,
+                    recordingCanvas: mediaPlan.canvas)
+            }
+            // Until the background with these exact exclusions is ready, keep
+            // the old whole-scene video. Never stack live layers over baked ones.
+            let previous = SceneVideoCache.freshCachedVideoURL(assetId: asset.id, sourceURL: url)
+                ?? SceneVideoCache.previousCompatibleCachedVideoURL(assetId: asset.id, sourceURL: url)
+            if let previous {
+                return VideoWallpaperView(url: previous, fallbackImageURL: previewURL, frame: frame,
+                    displayMode: .fill, audioEnabled: audioEnabled, audioVolume: audioVolume)
+            }
+            if let previewURL, let image = NSImage(contentsOf: previewURL) {
+                return ImageWallpaperView(image: image, frame: frame, displayMode: displayMode)
+            }
+        }
         if let cachedVideoURL = SceneVideoCache.freshCachedVideoURL(assetId: asset.id, sourceURL: url) {
             // Scene videos are a rendered wallpaper loop, not a user-picked
             // video file: they should always cover the whole desktop
@@ -484,16 +555,27 @@ enum SceneWallpaperContentFactory {
                 audioVolume: audioVolume
             )
         }
+        let previousVideo = SceneVideoCache.previousCompatibleCachedVideoURL(assetId: asset.id, sourceURL: url)
+        func interimContent() throws -> NSView {
+            if let previousVideo {
+                return VideoWallpaperView(url: previousVideo, fallbackImageURL: previewURL, frame: frame,
+                    displayMode: .fill, audioEnabled: audioEnabled, audioVolume: audioVolume)
+            }
+            // Never show a partial composite over the thumbnail while rendering.
+            if let previewURL, let image = NSImage(contentsOf: previewURL) {
+                return ImageWallpaperView(image: image, frame: frame, displayMode: displayMode)
+            }
+            return try SceneWallpaperView(url: url, previewURL: nil, frame: frame, displayMode: displayMode)
+        }
         guard let rendererURL = SceneEngineRendererConfiguration.executableURL(),
               let assetsDirectory = SceneEngineRendererConfiguration.assetsDirectoryURL(),
               let ffmpegPath = VideoConverter().ffmpegPath() else {
             lastDiagnostic = "scene video rendering skipped: \(missingRenderingComponentDescription())"
-            return try SceneWallpaperView(
-                url: url,
-                previewURL: previewURL,
-                frame: frame,
-                displayMode: displayMode
-            )
+            // Preserve a complete native fallback when it is structurally supported.
+            if previousVideo == nil, layout?.nativePlaybackIssues.isEmpty == true {
+                return try SceneWallpaperView(url: url, previewURL: previewURL, frame: frame, displayMode: displayMode)
+            }
+            return try interimContent()
         }
         scheduleSceneVideoRender(
             asset: asset,
@@ -505,12 +587,7 @@ enum SceneWallpaperContentFactory {
         )
         lastDiagnostic = "scene video rendering in progress"
         statusHandler?("Rendering scene to video… 0%")
-        return try SceneWallpaperView(
-            url: url,
-            previewURL: previewURL,
-            frame: frame,
-            displayMode: displayMode
-        )
+        return try interimContent()
     }
 
     private static func missingRenderingComponentDescription() -> String {
@@ -533,7 +610,10 @@ enum SceneWallpaperContentFactory {
         rendererURL: URL,
         assetsDirectory: URL,
         ffmpegPath: String,
-        frame: CGRect
+        frame: CGRect,
+        cacheAssetID: String? = nil,
+        excludedObjectIDs: [Int] = [],
+        recordingCanvas: CGSize? = nil
     ) {
         guard !pendingRenderAssetIDs.contains(asset.id) else {
             return
@@ -544,14 +624,18 @@ enum SceneWallpaperContentFactory {
         // full retina resolution produces multi-hundred-megabyte clips that
         // take minutes to render for no visible benefit on a wallpaper
         // viewed from normal desktop distance.
-        let recordSize = SceneVideoRecordSize.clampedRecordSize(forLogicalSize: frame.size)
+        // Live overlays use authored canvas coordinates. Record their backdrop
+        // in that same aspect ratio; a desktop-sized recording can stretch the
+        // renderer output, moving baked geometry away from live text/images.
+        let recordSize = SceneVideoRecordSize.clampedRecordSize(forLogicalSize: recordingCanvas ?? frame.size)
         let configuration = SceneVideoRenderConfiguration(
-            assetId: asset.id,
+            assetId: cacheAssetID ?? asset.id,
             projectDirectory: URL(filePath: asset.projectDirectory).standardizedFileURL,
             assetsDirectory: assetsDirectory,
             rendererURL: rendererURL,
             size: recordSize,
-            sceneURL: sceneURL
+            sceneURL: sceneURL,
+            excludedObjectIDs: excludedObjectIDs
         )
         let assetId = asset.id
         Task.detached(priority: .utility) {

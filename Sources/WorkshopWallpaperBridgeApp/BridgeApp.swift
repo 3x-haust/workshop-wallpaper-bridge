@@ -3,6 +3,17 @@ import Darwin
 import SwiftUI
 
 @main
+@MainActor
+enum WorkshopWallpaperBridgeEntryPoint {
+    static func main() {
+        if CommandLine.arguments.dropFirst() == ["--scene-script-worker"] {
+            SceneScriptWorkerRuntime.run()
+        } else {
+            WorkshopWallpaperBridgeApplication.main()
+        }
+    }
+}
+
 struct WorkshopWallpaperBridgeApplication: App {
     @NSApplicationDelegateAdaptor(AppLifecycleDelegate.self) private var appDelegate
     @StateObject private var model = AppViewModel()

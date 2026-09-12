@@ -217,6 +217,13 @@ struct LibraryTabView: View {
             .buttonStyle(.borderedProminent)
             .keyboardShortcut(.defaultAction)
             .disabled(model.selectedLibraryAsset == nil)
+            if model.selectedLibraryAsset?.kind == .web || model.selectedLibraryAsset?.kind == .scene {
+                Button(model.L("library.playInteractive")) {
+                    model.playSelectedInteractively()
+                }
+                .help(model.L("settings.interaction.help"))
+                .disabled(model.selectedLibraryAsset?.supportStatus != .playable)
+            }
             Button(removeButtonTitle) {
                 model.requestRemoveSelectedLibraryAssets()
             }

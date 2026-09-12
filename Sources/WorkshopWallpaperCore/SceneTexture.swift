@@ -83,10 +83,12 @@ public struct SceneTextureDecoder: Sendable {
 
     private let maximumSoftwareDecodedPixels: Int
     private let maximumDisplayDimension: Int
+    private let allowsReducedLargeDXT: Bool
 
-    public init(maximumSoftwareDecodedPixels: Int = 18_000_000, maximumDisplayDimension: Int = 2048) {
+    public init(maximumSoftwareDecodedPixels: Int = 18_000_000, maximumDisplayDimension: Int = 2048, allowsReducedLargeDXT: Bool = false) {
         self.maximumSoftwareDecodedPixels = maximumSoftwareDecodedPixels
         self.maximumDisplayDimension = maximumDisplayDimension
+        self.allowsReducedLargeDXT = allowsReducedLargeDXT
     }
 
     public func decode(data: Data) throws -> SceneTexture {
@@ -190,6 +192,16 @@ public struct SceneTextureDecoder: Sendable {
         imageHeight: Int
     ) throws -> DecodedSheet {
         let pixelCount = try Self.checkedProduct(mipmap.width, mipmap.height)
+        if pixelCount > maximumSoftwareDecodedPixels, allowsReducedLargeDXT, [4, 6, 7].contains(format) {
+            let step = max(4, ((max(mipmap.width, mipmap.height) + max(1, maximumDisplayDimension) - 1) / max(1, maximumDisplayDimension) + 3) / 4 * 4)
+            let width = (mipmap.width + step - 1) / step, height = (mipmap.height + step - 1) / step
+            guard width * height <= maximumSoftwareDecodedPixels else { throw SceneTextureError.textureTooLargeForSoftwareDecode(width, height) }
+            let payload = try decodePayload(mipmap)
+            let rgba = try SceneDXTDecoder(format: format == 4 ? .dxt5 : format == 6 ? .dxt3 : .dxt1)
+                .decodeReduced(payload, width: mipmap.width, height: mipmap.height, step: step)
+            return DecodedSheet(storage: .rgba(width: width, height: height, data: rgba), width: width, height: height,
+                                frameScaleX: Double(width) / Double(textureWidth), frameScaleY: Double(height) / Double(textureHeight))
+        }
         if mipmap.compressed, pixelCount > maximumSoftwareDecodedPixels {
             throw SceneTextureError.textureTooLargeForSoftwareDecode(mipmap.width, mipmap.height)
         }

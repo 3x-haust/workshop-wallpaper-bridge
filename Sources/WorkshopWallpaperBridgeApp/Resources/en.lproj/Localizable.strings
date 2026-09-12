@@ -80,3 +80,20 @@
 /* Common */
 "common.ok" = "OK";
 "common.cancel" = "Cancel";
+
+"settings.interaction.toggle" = "Interact with wallpaper";
+"settings.interaction.help" = "Click and drag scene or web wallpapers. This temporarily covers desktop icons; turn it off in the menu bar to use them again.";
+"settings.audioReactive.toggle" = "React to system audio";
+"settings.audioReactive.permission" = "Allow screen and system audio recording to react to sound.";
+"settings.audioReactive.authorize" = "Allow access…";
+"settings.audioReactive.retry" = "Retry audio capture";
+"settings.audioReactive.restart" = "Permission is enabled. Quit and reopen the app to apply it.";
+"settings.audioReactive.help" = "Let wallpapers respond to sound playing on your Mac. macOS asks for capture permission. Audio is analyzed locally and is not recorded.";
+"settings.liveScenes.toggle" = "Prefer live scenes";
+"settings.liveScenes.help" = "Run scene scripts for clocks and input. If effects look incorrect, turn this off to use rendered video. Applies after Stop, then Play on Desktop.";
+"library.playInteractive" = "Play & Interact";
+"playback.interaction.on" = "Mouse and keyboard interaction is on. Turn it off in the menu bar to access desktop icons.";
+"playback.interaction.off" = "Interaction is off. Use Play & Interact to click or drag this wallpaper.";
+"web.openExternal" = "Open %@ in browser";
+"settings.media.toggle" = "Show music information";
+"settings.media.help" = "Read track, artwork and playback time from Music or Spotify. macOS requests Automation permission. Spotify artwork loads from its image service.";

@@ -1,4 +1,5 @@
 import Foundation
+import CoreFoundation
 // swiftlint:disable identifier_name
 
 public struct SceneSize: Equatable, Sendable {
@@ -280,7 +281,14 @@ public struct SceneLayerEffectSetting: Equatable, Sendable {
     }
 }
 
+public enum SceneScriptBinding: String, CaseIterable, Codable, Sendable {
+    case origin, scale, angles, alpha, visible, text, color
+}
+
 public struct SceneLayer: Equatable, Sendable {
+    public let scripts: [SceneScriptBinding: SceneTextScript]
+    public let visible: Bool
+    public let color: SceneColor
     public let id: Int
     public let name: String
     public let texturePath: String
@@ -324,7 +332,10 @@ public struct SceneLayer: Equatable, Sendable {
         alphaAnimation: SceneScalarAnimation? = nil,
         puppetPath: String? = nil,
         puppetAnimationID: Int? = nil,
-        puppetRate: Double = 1
+        puppetRate: Double = 1,
+        scripts: [SceneScriptBinding: SceneTextScript] = [:],
+        visible: Bool = true,
+        color: SceneColor = SceneColor(red: 1, green: 1, blue: 1)
     ) {
         self.id = id
         self.name = name
@@ -345,6 +356,9 @@ public struct SceneLayer: Equatable, Sendable {
         self.puppetPath = puppetPath
         self.puppetAnimationID = puppetAnimationID
         self.puppetRate = puppetRate
+        self.scripts = scripts
+        self.visible = visible
+        self.color = color
     }
 }
 
@@ -417,6 +431,16 @@ public struct SceneParticleLayer: Equatable, Sendable {
 }
 
 public struct SceneRenderPlan: Equatable, Sendable {
+    public let requiresLivePlayback: Bool
+    /// Structural exclusions from automatic live playback, not a promise of engine parity.
+    public let nativePlaybackIssues: [String]
+    public let omittedLayerCount: Int
+    public let backgroundColor: SceneColor
+    public var canPreferLivePlayback: Bool {
+        requiresLivePlayback && nativePlaybackIssues.isEmpty && omittedLayerCount == 0
+            && runtimeLayers.contains { !$0.scripts.isEmpty }
+    }
+    public let runtimeLayers: [SceneLayer]
     public let canvasSize: SceneSize
     public let layers: [SceneLayer]
     public let textures: [String: SceneTexture]
@@ -440,13 +464,23 @@ public struct SceneRenderPlan: Equatable, Sendable {
         layers: [SceneLayer],
         textures: [String: SceneTexture],
         particleLayers: [SceneParticleLayer] = [],
-        puppets: [String: ScenePuppetModel] = [:]
+        puppets: [String: ScenePuppetModel] = [:],
+        requiresLivePlayback: Bool = false,
+        runtimeLayers: [SceneLayer]? = nil,
+        nativePlaybackIssues: [String] = [],
+        omittedLayerCount: Int = 0,
+        backgroundColor: SceneColor = SceneColor(red: 0, green: 0, blue: 0)
     ) {
+        self.nativePlaybackIssues = nativePlaybackIssues
+        self.omittedLayerCount = omittedLayerCount
+        self.backgroundColor = backgroundColor
         self.canvasSize = canvasSize
+        self.runtimeLayers = runtimeLayers ?? layers
         self.layers = layers
         self.textures = textures
         self.particleLayers = particleLayers
         self.puppets = puppets
+        self.requiresLivePlayback = requiresLivePlayback || layers.contains { !$0.scripts.isEmpty || $0.text?.script != nil }
     }
 }
 
@@ -480,12 +514,20 @@ public struct SceneRenderPlanBuilder: Sendable {
         }
         let objects = scene["objects"] as? [[String: Any]] ?? []
         let canvasSize = Self.canvasSize(from: scene)
+        let requiresLivePlayback = Self.containsLiveInput(scene)
+        var nativePlaybackIssues = Self.nativePlaybackIssues(scene: scene, objects: objects, package: package)
+        var omittedLayerCount = 0
+        var eligibleLayerCount = 0
         var layers: [SceneLayer] = []
         var textures: [String: SceneTexture] = [:]
         var particleLayers: [SceneParticleLayer] = []
 
-        for object in objects where Self.isVisible(object["visible"]) {
+        for object in objects {
+            // Scripted scenes may reveal initially hidden objects via another
+            // layer's script. Static scenes retain their previous decode budget.
+            if !requiresLivePlayback, !Self.isVisible(object["visible"]) { continue }
             if let particlePath = Self.stringValue(object["particle"]) {
+                guard Self.isVisible(object["visible"]) else { continue }
                 if let particle = Self.particleLayer(
                     from: object,
                     particlePath: particlePath,
@@ -497,6 +539,11 @@ public struct SceneRenderPlanBuilder: Sendable {
                 continue
             }
             if let imagePath = Self.stringValue(object["image"]) {
+                eligibleLayerCount += 1
+                if decodeTextures, layers.count >= maximumDecodedLayerCount {
+                    omittedLayerCount += 1
+                    continue
+                }
                 let model = try? Self.modelJSON(imagePath: imagePath, package: package)
                 if let texturePath = try resolveTexturePath(imagePath: imagePath, package: package) {
                     var texture: SceneTexture?
@@ -505,11 +552,13 @@ public struct SceneRenderPlanBuilder: Sendable {
                             texture = cachedTexture
                         } else {
                             guard let textureData = package.data(forPath: texturePath) else {
+                                omittedLayerCount += 1
                                 continue
                             }
                             do {
                                 texture = try SceneTextureDecoder().decode(data: textureData)
                             } catch {
+                                omittedLayerCount += 1
                                 continue
                             }
                             textures[texturePath] = texture
@@ -535,8 +584,15 @@ public struct SceneRenderPlanBuilder: Sendable {
                         isEffectOnly: true,
                         canvasSize: canvasSize
                     ))
+                } else {
+                    omittedLayerCount += 1
                 }
             } else if let text = Self.textLayer(from: object) {
+                eligibleLayerCount += 1
+                if decodeTextures, layers.count >= maximumDecodedLayerCount {
+                    omittedLayerCount += 1
+                    continue
+                }
                 layers.append(Self.layer(
                     from: object,
                     package: package,
@@ -547,10 +603,10 @@ public struct SceneRenderPlanBuilder: Sendable {
                     canvasSize: canvasSize
                 ))
             }
-            if decodeTextures, layers.count >= maximumDecodedLayerCount {
-                break
-            }
         }
+
+        if eligibleLayerCount > maximumDecodedLayerCount { nativePlaybackIssues.append("layer-budget") }
+        if omittedLayerCount > 0 { nativePlaybackIssues.append("missing-layers") }
 
         guard !layers.isEmpty else {
             throw SceneRenderPlanError.noRenderableLayers
@@ -570,8 +626,83 @@ public struct SceneRenderPlanBuilder: Sendable {
             layers: arrangedLayers,
             textures: textures,
             particleLayers: particleLayers,
-            puppets: puppets
+            puppets: puppets,
+            requiresLivePlayback: requiresLivePlayback,
+            runtimeLayers: objects.prefix(256).map { object in
+                Self.layer(from: object, package: package, texturePath: "", text: Self.textLayer(from: object),
+                           texture: nil, isEffectOnly: false, canvasSize: canvasSize)
+            },
+            nativePlaybackIssues: Array(Set(nativePlaybackIssues)).sorted(),
+            omittedLayerCount: omittedLayerCount,
+            backgroundColor: Self.colorValue((scene["general"] as? [String: Any])?["clearcolor"])
+                ?? SceneColor(red: 0, green: 0, blue: 0)
         )
+    }
+
+    /// Only basic image/text scenes may replace the full renderer automatically.
+    /// In particular, the presence of a script says nothing about shader/model support.
+    private static func nativePlaybackIssues(
+        scene: [String: Any], objects: [[String: Any]], package: ScenePackage
+    ) -> [String] {
+        var issues = Set<String>()
+        let general = scene["general"] as? [String: Any] ?? [:]
+        for key in ["bloom", "hdr", "cameraparallax", "camerashake"] where boolValue(unwrappedValue(general[key])) == true {
+            issues.insert(key)
+        }
+        if containsLiveInput(general) { issues.insert("scene-inputs") }
+        if objects.count > 256 { issues.insert("script-layer-budget") }
+        var ids = Set<Int>()
+        for object in objects {
+            if !ids.insert(intValue(object["id"]) ?? 0).inserted { issues.insert("duplicate-layer-id") }
+            for key in ["particle", "model", "sound", "light", "parent", "dependencies", "animationlayers"] where object[key] != nil {
+                issues.insert(key)
+            }
+            if let effects = object["effects"] as? [Any], !effects.isEmpty { issues.insert("effects") }
+            if let angles = vectorValue(object["angles"]), angles.x != 0 || angles.y != 0 { issues.insert("3d-transform") }
+            for (key, value) in object {
+                // Only the direct binding can run; scripts nested in effects,
+                // keyframe options, or unsupported properties cannot.
+                if SceneScriptBinding(rawValue: key) != nil, var property = value as? [String: Any] {
+                    property.removeValue(forKey: "script")
+                    if containsLiveInput(property) { issues.insert("unsupported-script") }
+                } else if containsLiveInput(value) { issues.insert("unsupported-script") }
+            }
+            guard let imagePath = stringValue(object["image"]) else { continue }
+            guard let model = try? modelJSON(imagePath: imagePath, package: package),
+                  let materialPath = stringValue(model["material"]),
+                  let materialData = package.data(forPath: materialPath),
+                  let material = try? JSONSerialization.jsonObject(with: materialData) as? [String: Any] else {
+                issues.insert("unresolved-material")
+                continue
+            }
+            if model["puppet"] != nil { issues.insert("puppet") }
+            let passes = material["passes"] as? [[String: Any]] ?? [material]
+            if passes.count != 1 { issues.insert("material-passes") }
+            for pass in passes {
+                if let shader = stringValue(pass["shader"]), shader != "genericimage2" { issues.insert("custom-shader") }
+                if let blending = stringValue(pass["blending"]), !["normal", "translucent"].contains(blending) {
+                    issues.insert("material-blending")
+                }
+                if let textures = pass["textures"] as? [Any], textures.count > 1 { issues.insert("material-textures") }
+                if let combos = pass["combos"] as? [String: Any], combos.values.contains(where: { (doubleValue($0) ?? 0) != 0 }) {
+                    issues.insert("material-combos")
+                }
+            }
+        }
+        return issues.sorted()
+    }
+
+    private static func containsLiveInput(_ value: Any, depth: Int = 0) -> Bool {
+        guard depth < 64 else { return false }
+        if let dictionary = value as? [String: Any] {
+            if let script = dictionary["script"] as? String, !script.isEmpty { return true }
+            return dictionary.contains { key, value in
+                key.lowercased().contains("audioprocessing") && (value as? NSNumber)?.boolValue == true
+                    || containsLiveInput(value, depth: depth + 1)
+            }
+        }
+        if let array = value as? [Any] { return array.contains { containsLiveInput($0, depth: depth + 1) } }
+        return false
     }
 
     private static func decodePuppetModels(
@@ -716,7 +847,10 @@ public struct SceneRenderPlanBuilder: Sendable {
             alphaAnimation: layer.alphaAnimation,
             puppetPath: layer.puppetPath,
             puppetAnimationID: layer.puppetAnimationID,
-            puppetRate: layer.puppetRate
+            puppetRate: layer.puppetRate,
+            scripts: layer.scripts,
+            visible: layer.visible,
+            color: layer.color
         )
     }
 
@@ -976,7 +1110,12 @@ public struct SceneRenderPlanBuilder: Sendable {
             alphaAnimation: scalarAnimation(object["alpha"], fallback: alphaValue),
             puppetPath: puppetPath,
             puppetAnimationID: puppetAnimationLayer(from: object).id,
-            puppetRate: puppetAnimationLayer(from: object).rate
+            puppetRate: puppetAnimationLayer(from: object).rate,
+            scripts: Dictionary(uniqueKeysWithValues: SceneScriptBinding.allCases.compactMap { binding in
+                textScript(from: object[binding.rawValue]).map { (binding, $0) }
+            }),
+            visible: isVisible(object["visible"]),
+            color: colorValue(object["color"]) ?? SceneColor(red: 1, green: 1, blue: 1)
         )
     }
 
@@ -1021,7 +1160,7 @@ public struct SceneRenderPlanBuilder: Sendable {
     private static func textLayer(from object: [String: Any]) -> SceneTextLayer? {
         let textObject = object["text"]
         guard let value = stringValue(unwrappedValue(textObject))?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !value.isEmpty else {
+              (!value.isEmpty || textScript(from: textObject) != nil) else {
             return nil
         }
         return SceneTextLayer(
@@ -1062,10 +1201,8 @@ public struct SceneRenderPlanBuilder: Sendable {
     }
 
     private static func scriptPropertyValue(from value: Any?) -> SceneScriptPropertyValue? {
-        if let bool = value as? Bool {
-            return .bool(bool)
-        }
         if let number = value as? NSNumber {
+            if CFGetTypeID(number) == CFBooleanGetTypeID() { return .bool(number.boolValue) }
             return .number(number.doubleValue)
         }
         if let string = value as? String {
@@ -1526,6 +1663,7 @@ public struct SceneRenderPlanBuilder: Sendable {
     }
 
     private static func colorValue(_ value: Any?) -> SceneColor? {
+        if let dictionary = value as? [String: Any] { return colorValue(dictionary["value"]) }
         let numbers = numericList(value)
         guard numbers.count >= 3 else {
             return nil

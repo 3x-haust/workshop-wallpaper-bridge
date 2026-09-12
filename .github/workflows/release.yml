@@ -57,6 +57,12 @@ jobs:
       - name: Run tests
         run: swift test
 
+      - name: Install scene renderer dependencies
+        run: brew install cmake lz4 sdl2 ffmpeg glfw glew glm mpv freetype
+
+      - name: Build pinned scene renderer
+        run: bash Scripts/build-scene-renderer.sh
+
       - name: Resolve release signing mode
         id: signing
         env:

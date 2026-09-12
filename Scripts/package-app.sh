@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT/Scripts/scene-renderer.env"
 APP_NAME="Workshop Wallpaper Bridge"
 APP_DIR="$ROOT/dist/$APP_NAME.app"
 MACOS_DIR="$APP_DIR/Contents/MacOS"
@@ -14,13 +15,13 @@ SAVER_DIR="$RESOURCES_DIR/$SAVER_NAME.saver"
 SAVER_MACOS_DIR="$SAVER_DIR/Contents/MacOS"
 SAVER_EXECUTABLE="Workshop Wallpaper Bridge Lock Screen"
 DMG_PATH="$ROOT/dist/WorkshopWallpaperBridge-macOS-arm64.dmg"
-APP_VERSION="${APP_VERSION:-1.4.1}"
-BUNDLE_VERSION="${BUNDLE_VERSION:-13}"
+APP_VERSION="${APP_VERSION:-1.5.0}"
+BUNDLE_VERSION="${BUNDLE_VERSION:-15}"
 SCENE_RENDERER_BINARY="${SCENE_RENDERER_BINARY:-}"
 SCENE_RENDERER_CONVENTIONAL_PATH="$ROOT/ExternalRenderers/wwb-scene-renderer"
 SCENE_RENDERER_BUNDLED_PATH=""
-SCENE_RENDERER_SOURCE_URL="${SCENE_RENDERER_SOURCE_URL:-https://github.com/3x-haust/wallpaperengine-mac-renderer}"
-SCENE_RENDERER_SOURCE_REF="${SCENE_RENDERER_SOURCE_REF:-b79ac590ff5ddcfdae2d26f5c3a5d289b3e4b058}"
+SCENE_RENDERER_SOURCE_URL="${SCENE_RENDERER_SOURCE_URL:-$PINNED_SCENE_RENDERER_SOURCE_URL}"
+SCENE_RENDERER_SOURCE_REF="${SCENE_RENDERER_SOURCE_REF:-$PINNED_SCENE_RENDERER_SOURCE_REF}"
 SIGN_IDENTITY="${SIGN_IDENTITY:-}"
 NOTARY_PROFILE="${NOTARY_PROFILE:-}"
 NOTARY_KEYCHAIN="${NOTARY_KEYCHAIN:-}"
@@ -124,6 +125,9 @@ bundle_scene_renderer_if_available() {
         cp "$dylib" "$RENDERERS_DIR/"
       fi
     done
+    if [ -d "$source_dir/Licenses" ]; then
+      cp -R "$source_dir/Licenses" "$RENDERER_NOTICE_DIR/"
+    fi
     if command -v install_name_tool >/dev/null 2>&1; then
       install_name_tool -add_rpath "@executable_path" "$SCENE_RENDERER_BUNDLED_PATH" 2>/dev/null || true
     fi
@@ -213,6 +217,8 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
   <string>14.0</string>
   <key>NSHighResolutionCapable</key>
   <true/>
+  <key>NSAppleEventsUsageDescription</key>
+  <string>Show the current song, album artwork and playback time from Music or Spotify in your wallpaper.</string>
 </dict>
 </plist>
 PLIST
@@ -258,7 +264,7 @@ strip_quarantine_metadata "$APP_DIR"
 assert_no_quarantine_metadata "$APP_DIR"
 if [ -n "$SIGN_IDENTITY" ]; then
   codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$MACOS_DIR/wwbctl"
-  codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$MACOS_DIR/Workshop Wallpaper Bridge"
+  codesign --force --options runtime --entitlements "$ROOT/Scripts/app.entitlements" --timestamp --sign "$SIGN_IDENTITY" "$MACOS_DIR/Workshop Wallpaper Bridge"
   if [ -n "$SCENE_RENDERER_BUNDLED_PATH" ]; then
     for dylib in "$RENDERERS_DIR"/*.dylib; do
       if [ -f "$dylib" ]; then
@@ -268,7 +274,7 @@ if [ -n "$SIGN_IDENTITY" ]; then
     codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$SCENE_RENDERER_BUNDLED_PATH"
   fi
   codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$SAVER_DIR"
-  codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$APP_DIR"
+  codesign --force --options runtime --entitlements "$ROOT/Scripts/app.entitlements" --timestamp --sign "$SIGN_IDENTITY" "$APP_DIR"
   codesign --verify --strict --verbose=2 "$SAVER_DIR"
   codesign --verify --strict --verbose=2 "$APP_DIR"
 elif [ "$REQUIRE_SIGNING" = "1" ]; then

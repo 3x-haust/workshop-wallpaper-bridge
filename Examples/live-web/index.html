@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Live interaction</title>
+<style>
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#10151f;color:#eef1f6;font:16px system-ui}#scene{position:absolute;width:100%;height:100%;touch-action:none}header{position:absolute;left:7%;top:9%;pointer-events:none}time{font-size:clamp(42px,7vw,96px);font-weight:250;letter-spacing:-.05em}p{color:#a3b0c4;line-height:1.8}#spectrum{position:absolute;bottom:8%;left:7%;width:86%;height:12%;pointer-events:none}.hint{position:absolute;right:7%;top:10%;pointer-events:none;font-size:13px}
+</style>
+<canvas id="scene"></canvas><header><time></time><p id="date"></p></header><p class="hint">Drag to rotate</p><canvas id="spectrum"></canvas>
+<script>
+'use strict';
+const canvas=document.querySelector('#scene'),gl=canvas.getContext('webgl');
+if(!gl)throw new Error('WebGL is unavailable');
+function shader(type,source){const s=gl.createShader(type);gl.shaderSource(s,source);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(s));return s;}
+const program=gl.createProgram();
+gl.attachShader(program,shader(gl.VERTEX_SHADER,`
+attribute vec3 position;attribute vec3 color;varying vec3 tint;uniform vec2 angle;uniform vec2 cursor;uniform float aspect;uniform float beat;
+void main(){vec3 p=position*(1.0+beat*0.12);float cx=cos(angle.x),sx=sin(angle.x),cy=cos(angle.y),sy=sin(angle.y);
+p=vec3(p.x,p.y*cx-p.z*sx,p.y*sx+p.z*cx);p=vec3(p.x*cy+p.z*sy,p.y,-p.x*sy+p.z*cy);
+p.xy+=cursor*0.15;float z=p.z+4.8;gl_Position=vec4(p.x*1.7/aspect,p.y*1.7,(z-1.0)*1.1,z);tint=color;}`));
+gl.attachShader(program,shader(gl.FRAGMENT_SHADER,'precision mediump float;varying vec3 tint;void main(){gl_FragColor=vec4(tint,1.0);}'));
+gl.linkProgram(program);if(!gl.getProgramParameter(program,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(program));gl.useProgram(program);
+const faces=[[[1,0,0],[[1,-1,-1],[1,1,-1],[1,1,1],[1,-1,1]]],[[0,1,0],[[-1,-1,1],[-1,1,1],[-1,1,-1],[-1,-1,-1]]],[[0,0,1],[[-1,1,-1],[-1,1,1],[1,1,1],[1,1,-1]]],[[1,1,0],[[-1,-1,1],[-1,-1,-1],[1,-1,-1],[1,-1,1]]],[[1,0,1],[[1,-1,1],[1,1,1],[-1,1,1],[-1,-1,1]]],[[0,1,1],[[-1,-1,-1],[-1,1,-1],[1,1,-1],[1,-1,-1]]]];
+const data=[];faces.forEach(([color,v])=>[0,1,2,0,2,3].forEach(i=>data.push(...v[i],...color.map(x=>0.25+x*0.55))));
+const buffer=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,buffer);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(data),gl.STATIC_DRAW);
+for(const [name,offset] of [['position',0],['color',12]]){const a=gl.getAttribLocation(program,name);gl.enableVertexAttribArray(a);gl.vertexAttribPointer(a,3,gl.FLOAT,false,24,offset);}
+const uniforms=Object.fromEntries(['angle','cursor','aspect','beat'].map(k=>[k,gl.getUniformLocation(program,k)]));
+gl.enable(gl.DEPTH_TEST);gl.clearColor(0.063,0.082,0.122,1);
+let rx=0.4,ry=0.7,down=false,lastX=0,lastY=0,mx=0,my=0,audio=Array(128).fill(0);
+canvas.addEventListener('pointerdown',e=>{down=true;lastX=e.clientX;lastY=e.clientY;canvas.setPointerCapture(e.pointerId);});
+canvas.addEventListener('pointerup',()=>down=false);canvas.addEventListener('pointercancel',()=>down=false);
+canvas.addEventListener('pointermove',e=>{mx=e.clientX/innerWidth*2-1;my=1-e.clientY/innerHeight*2;if(down){ry+=(e.clientX-lastX)*.01;rx+=(e.clientY-lastY)*.01;lastX=e.clientX;lastY=e.clientY;}});
+if(typeof wallpaperRegisterAudioListener==='function')wallpaperRegisterAudioListener(values=>audio=values);
+const bars=document.querySelector('#spectrum'),ctx=bars.getContext('2d');
+function draw(){const ratio=devicePixelRatio||1,w=Math.round(innerWidth*ratio),h=Math.round(innerHeight*ratio);if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;gl.viewport(0,0,w,h);}
+gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);gl.uniform2f(uniforms.angle,rx,ry);gl.uniform2f(uniforms.cursor,mx,my);gl.uniform1f(uniforms.aspect,w/h);gl.uniform1f(uniforms.beat,Math.min(1,Math.max(...audio.slice(0,16))));gl.drawArrays(gl.TRIANGLES,0,36);
+bars.width=Math.round(bars.clientWidth*ratio);bars.height=Math.round(bars.clientHeight*ratio);ctx.fillStyle='#9caef0';for(let i=0;i<64;i++){const value=Math.min(1,(audio[i]+audio[i+64])/2),bh=Math.max(ratio,value*bars.height);ctx.fillRect(i*bars.width/64,bars.height-bh,bars.width/64*.55,bh);}
+requestAnimationFrame(draw);}
+function clock(){const now=new Date();document.querySelector('time').textContent=now.toLocaleTimeString([], {hour12:false});document.querySelector('#date').textContent=now.toLocaleDateString([], {weekday:'long',month:'long',day:'numeric'});}clock();setInterval(clock,1000);draw();
+</script>
+</html>

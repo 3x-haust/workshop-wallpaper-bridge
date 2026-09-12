@@ -1,0 +1,236 @@
+{
+  "general": {
+    "orthogonalprojection": {
+      "width": 1280,
+      "height": 720
+    }
+  },
+  "objects": [
+    {
+      "id": 1,
+      "name": "Clock",
+      "origin": "640 530 0",
+      "size": "900 130",
+      "pointsize": 92,
+      "text": {
+        "value": "00:00:00",
+        "script": "export function update(value) { return new Date().toLocaleTimeString('en-GB', {hour12:false}); }"
+      }
+    },
+    {
+      "id": 2,
+      "name": "Cursor",
+      "origin": {
+        "value": "640 300 0",
+        "script": "export function update(value) { return input.cursorWorldPosition; }"
+      },
+      "size": "160 80",
+      "pointsize": 48,
+      "text": "✦",
+      "color": "0.6 0.75 1"
+    },
+    {
+      "id": 3,
+      "name": "Click count",
+      "origin": "640 360 0",
+      "size": "500 100",
+      "pointsize": 36,
+      "text": {
+        "value": "Click here · 0",
+        "script": "let count=0; export function cursorClick(event) { count++; thisLayer.text='Click here · '+count; }"
+      }
+    },
+    {
+      "id": 10,
+      "name": "Band 1",
+      "origin": "190 150 0",
+      "size": "50 200",
+      "pointsize": 40,
+      "text": {
+        "value": "▁",
+        "script": "const audio=engine.registerAudioBuffers(engine.AUDIO_RESOLUTION_16); export function update(value) { return '▁▂▃▄▅▆▇█'[Math.min(7,Math.floor(audio.average[0]*8))]; }"
+      },
+      "color": "0.6 0.75 1"
+    },
+    {
+      "id": 11,
+      "name": "Band 2",
+      "origin": "250 150 0",
+      "size": "50 200",
+      "pointsize": 40,
+      "text": {
+        "value": "▁",
+        "script": "const audio=engine.registerAudioBuffers(engine.AUDIO_RESOLUTION_16); export function update(value) { return '▁▂▃▄▅▆▇█'[Math.min(7,Math.floor(audio.average[1]*8))]; }"
+      },
+      "color": "0.6 0.75 1"
+    },
+    {
+      "id": 12,
+      "name": "Band 3",
+      "origin": "310 150 0",
+      "size": "50 200",
+      "pointsize": 40,
+      "text": {
+        "value": "▁",
+        "script": "const audio=engine.registerAudioBuffers(engine.AUDIO_RESOLUTION_16); export function update(value) { return '▁▂▃▄▅▆▇█'[Math.min(7,Math.floor(audio.average[2]*8))]; }"
+      },
+      "color": "0.6 0.75 1"
+    },
+    {
+      "id": 13,
+      "name": "Band 4",
+      "origin": "370 150 0",
+      "size": "50 200",
+      "pointsize": 40,
+      "text": {
+        "value": "▁",
+        "script": "const audio=engine.registerAudioBuffers(engine.AUDIO_RESOLUTION_16); export function update(value) { return '▁▂▃▄▅▆▇█'[Math.min(7,Math.floor(audio.average[3]*8))]; }"
+      },
+      "color": "0.6 0.75 1"
+    },
+    {
+      "id": 14,
+      "name": "Band 5",
+      "origin": "430 150 0",
+      "size": "50 200",
+      "pointsize": 40,
+      "text": {
+        "value": "▁",
+        "script": "const audio=engine.registerAudioBuffers(engine.AUDIO_RESOLUTION_16); export function update(value) { return '▁▂▃▄▅▆▇█'[Math.min(7,Math.floor(audio.average[4]*8))]; }"
+      },
+      "color": "0.6 0.75 1"
+    },
+    {
+      "id": 15,
+      "name": "Band 6",
+      "origin": "490 150 0",
+      "size": "50 200",
+      "pointsize": 40,
+      "text": {
+        "value": "▁",
+        "script": "const audio=engine.registerAudioBuffers(engine.AUDIO_RESOLUTION_16); export function update(value) { return '▁▂▃▄▅▆▇█'[Math.min(7,Math.floor(audio.average[5]*8))]; }"
+      },
+      "color": "0.6 0.75 1"
+    },
+    {
+      "id": 16,
+      "name": "Band 7",
+      "origin": "550 150 0",
+      "size": "50 200",
+      "pointsize": 40,
+      "text": {
+        "value": "▁",
+        "script": "const audio=engine.registerAudioBuffers(engine.AUDIO_RESOLUTION_16); export function update(value) { return '▁▂▃▄▅▆▇█'[Math.min(7,Math.floor(audio.average[6]*8))]; }"
+      },
+      "color": "0.6 0.75 1"
+    },
+    {
+      "id": 17,
+      "name": "Band 8",
+      "origin": "610 150 0",
+      "size": "50 200",
+      "pointsize": 40,
+      "text": {
+        "value": "▁",
+        "script": "const audio=engine.registerAudioBuffers(engine.AUDIO_RESOLUTION_16); export function update(value) { return '▁▂▃▄▅▆▇█'[Math.min(7,Math.floor(audio.average[7]*8))]; }"
+      },
+      "color": "0.6 0.75 1"
+    },
+    {
+      "id": 18,
+      "name": "Band 9",
+      "origin": "670 150 0",
+      "size": "50 200",
+      "pointsize": 40,
+      "text": {
+        "value": "▁",
+        "script": "const audio=engine.registerAudioBuffers(engine.AUDIO_RESOLUTION_16); export function update(value) { return '▁▂▃▄▅▆▇█'[Math.min(7,Math.floor(audio.average[8]*8))]; }"
+      },
+      "color": "0.6 0.75 1"
+    },
+    {
+      "id": 19,
+      "name": "Band 10",
+      "origin": "730 150 0",
+      "size": "50 200",
+      "pointsize": 40,
+      "text": {
+        "value": "▁",
+        "script": "const audio=engine.registerAudioBuffers(engine.AUDIO_RESOLUTION_16); export function update(value) { return '▁▂▃▄▅▆▇█'[Math.min(7,Math.floor(audio.average[9]*8))]; }"
+      },
+      "color": "0.6 0.75 1"
+    },
+    {
+      "id": 20,
+      "name": "Band 11",
+      "origin": "790 150 0",
+      "size": "50 200",
+      "pointsize": 40,
+      "text": {
+        "value": "▁",
+        "script": "const audio=engine.registerAudioBuffers(engine.AUDIO_RESOLUTION_16); export function update(value) { return '▁▂▃▄▅▆▇█'[Math.min(7,Math.floor(audio.average[10]*8))]; }"
+      },
+      "color": "0.6 0.75 1"
+    },
+    {
+      "id": 21,
+      "name": "Band 12",
+      "origin": "850 150 0",
+      "size": "50 200",
+      "pointsize": 40,
+      "text": {
+        "value": "▁",
+        "script": "const audio=engine.registerAudioBuffers(engine.AUDIO_RESOLUTION_16); export function update(value) { return '▁▂▃▄▅▆▇█'[Math.min(7,Math.floor(audio.average[11]*8))]; }"
+      },
+      "color": "0.6 0.75 1"
+    },
+    {
+      "id": 22,
+      "name": "Band 13",
+      "origin": "910 150 0",
+      "size": "50 200",
+      "pointsize": 40,
+      "text": {
+        "value": "▁",
+        "script": "const audio=engine.registerAudioBuffers(engine.AUDIO_RESOLUTION_16); export function update(value) { return '▁▂▃▄▅▆▇█'[Math.min(7,Math.floor(audio.average[12]*8))]; }"
+      },
+      "color": "0.6 0.75 1"
+    },
+    {
+      "id": 23,
+      "name": "Band 14",
+      "origin": "970 150 0",
+      "size": "50 200",
+      "pointsize": 40,
+      "text": {
+        "value": "▁",
+        "script": "const audio=engine.registerAudioBuffers(engine.AUDIO_RESOLUTION_16); export function update(value) { return '▁▂▃▄▅▆▇█'[Math.min(7,Math.floor(audio.average[13]*8))]; }"
+      },
+      "color": "0.6 0.75 1"
+    },
+    {
+      "id": 24,
+      "name": "Band 15",
+      "origin": "1030 150 0",
+      "size": "50 200",
+      "pointsize": 40,
+      "text": {
+        "value": "▁",
+        "script": "const audio=engine.registerAudioBuffers(engine.AUDIO_RESOLUTION_16); export function update(value) { return '▁▂▃▄▅▆▇█'[Math.min(7,Math.floor(audio.average[14]*8))]; }"
+      },
+      "color": "0.6 0.75 1"
+    },
+    {
+      "id": 25,
+      "name": "Band 16",
+      "origin": "1090 150 0",
+      "size": "50 200",
+      "pointsize": 40,
+      "text": {
+        "value": "▁",
+        "script": "const audio=engine.registerAudioBuffers(engine.AUDIO_RESOLUTION_16); export function update(value) { return '▁▂▃▄▅▆▇█'[Math.min(7,Math.floor(audio.average[15]*8))]; }"
+      },
+      "color": "0.6 0.75 1"
+    }
+  ]
+}

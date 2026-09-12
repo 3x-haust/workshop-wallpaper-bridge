@@ -5,6 +5,27 @@ import WorkshopWallpaperCore
 
 @MainActor
 final class AppViewModelTests: XCTestCase {
+    func testInteractivePlayEnablesInputAndRemembersChoiceAcrossLaunches() throws {
+        let defaults = try makeUserDefaults()
+        let root = try makeTempDirectory()
+        let player = InteractionTestPlayer()
+        let model = AppViewModel(store:LibraryStore(root:root),loginItemController:MockLoginItemController(),wallpaperPlayer:player,userDefaults:defaults)
+        XCTAssertFalse(model.wallpaperInteractionEnabled)
+        let asset = WallpaperAsset(id:"web",title:"Interactive",kind:.web,supportStatus:.playable,source:.localSteamWorkshop,
+            projectDirectory:root.path,entrypoint:root.appending(path:"index.html").path,thumbnail:nil,workshopId:nil,redistributionAllowed:false,issues:[])
+        model.libraryAssets=[asset]
+        model.selectLibraryAssets([asset.id])
+        model.playSelectedInteractively()
+        XCTAssertTrue(player.interactionEnabled)
+        XCTAssertEqual(player.playedID,asset.id)
+        let restored = AppViewModel(store:LibraryStore(root:root),loginItemController:MockLoginItemController(),wallpaperPlayer:player,userDefaults:defaults)
+        XCTAssertTrue(restored.wallpaperInteractionEnabled)
+        restored.wallpaperInteractionEnabled=false
+        let disabled = AppViewModel(store:LibraryStore(root:root),loginItemController:MockLoginItemController(),wallpaperPlayer:player,userDefaults:defaults)
+        XCTAssertFalse(disabled.wallpaperInteractionEnabled)
+        XCTAssertFalse(player.interactionEnabled)
+    }
+
     func testImportSelectedImportsMultipleScannedAssets() async throws {
         // Given
         let sourceRoot = try makeTempDirectory()
@@ -1037,6 +1058,17 @@ private final class MockUpdateURLOpener: UpdateURLOpening {
         openedURLs.append(url)
         return true
     }
+}
+
+@MainActor
+private final class InteractionTestPlayer: WallpaperPlaying {
+    var interactionEnabled=false
+    var playedID: String?
+    func play(asset:WallpaperAsset,autoPauseWhenCovered:Bool,displayMode:WallpaperDisplayMode,audioEnabled:Bool?,audioVolume:Double?) throws { playedID=asset.id }
+    func setInteractionEnabled(_ enabled:Bool) { interactionEnabled=enabled }
+    func stop() {}
+    func setDisplayMode(_ mode:WallpaperDisplayMode) {}
+    func setAutoPauseWhenCovered(_ enabled:Bool) {}
 }
 
 private enum TestError: Error {

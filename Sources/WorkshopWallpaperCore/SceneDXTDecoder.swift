@@ -10,6 +10,29 @@ struct SceneDXTDecoder: Sendable {
 
     let format: Format
 
+    /// Decode one bounded block at a time into a reduced sheet. Never allocates
+    /// a full-resolution RGBA copy of a large sprite atlas.
+    func decodeReduced(_ data: Data, width: Int, height: Int, step: Int) throws -> Data {
+        guard width > 0, height > 0, width <= 16384, height <= 16384,
+              step >= 4, step <= 16384, step % 4 == 0 else { throw SceneTextureError.invalidDimensions }
+        let blocksWide = (width + 3) / 4, blocksHigh = (height + 3) / 4
+        let blockSize = format == .dxt1 ? 8 : 16
+        guard data.count >= blocksWide * blocksHigh * blockSize else { throw SceneTextureError.truncatedTexture }
+        let outputWidth = (width + step - 1) / step, outputHeight = (height + step - 1) / step
+        guard outputWidth * outputHeight <= 18_000_000 else { throw SceneTextureError.textureTooLargeForSoftwareDecode(width, height) }
+        var output = Data(count: outputWidth * outputHeight * 4)
+        var block = [UInt8](repeating: 0, count: 64)
+        for y in 0..<outputHeight {
+            for x in 0..<outputWidth {
+                let offset = ((y * step / 4) * blocksWide + x * step / 4) * blockSize
+                try decodeBlock(data: data, offset: offset, into: &block, width: 4, height: 4, blockX: 0, blockY: 0)
+                let destination = (y * outputWidth + x) * 4
+                for channel in 0..<4 { output[destination + channel] = block[channel] }
+            }
+        }
+        return output
+    }
+
     func decode(_ data: Data, width: Int, height: Int) throws -> Data {
         guard width > 0, height > 0 else {
             throw SceneTextureError.invalidDimensions
