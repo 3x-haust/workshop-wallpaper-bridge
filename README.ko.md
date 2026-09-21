@@ -92,7 +92,7 @@ Wallpaper Engine 프로젝트를 쓰는 경우:
 
 설정 창은 **Library** 탭(가져오기, Mac 라이브러리, Display mode, **Play on Desktop** / **Remove**)과 **Settings** 탭(재생 토글, Audio, Scene Engine Assets, Screen Saver, Language)으로 나뉩니다. **Convert Video**와 **Set Still Wallpaper**는 라이브러리 목록의 우클릭 컨텍스트 메뉴와 **Play on Desktop** 옆 **More**("⋯") 메뉴에서 사용할 수 있으며, 항상 보이는 버튼으로 노출되지 않습니다.
 
-Settings 탭의 **Language** 선택기로 앱 UI 텍스트를 **System**, **한국어**, **English** 사이에서 전환할 수 있습니다. 앱을 재시작하지 않아도 즉시 적용되며, 버튼·섹션 제목·안내 문구 등 정적 UI 문구만 번역 대상이므로 앱 실행 중 생성되는 상태 메시지는 영어로 표시될 수 있습니다.
+Settings 탭의 **Language** 선택기로 앱 UI 텍스트를 **System**, **한국어**, **简体中文**, **English** 사이에서 전환할 수 있습니다. 앱을 재시작하지 않아도 즉시 적용되며, 버튼·섹션 제목·안내 문구 등 정적 UI 문구만 번역 대상이므로 앱 실행 중 생성되는 상태 메시지는 영어로 표시될 수 있습니다. **System**을 선택하면 macOS 언어가 한국어 또는 간체 중국어일 때 해당 번역을 쓰고, 그 외 언어는 영어로 표시됩니다.
 
 라이브러리 순환(로테이션):
 

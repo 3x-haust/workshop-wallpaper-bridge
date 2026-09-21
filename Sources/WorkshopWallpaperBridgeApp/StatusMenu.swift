@@ -5,47 +5,47 @@ struct StatusMenu: View {
     @ObservedObject var model: AppViewModel
 
     var body: some View {
-        Button("Open Settings") {
+        Button(model.L("menu.openSettings")) {
             SettingsWindowCoordinator.shared.show(model: model)
         }
         Divider()
         Toggle(model.L("settings.interaction.toggle"), isOn: $model.wallpaperInteractionEnabled)
-        Toggle("Open at Login", isOn: $model.launchAtLogin)
-        Toggle("Auto-pause Behind Apps", isOn: $model.autoPauseWhenCovered)
-        Toggle("Animate Screen Saver", isOn: $model.lockScreenAnimationEnabled)
-        Toggle("Auto-check Updates", isOn: $model.automaticallyCheckForUpdates)
-        Button("Check for Updates") {
+        Toggle(model.L("settings.openAtLogin"), isOn: $model.launchAtLogin)
+        Toggle(model.L("menu.autoPause"), isOn: $model.autoPauseWhenCovered)
+        Toggle(model.L("settings.animateScreenSaver"), isOn: $model.lockScreenAnimationEnabled)
+        Toggle(model.L("settings.autoCheckUpdates"), isOn: $model.automaticallyCheckForUpdates)
+        Button(model.L("menu.checkForUpdates")) {
             model.checkForUpdates()
         }
         .disabled(model.isCheckingForUpdates)
         if model.availableUpdate != nil {
-            Button("Download Update") {
+            Button(model.L("settings.downloadUpdate")) {
                 model.openAvailableUpdate()
             }
         }
-        Button("Open Login Items Settings") {
+        Button(model.L("menu.openLoginItems")) {
             model.openLoginItemsSettings()
         }
-        Button("Open Screen Saver Settings") {
+        Button(model.L("menu.openScreenSaverSettings")) {
             model.openScreenSaverSettings()
         }
-        Button("Stop Playback") {
+        Button(model.L("menu.stopPlayback")) {
             model.stopPlayback()
         }
         Divider()
-        Toggle("Rotate Library", isOn: $model.rotationEnabled)
-        Toggle("Shuffle Rotation", isOn: $model.rotationShuffle)
-        Button("Next Wallpaper") {
+        Toggle(model.L("library.rotate"), isOn: $model.rotationEnabled)
+        Toggle(model.L("menu.shuffleRotation"), isOn: $model.rotationShuffle)
+        Button(model.L("menu.nextWallpaper")) {
             model.nextWallpaper()
         }
         .disabled(!model.rotationEnabled)
-        Picker("Rotate Every", selection: $model.rotationInterval) {
+        Picker(model.L("menu.rotateEvery"), selection: $model.rotationInterval) {
             ForEach(AppViewModel.rotationIntervalOptions, id: \.seconds) { option in
-                Text(option.label).tag(option.seconds)
+                Text(model.L(option.key)).tag(option.seconds)
             }
         }
         Divider()
-        Button("Quit") {
+        Button(model.L("menu.quit")) {
             NSApp.terminate(nil)
         }
     }

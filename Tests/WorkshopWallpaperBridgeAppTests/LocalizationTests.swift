@@ -62,4 +62,42 @@ final class LocalizationTests: XCTestCase {
             "설정"
         )
     }
+
+    func testSystemLanguageMapsKoreanAndSimplifiedChineseOntoBundledTables() {
+        XCTAssertEqual(AppLanguage.bundledLanguageCode(forPreferredLanguages: ["ko-KR"]), "ko")
+        XCTAssertEqual(AppLanguage.bundledLanguageCode(forPreferredLanguages: ["zh-Hans-CN"]), "zh-Hans")
+        XCTAssertEqual(AppLanguage.bundledLanguageCode(forPreferredLanguages: ["zh-CN"]), "zh-Hans")
+        XCTAssertEqual(AppLanguage.bundledLanguageCode(forPreferredLanguages: ["zh-SG"]), "zh-Hans")
+        XCTAssertEqual(AppLanguage.bundledLanguageCode(forPreferredLanguages: ["zh"]), "zh-Hans")
+        XCTAssertEqual(AppLanguage.bundledLanguageCode(forPreferredLanguages: ["zh-Hant-TW"]), "en")
+        XCTAssertEqual(AppLanguage.bundledLanguageCode(forPreferredLanguages: ["zh-TW"]), "en")
+        XCTAssertEqual(AppLanguage.bundledLanguageCode(forPreferredLanguages: ["en-US"]), "en")
+        XCTAssertEqual(AppLanguage.bundledLanguageCode(forPreferredLanguages: ["fr-FR"]), "en")
+        XCTAssertEqual(AppLanguage.bundledLanguageCode(forPreferredLanguages: []), "en")
+    }
+
+    func testLocalizationTablesShareTheSameKeys() throws {
+        let tables = ["en", "ko", "zh-Hans"]
+        let keySets = try tables.map { language -> (String, Set<String>) in
+            let contents = try String(
+                contentsOfFile: "Sources/WorkshopWallpaperBridgeApp/Resources/\(language).lproj/Localizable.strings"
+            )
+            return (language, localizationKeys(in: contents))
+        }
+        let englishKeys = try XCTUnwrap(keySets.first?.1)
+        XCTAssertFalse(englishKeys.isEmpty)
+        for (language, keys) in keySets.dropFirst() {
+            XCTAssertEqual(keys, englishKeys, "\(language).lproj is missing or has extra keys")
+        }
+        XCTAssertTrue(englishKeys.contains("settings.language.simplifiedChinese"))
+    }
+
+    private func localizationKeys(in contents: String) -> Set<String> {
+        let pattern = #"^\"([^\"]+)\"\s*="#
+        let regex = try! NSRegularExpression(pattern: pattern, options: [.anchorsMatchLines])
+        let range = NSRange(contents.startIndex..<contents.endIndex, in: contents)
+        return Set(regex.matches(in: contents, range: range).compactMap { match in
+            Range(match.range(at: 1), in: contents).map { String(contents[$0]) }
+        })
+    }
 }

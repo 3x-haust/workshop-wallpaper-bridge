@@ -9,9 +9,8 @@ final class ScreenSaverFeatureTests: XCTestCase {
     }
 
     func testScreenSaverControlsUseScreenSaverLanguage() throws {
-        // Settings-tab controls now source their labels from Localizable.strings
-        // rather than a string literal in Swift source (see AppViewModel.L(_:)),
-        // so check the English table alongside the still-literal StatusMenu/AppViewModel copy.
+        // Settings-tab and menu-bar controls source their labels from
+        // Localizable.strings rather than string literals in Swift source.
         let settingsTab = try String(contentsOfFile: "Sources/WorkshopWallpaperBridgeApp/SettingsTabView.swift")
         let localizableEn = try String(
             contentsOfFile: "Sources/WorkshopWallpaperBridgeApp/Resources/en.lproj/Localizable.strings"
@@ -21,7 +20,7 @@ final class ScreenSaverFeatureTests: XCTestCase {
 
         XCTAssertTrue(settingsTab.contains("settings.animateScreenSaver"))
         XCTAssertTrue(localizableEn.contains("\"settings.animateScreenSaver\" = \"Animate Screen Saver\";"))
-        XCTAssertTrue(statusMenu.contains("Animate Screen Saver"))
+        XCTAssertTrue(statusMenu.contains("settings.animateScreenSaver"))
         XCTAssertTrue(viewModel.contains("Installed and selected Workshop Wallpaper Bridge Screen Saver"))
         XCTAssertFalse(statusMenu.contains("Animate Lock Screen"))
         XCTAssertFalse(viewModel.contains("Animated Lock Screen"))
@@ -39,9 +38,10 @@ final class ScreenSaverFeatureTests: XCTestCase {
         XCTAssertTrue(localizableEn.contains("\"settings.scene.choose\" = \"Choose Assets Folder...\";"))
         XCTAssertTrue(settingsTab.contains("model.chooseSceneAssetsFolder()"))
         XCTAssertTrue(settingsTab.contains("model.clearSceneAssetsFolder()"))
-        XCTAssertTrue(viewModel.contains("steamapps/common/wallpaper_engine/assets"))
-        XCTAssertTrue(viewModel.contains("materials/"))
-        XCTAssertTrue(viewModel.contains("shaders/"))
+        XCTAssertTrue(localizableEn.contains("steamapps/common/wallpaper_engine/assets"))
+        XCTAssertTrue(localizableEn.contains("materials/"))
+        XCTAssertTrue(localizableEn.contains("shaders/"))
+        XCTAssertTrue(viewModel.contains("settings.scene.status.invalid"))
     }
 
     func testScreenSaverViewShowsFallbackInsteadOfBlackOnlyContent() throws {

@@ -31,6 +31,12 @@
 "library.rotate.shuffle" = "무작위 재생";
 "library.rotate.every" = "간격";
 "library.rotate.next" = "다음";
+"library.rotate.interval.30s" = "30초";
+"library.rotate.interval.1m" = "1분";
+"library.rotate.interval.5m" = "5분";
+"library.rotate.interval.15m" = "15분";
+"library.rotate.interval.30m" = "30분";
+"library.rotate.interval.1h" = "1시간";
 
 /* Library tab: actions */
 "library.play" = "데스크톱에서 재생";
@@ -65,14 +71,25 @@
 /* Settings tab: scene engine assets */
 "settings.scene.title" = "Scene Engine Assets";
 "settings.scene.choose" = "Assets 폴더 선택...";
+"settings.scene.choose.message" = "Wallpaper Engine assets 폴더의 내용을 선택하세요.";
 "settings.scene.reset" = "초기화";
 "settings.scene.help.title" = "Scene Engine Assets 안내";
 "settings.scene.help.body" = "Windows에 설치된 steamapps/common/wallpaper_engine/assets 폴더의 내용을 복사하세요.";
+"settings.scene.status.unset" = "설정되지 않았습니다. 장면 렌더러는 기본 app-support assets 폴더가 있으면 그것을 사용합니다.";
+"settings.scene.status.ready" = "Scene Engine assets 준비됨: %@";
+"settings.scene.status.incomplete" = "Scene Engine assets 폴더가 없거나 불완전합니다: %@";
+"settings.scene.status.envReady" = "WWB_SCENE_ENGINE_ASSETS_DIR 사용 중: %@";
+"settings.scene.status.envIncomplete" = "WWB_SCENE_ENGINE_ASSETS_DIR가 설정되어 있지만 assets 폴더가 없거나 불완전합니다.";
+"settings.scene.status.invalid" = "Wallpaper Engine assets 폴더로 보이지 않습니다. materials/와 shaders/가 있어야 합니다. 상위 폴더가 아니라 steamapps/common/wallpaper_engine/assets의 내용을 복사하세요.";
+"settings.scene.status.copyFailed" = "Scene Engine assets를 app support로 복사하지 못했습니다: %@";
+"settings.scene.status.copied" = "Scene Engine assets를 app support로 복사했습니다.";
+"settings.scene.status.reset" = "Scene Engine assets 폴더를 기본 경로로 되돌렸습니다.";
 
 /* Settings tab: language */
 "settings.language.title" = "언어";
 "settings.language.system" = "시스템";
 "settings.language.korean" = "한국어";
+"settings.language.simplifiedChinese" = "简体中文";
 "settings.language.english" = "English";
 "settings.language.help.title" = "언어 안내";
 "settings.language.help.body" = "변경 사항은 이 창에 즉시 적용됩니다. 앱 실행 중 생성되는 상태 메시지는 영어로 표시될 수 있습니다.";
@@ -97,3 +114,15 @@
 "web.openExternal" = "%@ 브라우저에서 열기";
 "settings.media.toggle" = "음악 정보 표시";
 "settings.media.help" = "Music·Spotify의 곡명, 앨범 표지와 재생 시간을 표시합니다. macOS 자동화 권한이 필요하며, Spotify 표지는 이미지 서비스에서 불러옵니다.";
+
+/* Menu bar */
+"menu.openSettings" = "설정 열기";
+"menu.autoPause" = "다른 앱에 가려지면 자동 일시정지";
+"menu.checkForUpdates" = "업데이트 확인";
+"menu.openLoginItems" = "로그인 항목 설정 열기";
+"menu.openScreenSaverSettings" = "화면 보호기 설정 열기";
+"menu.stopPlayback" = "재생 정지";
+"menu.shuffleRotation" = "무작위 순환";
+"menu.nextWallpaper" = "다음 월페이퍼";
+"menu.rotateEvery" = "순환 간격";
+"menu.quit" = "종료";
