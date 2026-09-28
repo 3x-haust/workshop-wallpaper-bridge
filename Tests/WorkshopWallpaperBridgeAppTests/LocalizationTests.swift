@@ -53,13 +53,72 @@ final class LocalizationTests: XCTestCase {
             resourceURL: resourcesURL
         )
         let resolved = try XCTUnwrap(Localization.resolveResourceBundle(candidates: candidates))
-        let localizedBundle = try XCTUnwrap(
-            resolved.path(forResource: "ko", ofType: "lproj").flatMap(Bundle.init(path:))
-        )
+        let localizedBundle = try XCTUnwrap(Localization.languageBundle(for: "ko", in: resolved))
 
         XCTAssertEqual(
             localizedBundle.localizedString(forKey: "tab.settings", value: nil, table: nil),
             "설정"
+        )
+    }
+
+    @MainActor
+    func testPackagedResourceBundleResolvesSimplifiedChineseStringsWithoutPreferredLocale() throws {
+        let fileManager = FileManager.default
+        let temporaryDirectory = fileManager.temporaryDirectory
+            .appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        defer { try? fileManager.removeItem(at: temporaryDirectory) }
+
+        let resourcesURL = temporaryDirectory.appending(path: "Contents/Resources", directoryHint: .isDirectory)
+        let bundleURL = resourcesURL.appending(
+            path: "WorkshopWallpaperBridge_WorkshopWallpaperBridgeApp.bundle",
+            directoryHint: .isDirectory
+        )
+        let chineseURL = bundleURL.appending(path: "Contents/Resources/zh-Hans.lproj", directoryHint: .isDirectory)
+        try fileManager.createDirectory(at: chineseURL, withIntermediateDirectories: true)
+        try "\"tab.library\" = \"资料库\";\n\"menu.openSettings\" = \"打开设置\";\n".write(
+            to: chineseURL.appending(path: "Localizable.strings"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let candidates = Localization.resourceBundleCandidates(
+            bundleURL: temporaryDirectory,
+            resourceURL: resourcesURL
+        )
+        let resolved = try XCTUnwrap(Localization.resolveResourceBundle(candidates: candidates))
+        let localizedBundle = try XCTUnwrap(Localization.languageBundle(for: "zh-Hans", in: resolved))
+
+        XCTAssertEqual(
+            localizedBundle.localizedString(forKey: "tab.library", value: nil, table: nil),
+            "资料库"
+        )
+        XCTAssertEqual(
+            localizedBundle.localizedString(forKey: "menu.openSettings", value: nil, table: nil),
+            "打开设置"
+        )
+    }
+
+    @MainActor
+    func testModuleResourceBundleResolvesSimplifiedChineseTable() {
+        XCTAssertEqual(Localization.string("tab.library", language: .simplifiedChinese), "资料库")
+        XCTAssertEqual(Localization.string("menu.openSettings", language: .simplifiedChinese), "打开设置")
+        XCTAssertEqual(Localization.string("menu.quit", language: .simplifiedChinese), "退出")
+        XCTAssertEqual(Localization.string("menu.stopPlayback", language: .simplifiedChinese), "停止播放")
+        XCTAssertNotEqual(Localization.string("tab.library", language: .english), "资料库")
+    }
+
+    @MainActor
+    func testModuleResourceBundleShipsSimplifiedChineseLproj() throws {
+        let resolved = Localization.resolveResourceBundle(candidates: Localization.resourceBundleCandidates())
+            ?? Bundle.module
+        let strings = try XCTUnwrap(
+            resolved.resourceURL?
+                .appending(path: "zh-Hans.lproj", directoryHint: .isDirectory)
+                .appending(path: "Localizable.strings")
+        )
+        XCTAssertTrue(
+            FileManager.default.fileExists(atPath: strings.path),
+            "zh-Hans.lproj/Localizable.strings must be present in the SwiftPM resource bundle"
         )
     }
 

@@ -96,18 +96,31 @@ enum Localization {
         candidates.lazy.compactMap(Bundle.init(url:)).first
     }
 
+    /// Resolves `{code}.lproj`. Foundation's `path(forResource:ofType:)` can
+    /// miss hyphenated codes such as `zh-Hans` when that locale is not preferred.
+    static func languageBundle(for code: String, in bundle: Bundle) -> Bundle? {
+        if let path = bundle.path(forResource: code, ofType: "lproj"),
+           let languageBundle = Bundle(path: path) {
+            return languageBundle
+        }
+        guard let resourceURL = bundle.resourceURL else {
+            return nil
+        }
+        let candidate = resourceURL.appending(path: "\(code).lproj", directoryHint: .isDirectory)
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: candidate.path, isDirectory: &isDirectory),
+              isDirectory.boolValue else {
+            return nil
+        }
+        return Bundle(url: candidate)
+    }
+
     private static func bundle(for language: AppLanguage) -> Bundle {
         let code = language.resolvedLanguageCode
         if let cached = bundleCache[code] {
             return cached
         }
-        let resolved: Bundle
-        if let path = resourceBundle.path(forResource: code, ofType: "lproj"),
-           let languageBundle = Bundle(path: path) {
-            resolved = languageBundle
-        } else {
-            resolved = resourceBundle
-        }
+        let resolved = languageBundle(for: code, in: resourceBundle) ?? resourceBundle
         bundleCache[code] = resolved
         return resolved
     }
