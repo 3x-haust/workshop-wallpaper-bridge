@@ -485,7 +485,10 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(
             atPath: appSupportAssetsDirectory.appending(path: "materials/util/composelayer.json").path
         ))
-        XCTAssertTrue(model.sceneAssetsStatus.contains("ready"))
+        XCTAssertEqual(
+            model.sceneAssetsStatus,
+            String(format: model.L("settings.scene.status.ready"), appSupportAssetsDirectory.path)
+        )
     }
 
     func testInvalidSceneAssetsFolderIsRejectedWithoutChangingPersistedValue() throws {
@@ -518,7 +521,7 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertEqual(model.sceneAssetsDirectory, appSupportAssetsDirectory.path)
         XCTAssertEqual(defaults.string(forKey: "sceneEngineAssetsDirectory"), appSupportAssetsDirectory.path)
         XCTAssertEqual(SceneEngineRendererConfiguration.assetsDirectoryURL(environment: [:])?.path, appSupportAssetsDirectory.path)
-        XCTAssertTrue(model.status.contains("does not look like a Wallpaper Engine assets folder"))
+        XCTAssertEqual(model.status, model.L("settings.scene.status.invalid"))
         XCTAssertTrue(model.status.contains("materials/"))
         XCTAssertTrue(model.status.contains("shaders/"))
     }
@@ -583,7 +586,7 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertEqual(model.sceneAssetsDirectory, "")
         XCTAssertNil(defaults.string(forKey: "sceneEngineAssetsDirectory"))
         XCTAssertNil(SceneEngineRendererConfiguration.overrideAssetsPath)
-        XCTAssertTrue(model.sceneAssetsStatus.contains("Not set"))
+        XCTAssertEqual(model.sceneAssetsStatus, model.L("settings.scene.status.unset"))
     }
 
     func testSceneAssetsEnvironmentOverrideWinsOverUserPreference() throws {
@@ -716,11 +719,20 @@ final class AppViewModelTests: XCTestCase {
         let english = model.L("tab.library")
         model.language = .korean
         let korean = model.L("tab.library")
+        model.language = .simplifiedChinese
+        let chinese = model.L("tab.library")
 
         // Then
         XCTAssertEqual(english, "Library")
         XCTAssertEqual(korean, "라이브러리")
+        XCTAssertEqual(chinese, "资料库")
         XCTAssertNotEqual(english, korean)
+        XCTAssertNotEqual(english, chinese)
+
+        model.language = .simplifiedChinese
+        XCTAssertEqual(model.L("menu.openSettings"), "打开设置")
+        XCTAssertEqual(model.L("menu.quit"), "退出")
+        XCTAssertEqual(model.L("menu.stopPlayback"), "停止播放")
     }
 
     func testInitRestoresLockScreenAnimationPreferenceWithoutInstalling() throws {

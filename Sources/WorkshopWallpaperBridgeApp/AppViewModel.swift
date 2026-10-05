@@ -341,16 +341,16 @@ final class AppViewModel: ObservableObject {
            !envPath.isEmpty {
             let envURL = URL(filePath: envPath).standardizedFileURL
             return SceneEngineRendererConfiguration.isValidAssetsDirectory(envURL)
-                ? "Using WWB_SCENE_ENGINE_ASSETS_DIR: \(envURL.path)"
-                : "WWB_SCENE_ENGINE_ASSETS_DIR is set, but the assets folder is missing or incomplete."
+                ? String(format: L("settings.scene.status.envReady"), envURL.path)
+                : L("settings.scene.status.envIncomplete")
         }
         guard !sceneAssetsDirectory.isEmpty else {
-            return "Not set. The scene renderer will use the default app-support assets folder if it exists."
+            return L("settings.scene.status.unset")
         }
         let url = URL(filePath: sceneAssetsDirectory).standardizedFileURL
         return SceneEngineRendererConfiguration.isValidAssetsDirectory(url)
-            ? "Scene Engine assets ready: \(url.path)"
-            : "Scene Engine assets folder is missing or incomplete: \(url.path)"
+            ? String(format: L("settings.scene.status.ready"), url.path)
+            : String(format: L("settings.scene.status.incomplete"), url.path)
     }
 
     func selectLibraryAssets(_ ids: Set<WallpaperAsset.ID>) {
@@ -389,7 +389,7 @@ extension AppViewModel {
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
-        panel.message = "Choose the Wallpaper Engine assets folder contents."
+        panel.message = L("settings.scene.choose.message")
         if panel.runModal() == .OK, let url = panel.url {
             setSceneAssetsFolder(url)
         }
@@ -398,28 +398,27 @@ extension AppViewModel {
     func setSceneAssetsFolder(_ url: URL) {
         let standardizedURL = url.standardizedFileURL
         guard SceneEngineRendererConfiguration.isValidAssetsDirectory(standardizedURL) else {
-            status = "This does not look like a Wallpaper Engine assets folder. It must contain materials/ "
-                + "and shaders/. Copy the contents of steamapps/common/wallpaper_engine/assets, not the parent folder."
+            status = L("settings.scene.status.invalid")
             return
         }
         let localURL: URL
         do {
             localURL = try copySceneAssetsToDefaultLocation(from: standardizedURL)
         } catch {
-            status = "Could not copy Scene Engine assets into app support: \(error.localizedDescription)"
+            status = String(format: L("settings.scene.status.copyFailed"), error.localizedDescription)
             return
         }
         sceneAssetsDirectory = localURL.path
         userDefaults.set(sceneAssetsDirectory, forKey: PreferenceKey.sceneEngineAssetsDirectory)
         SceneEngineRendererConfiguration.overrideAssetsPath = sceneAssetsDirectory
-        status = "Scene Engine assets copied into app support."
+        status = L("settings.scene.status.copied")
     }
 
     func clearSceneAssetsFolder() {
         sceneAssetsDirectory = ""
         userDefaults.removeObject(forKey: PreferenceKey.sceneEngineAssetsDirectory)
         SceneEngineRendererConfiguration.overrideAssetsPath = nil
-        status = "Scene Engine assets folder reset to the default path."
+        status = L("settings.scene.status.reset")
     }
 
     private func copySceneAssetsToDefaultLocation(from sourceURL: URL) throws -> URL {
@@ -1083,13 +1082,13 @@ extension AppViewModel {
 }
 
 extension AppViewModel {
-    static let rotationIntervalOptions: [(label: String, seconds: TimeInterval)] = [
-        ("30 sec", 30),
-        ("1 min", 60),
-        ("5 min", 300),
-        ("15 min", 900),
-        ("30 min", 1800),
-        ("1 hour", 3600)
+    static let rotationIntervalOptions: [(key: String, seconds: TimeInterval)] = [
+        ("library.rotate.interval.30s", 30),
+        ("library.rotate.interval.1m", 60),
+        ("library.rotate.interval.5m", 300),
+        ("library.rotate.interval.15m", 900),
+        ("library.rotate.interval.30m", 1800),
+        ("library.rotate.interval.1h", 3600)
     ]
 
     var playableLibraryAssets: [WallpaperAsset] {

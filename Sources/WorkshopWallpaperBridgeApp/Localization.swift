@@ -3,12 +3,12 @@ import Foundation
 /// User-selectable UI language for the settings window.
 ///
 /// `system` follows the user's macOS language preference (falling back to
-/// English for anything other than Korean, since those are the only two
-/// bundled tables). Picking Korean or English pins the UI regardless of the
-/// system setting.
+/// English unless the preferred language is Korean or Simplified Chinese).
+/// Picking a specific language pins the UI regardless of the system setting.
 enum AppLanguage: String, CaseIterable, Identifiable {
     case system
     case korean = "ko"
+    case simplifiedChinese = "zh-Hans"
     case english = "en"
 
     var id: String { rawValue }
@@ -17,6 +17,7 @@ enum AppLanguage: String, CaseIterable, Identifiable {
         switch self {
         case .system: return "System"
         case .korean: return "한국어"
+        case .simplifiedChinese: return "简体中文"
         case .english: return "English"
         }
     }
@@ -24,13 +25,40 @@ enum AppLanguage: String, CaseIterable, Identifiable {
     fileprivate var resolvedLanguageCode: String {
         switch self {
         case .system:
-            let preferred = Locale.preferredLanguages.first ?? "en"
-            return preferred.hasPrefix("ko") ? "ko" : "en"
+            return Self.bundledLanguageCode(forPreferredLanguages: Locale.preferredLanguages)
         case .korean:
             return "ko"
+        case .simplifiedChinese:
+            return "zh-Hans"
         case .english:
             return "en"
         }
+    }
+
+    /// Maps a macOS preferred-language list onto a bundled `.lproj` code.
+    static func bundledLanguageCode(forPreferredLanguages preferredLanguages: [String]) -> String {
+        let preferred = preferredLanguages.first ?? "en"
+        let normalized = preferred.replacingOccurrences(of: "_", with: "-").lowercased()
+        if normalized.hasPrefix("ko") {
+            return "ko"
+        }
+        if isSimplifiedChinese(normalized) {
+            return "zh-Hans"
+        }
+        return "en"
+    }
+
+    private static func isSimplifiedChinese(_ identifier: String) -> Bool {
+        if identifier.hasPrefix("zh-hans") || identifier.hasPrefix("zh-cn") || identifier.hasPrefix("zh-sg") {
+            return true
+        }
+        if identifier.hasPrefix("zh-hant")
+            || identifier.hasPrefix("zh-tw")
+            || identifier.hasPrefix("zh-hk")
+            || identifier.hasPrefix("zh-mo") {
+            return false
+        }
+        return identifier == "zh"
     }
 }
 
@@ -68,18 +96,31 @@ enum Localization {
         candidates.lazy.compactMap(Bundle.init(url:)).first
     }
 
+    /// Resolves `{code}.lproj`. Foundation's `path(forResource:ofType:)` can
+    /// miss hyphenated codes such as `zh-Hans` when that locale is not preferred.
+    static func languageBundle(for code: String, in bundle: Bundle) -> Bundle? {
+        if let path = bundle.path(forResource: code, ofType: "lproj"),
+           let languageBundle = Bundle(path: path) {
+            return languageBundle
+        }
+        guard let resourceURL = bundle.resourceURL else {
+            return nil
+        }
+        let candidate = resourceURL.appending(path: "\(code).lproj", directoryHint: .isDirectory)
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: candidate.path, isDirectory: &isDirectory),
+              isDirectory.boolValue else {
+            return nil
+        }
+        return Bundle(url: candidate)
+    }
+
     private static func bundle(for language: AppLanguage) -> Bundle {
         let code = language.resolvedLanguageCode
         if let cached = bundleCache[code] {
             return cached
         }
-        let resolved: Bundle
-        if let path = resourceBundle.path(forResource: code, ofType: "lproj"),
-           let languageBundle = Bundle(path: path) {
-            resolved = languageBundle
-        } else {
-            resolved = resourceBundle
-        }
+        let resolved = languageBundle(for: code, in: resourceBundle) ?? resourceBundle
         bundleCache[code] = resolved
         return resolved
     }

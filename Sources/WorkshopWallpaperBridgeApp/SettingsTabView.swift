@@ -121,11 +121,12 @@ struct SettingsTabView: View {
                     Picker(model.L("settings.language.title"), selection: $model.language) {
                         Text(model.L("settings.language.system")).tag(AppLanguage.system)
                         Text(model.L("settings.language.korean")).tag(AppLanguage.korean)
+                        Text(model.L("settings.language.simplifiedChinese")).tag(AppLanguage.simplifiedChinese)
                         Text(model.L("settings.language.english")).tag(AppLanguage.english)
                     }
                     .labelsHidden()
-                    .pickerStyle(.segmented)
-                    .frame(width: 260)
+                    .pickerStyle(.menu)
+                    .fixedSize()
                 }
             }
         }

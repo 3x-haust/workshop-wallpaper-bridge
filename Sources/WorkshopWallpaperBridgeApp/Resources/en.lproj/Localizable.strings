@@ -31,6 +31,12 @@
 "library.rotate.shuffle" = "Shuffle";
 "library.rotate.every" = "Every";
 "library.rotate.next" = "Next";
+"library.rotate.interval.30s" = "30 sec";
+"library.rotate.interval.1m" = "1 min";
+"library.rotate.interval.5m" = "5 min";
+"library.rotate.interval.15m" = "15 min";
+"library.rotate.interval.30m" = "30 min";
+"library.rotate.interval.1h" = "1 hour";
 
 /* Library tab: actions */
 "library.play" = "Play on Desktop";
@@ -65,14 +71,25 @@
 /* Settings tab: scene engine assets */
 "settings.scene.title" = "Scene Engine Assets";
 "settings.scene.choose" = "Choose Assets Folder...";
+"settings.scene.choose.message" = "Choose the Wallpaper Engine assets folder contents.";
 "settings.scene.reset" = "Reset";
 "settings.scene.help.title" = "About Scene Engine assets";
 "settings.scene.help.body" = "Copy the contents of steamapps/common/wallpaper_engine/assets from your Windows install.";
+"settings.scene.status.unset" = "Not set. The scene renderer will use the default app-support assets folder if it exists.";
+"settings.scene.status.ready" = "Scene Engine assets ready: %@";
+"settings.scene.status.incomplete" = "Scene Engine assets folder is missing or incomplete: %@";
+"settings.scene.status.envReady" = "Using WWB_SCENE_ENGINE_ASSETS_DIR: %@";
+"settings.scene.status.envIncomplete" = "WWB_SCENE_ENGINE_ASSETS_DIR is set, but the assets folder is missing or incomplete.";
+"settings.scene.status.invalid" = "This does not look like a Wallpaper Engine assets folder. It must contain materials/ and shaders/. Copy the contents of steamapps/common/wallpaper_engine/assets, not the parent folder.";
+"settings.scene.status.copyFailed" = "Could not copy Scene Engine assets into app support: %@";
+"settings.scene.status.copied" = "Scene Engine assets copied into app support.";
+"settings.scene.status.reset" = "Scene Engine assets folder reset to the default path.";
 
 /* Settings tab: language */
 "settings.language.title" = "Language";
 "settings.language.system" = "System";
 "settings.language.korean" = "한국어";
+"settings.language.simplifiedChinese" = "简体中文";
 "settings.language.english" = "English";
 "settings.language.help.title" = "About Language";
 "settings.language.help.body" = "Changes take effect immediately in this window. Status messages generated while the app is running may remain in English.";
@@ -97,3 +114,15 @@
 "web.openExternal" = "Open %@ in browser";
 "settings.media.toggle" = "Show music information";
 "settings.media.help" = "Read track, artwork and playback time from Music or Spotify. macOS requests Automation permission. Spotify artwork loads from its image service.";
+
+/* Menu bar */
+"menu.openSettings" = "Open Settings";
+"menu.autoPause" = "Auto-pause Behind Apps";
+"menu.checkForUpdates" = "Check for Updates";
+"menu.openLoginItems" = "Open Login Items Settings";
+"menu.openScreenSaverSettings" = "Open Screen Saver Settings";
+"menu.stopPlayback" = "Stop Playback";
+"menu.shuffleRotation" = "Shuffle Rotation";
+"menu.nextWallpaper" = "Next Wallpaper";
+"menu.rotateEvery" = "Rotate Every";
+"menu.quit" = "Quit";
