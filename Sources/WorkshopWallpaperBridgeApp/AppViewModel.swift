@@ -53,10 +53,14 @@ protocol WallpaperPlaying: AnyObject {
     func setDisplayMode(_ mode: WallpaperDisplayMode)
     func setAutoPauseWhenCovered(_ enabled: Bool)
     func setInteractionEnabled(_ enabled: Bool)
+    func setPlaybackStatusHandler(_ handler: @escaping (WallpaperPlaybackEvent) -> Void)
+    func cancelPendingPlayback()
 }
 
 extension WallpaperPlaying {
     func setInteractionEnabled(_ enabled: Bool) {}
+    func setPlaybackStatusHandler(_ handler: @escaping (WallpaperPlaybackEvent) -> Void) {}
+    func cancelPendingPlayback() {}
 }
 
 extension WallpaperPlayer: WallpaperPlaying {}
@@ -70,6 +74,8 @@ final class AppViewModel: ObservableObject {
     @Published private(set) var selectedLibraryAssetIds: Set<WallpaperAsset.ID> = []
     @Published var status = "Choose a copied Wallpaper Engine Workshop folder to begin."
     @Published var isWorking = false
+    @Published private(set) var activeWallpaperAssetID: String?
+    @Published private(set) var playbackEvent: WallpaperPlaybackEvent?
     @Published private(set) var sceneAssetsDirectory = ""
     /// Bumped whenever a scene's background video render completes. Library
     /// rows read this alongside the asset itself so their body actually
@@ -219,6 +225,9 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    lazy var workshop = WorkshopViewModel(library: self, root: store.root, userDefaults: userDefaults)
+    weak var activeWorkshop: WorkshopViewModel?
+
     private let scanner = WallpaperScanner()
     private let converter = VideoConverter()
     private let systemWallpaperSetter = SystemWallpaperSetter()
@@ -229,6 +238,8 @@ final class AppViewModel: ObservableObject {
     private let updateChecker: UpdateChecking
     private let updateURLOpener: UpdateURLOpening
     private let wallpaperPlayer: WallpaperPlaying
+    private let scenePreparer: (@MainActor (WallpaperAsset, @escaping @MainActor (Double) -> Void) async throws -> Void)?
+    private var preparingWorkshopAssets: [String: Int] = [:]
     private let currentVersionProvider: () -> String
     private var isSyncingLaunchAtLogin = false
     private var isSyncingLockScreenAnimation = false
@@ -236,6 +247,17 @@ final class AppViewModel: ObservableObject {
     private var rotationTimer: Timer?
     private var rotationQueue: [WallpaperAsset.ID] = []
     private var rotationIndex = 0
+    private(set) var applicationIntentID = UUID()
+    private var requestedPlayback: (asset: WallpaperAsset, remember: Bool)?
+
+    @discardableResult
+    func beginApplicationIntent() -> UUID {
+        applicationIntentID = UUID()
+        requestedPlayback = nil
+        SceneWallpaperContentFactory.cancelWorkshopPreparations()
+        wallpaperPlayer.cancelPendingPlayback()
+        return applicationIntentID
+    }
 
     init() {
         userDefaults = .standard
@@ -244,9 +266,11 @@ final class AppViewModel: ObservableObject {
         updateChecker = GitHubReleaseUpdateChecker()
         updateURLOpener = WorkspaceUpdateURLOpener()
         wallpaperPlayer = WallpaperPlayer.shared
+        scenePreparer = nil
         currentVersionProvider = { AppVersionProvider.currentVersion() }
         do {
             store = try LibraryStore.defaultStore()
+            connectPlaybackStatus()
             restorePreferences()
             loadLibrary()
             playLastWallpaperIfAvailable()
@@ -256,6 +280,7 @@ final class AppViewModel: ObservableObject {
             store = LibraryStore(
                 root: FileManager.default.temporaryDirectory.appending(path: "WorkshopWallpaperBridge")
             )
+            connectPlaybackStatus()
             status = error.localizedDescription
         }
         syncLaunchAtLoginStatus()
@@ -276,7 +301,8 @@ final class AppViewModel: ObservableObject {
         updateURLOpener: UpdateURLOpening = WorkspaceUpdateURLOpener(),
         wallpaperPlayer: WallpaperPlaying = WallpaperPlayer.shared,
         currentVersionProvider: @escaping () -> String = { "0.0.0" },
-        userDefaults: UserDefaults = .standard
+        userDefaults: UserDefaults = .standard,
+        scenePreparer: (@MainActor (WallpaperAsset, @escaping @MainActor (Double) -> Void) async throws -> Void)? = nil
     ) {
         self.store = store
         self.loginItemController = loginItemController
@@ -284,8 +310,10 @@ final class AppViewModel: ObservableObject {
         self.updateChecker = updateChecker
         self.updateURLOpener = updateURLOpener
         self.wallpaperPlayer = wallpaperPlayer
+        self.scenePreparer = scenePreparer
         self.currentVersionProvider = currentVersionProvider
         self.userDefaults = userDefaults
+        connectPlaybackStatus()
         restorePreferences()
         loadLibrary()
         playLastWallpaperIfAvailable()
@@ -324,6 +352,7 @@ final class AppViewModel: ObservableObject {
             selectedLibraryAsset?.id
         }
         set {
+            beginApplicationIntent()
             selectedLibraryAssetIds = newValue.map { Set([$0]) } ?? []
         }
     }
@@ -353,7 +382,18 @@ final class AppViewModel: ObservableObject {
             : String(format: L("settings.scene.status.incomplete"), url.path)
     }
 
+    @discardableResult
+    func selectAndApplyLibraryAsset(_ id: String) -> Bool {
+        selectLibraryAssets([id])
+        guard !isWorking, let asset = selectedLibraryAsset, asset.supportStatus == .playable else {
+            status = L(isWorking ? "workshop.error.busy" : "workshop.play.unsupported")
+            return false
+        }
+        return playSelected()
+    }
+
     func selectLibraryAssets(_ ids: Set<WallpaperAsset.ID>) {
+        beginApplicationIntent()
         selectedLibraryAssetIds = ids
         normalizeLibrarySelection(allowEmpty: true)
     }
@@ -477,42 +517,99 @@ extension AppViewModel {
             status = "Select a scanned project first."
             return Task {}
         }
-        // Copy files off the main thread so the UI stays responsive, and report
-        // per-item progress so a large multi-import never looks frozen.
+        return Task {
+            do {
+                _ = try await importAssets(assets)
+            } catch {
+                status = error.localizedDescription
+            }
+        }
+    }
+
+    /// A single manifest-write gate shared by local and Workshop imports.
+    /// Workshop duplicates select the existing copy, preserving its conversions and caches.
+    func importAssets(_ assets: [WallpaperAsset], preservingExisting: Bool = false) async throws -> [WallpaperAsset] {
+        guard !isWorking else { throw SteamBridgeError.busy }
+        let selectionIntent = applicationIntentID
         isWorking = true
         importProgress = ImportProgress(completed: 0, total: assets.count)
         status = "Importing 0/\(assets.count)..."
-        let store = self.store
-        return Task {
-            defer {
-                importProgress = nil
-                isWorking = false
-            }
-            var importedAssets: [WallpaperAsset] = []
-            do {
-                for asset in assets {
-                    let imported = try await Task.detached { try store.importAsset(asset) }.value
-                    importedAssets.append(imported)
-                    importProgress = ImportProgress(completed: importedAssets.count, total: assets.count)
-                    status = "Importing \(importedAssets.count)/\(assets.count)..."
-                }
-                userDefaults.set(Date(), forKey: PreferenceKey.lastImportAt)
-                loadLibrary()
-                selectLibraryAssets(Set(importedAssets.map(\.id)))
-                if importedAssets.count == 1, let imported = importedAssets.first {
-                    status = "Imported \(imported.title)."
-                } else {
-                    status = "Imported \(importedAssets.count) projects."
-                }
-            } catch {
-                loadLibrary()
-                if importedAssets.isEmpty {
-                    status = error.localizedDescription
-                } else {
-                    status = "Imported \(importedAssets.count) project(s), then failed: \(error.localizedDescription)"
-                }
-            }
+        defer {
+            loadLibrary(allowEmptySelection: true)
+            importProgress = nil
+            isWorking = false
         }
+        let store = self.store
+        let existing = preservingExisting ? try store.load().assets : []
+        var importedAssets: [WallpaperAsset] = []
+        for asset in assets {
+            let imported: WallpaperAsset
+            if let retained = existing.first(where: { $0.id == asset.id }) {
+                imported = retained
+            } else {
+                imported = try await Task.detached { try store.importAsset(asset) }.value
+            }
+            importedAssets.append(imported)
+            importProgress = ImportProgress(completed: importedAssets.count, total: assets.count)
+            status = "Importing \(importedAssets.count)/\(assets.count)..."
+        }
+        userDefaults.set(Date(), forKey: PreferenceKey.lastImportAt)
+        loadLibrary(allowEmptySelection: true)
+        if applicationIntentID == selectionIntent {
+            selectedLibraryAssetIds = Set(importedAssets.map(\.id))
+            normalizeLibrarySelection(allowEmpty: true)
+        }
+        if importedAssets.count == 1, let imported = importedAssets.first {
+            status = "Imported \(imported.title)."
+        } else {
+            status = "Imported \(importedAssets.count) projects."
+        }
+        return importedAssets
+    }
+
+    /// Builds the reusable scene cache only; committing wallpaper windows remains
+    /// the caller's responsibility after checking its application intent again.
+    func prepareWorkshopAsset(
+        _ asset: WallpaperAsset,
+        intent: UUID,
+        progress: @escaping @MainActor (Double) -> Void
+    ) async throws {
+        try Task.checkCancellation()
+        guard applicationIntentID == intent else { throw CancellationError() }
+        preparingWorkshopAssets[asset.id, default: 0] += 1
+        defer {
+            let remaining = (preparingWorkshopAssets[asset.id] ?? 1) - 1
+            preparingWorkshopAssets[asset.id] = remaining > 0 ? remaining : nil
+        }
+        let report: @MainActor (Double) -> Void = { [weak self] value in
+            guard !Task.isCancelled, self?.applicationIntentID == intent else { return }
+            progress(value)
+        }
+        if let scenePreparer {
+            try await scenePreparer(asset, report)
+        } else if asset.kind == .scene {
+            guard let frame = WallpaperScreenFrames.wallpaperFrames(for: NSScreen.screens).first else {
+                throw ScenePreparationError.unavailable("display")
+            }
+            try await SceneWallpaperContentFactory.prepare(asset: asset, frame: frame, progress: report)
+        } else if asset.kind == .video, let entrypoint = asset.entrypoint {
+            report(0)
+            _ = try await VideoPlaybackPreparation.prepare(url: URL(filePath: entrypoint), assetID: asset.id)
+            report(1)
+        } else {
+            report(1)
+        }
+        try Task.checkCancellation()
+        guard applicationIntentID == intent else { throw CancellationError() }
+        if asset.kind == .scene { sceneVideoRenderRevision += 1 }
+    }
+
+    /// Cancellation releases a caller, not an external process writing its cache.
+    /// Deletion must remain disabled until both have finished.
+    func isPreparingWorkshopAsset(_ assetID: String) -> Bool {
+        preparingWorkshopAssets[assetID, default: 0] > 0
+            || SceneWallpaperContentFactory.isRendering(assetID: assetID)
+            || VideoPlaybackPreparation.isPreparing(assetID: assetID)
     }
 
     func chooseVideoFile() {
@@ -553,18 +650,22 @@ extension AppViewModel {
         }
     }
 
-    func playSelected() {
+    @discardableResult
+    func playSelected() -> Bool {
+        beginApplicationIntent()
         guard let asset = selectedLibraryAsset else {
             status = "Select a library project first."
-            return
+            return false
         }
         if rotationEnabled {
             disableRotation()
         }
         do {
             try play(asset: asset, remember: true)
+            return true
         } catch {
             status = error.localizedDescription
+            return false
         }
     }
 
@@ -622,11 +723,16 @@ extension AppViewModel {
     }
 
     func removeSelectedLibraryAssets() {
+        let assets = selectedLibraryAssets
         guard !isWorking else {
             status = "Finish the current library operation first."
             return
         }
-        let assets = selectedLibraryAssets
+        guard activeWorkshop?.isChangingLibraryFiles != true,
+              !assets.contains(where: { isPreparingWorkshopAsset($0.id) }) else {
+            status = L("workshop.error.busy")
+            return
+        }
         pendingLibraryRemoval = nil
         guard !assets.isEmpty else {
             status = "Select a library project first."
@@ -636,8 +742,16 @@ extension AppViewModel {
         do {
             for asset in assets {
                 try store.removeAsset(id: asset.id)
+                if requestedPlayback?.asset.id == asset.id { beginApplicationIntent() }
+                if activeWallpaperAssetID == asset.id {
+                    wallpaperPlayer.stop()
+                    activeWallpaperAssetID = nil
+                    playbackEvent = nil
+                    userDefaults.removeObject(forKey: PreferenceKey.lastPlayedAssetId)
+                }
             }
             loadLibrary()
+            activeWorkshop?.refreshDownloads()
             if wasRotating, !rotationEnabled {
                 if assets.count == 1, let asset = assets.first {
                     status = "Moved \(asset.title) to the Trash. Rotation stopped — no playable wallpapers left."
@@ -650,6 +764,8 @@ extension AppViewModel {
                 status = "Moved \(assets.count) items to the Trash. The original copied folders were not touched."
             }
         } catch {
+            loadLibrary()
+            activeWorkshop?.refreshDownloads()
             status = error.localizedDescription
         }
     }
@@ -685,6 +801,10 @@ extension AppViewModel {
     }
 
     func stopPlayback() {
+        beginApplicationIntent()
+        requestedPlayback = nil
+        activeWallpaperAssetID = nil
+        playbackEvent = nil
         if rotationEnabled {
             disableRotation()
         }
@@ -764,10 +884,10 @@ extension AppViewModel {
         }
     }
 
-    func loadLibrary() {
+    func loadLibrary(allowEmptySelection: Bool = false) {
         do {
             libraryAssets = try store.load().assets
-            normalizeLibrarySelection(allowEmpty: false)
+            normalizeLibrarySelection(allowEmpty: allowEmptySelection)
             if rotationEnabled {
                 if playableLibraryAssets.isEmpty {
                     // The last playable item was removed while rotating: shut
@@ -932,7 +1052,6 @@ extension AppViewModel {
         selectedLibraryAssetId = id
         do {
             try play(asset: asset, remember: false)
-            status = "Restored \(asset.title) on the desktop."
         } catch {
             userDefaults.removeObject(forKey: PreferenceKey.lastPlayedAssetId)
             status = "Could not restore \(asset.title): \(error.localizedDescription)"
@@ -955,23 +1074,51 @@ extension AppViewModel {
     }
 
     private func play(asset: WallpaperAsset, remember: Bool) throws {
-        try wallpaperPlayer.play(
-            asset: asset,
-            autoPauseWhenCovered: autoPauseWhenCovered,
-            displayMode: displayMode,
-            audioEnabled: wallpaperAudioEnabled,
-            audioVolume: wallpaperAudioVolume
-        )
-        if remember {
-            userDefaults.set(asset.id, forKey: PreferenceKey.lastPlayedAssetId)
+        beginApplicationIntent()
+        requestedPlayback = (asset, remember)
+        playbackEvent = nil
+        status = L("workshop.play.requested")
+        do {
+            try wallpaperPlayer.play(
+                asset: asset,
+                autoPauseWhenCovered: autoPauseWhenCovered,
+                displayMode: displayMode,
+                audioEnabled: wallpaperAudioEnabled,
+                audioVolume: wallpaperAudioVolume
+            )
+        } catch {
+            requestedPlayback = nil
+            throw error
         }
+    }
+
+    private func connectPlaybackStatus() {
+        wallpaperPlayer.setPlaybackStatusHandler { [weak self] event in
+            self?.receivePlaybackStatus(event)
+        }
+    }
+
+    private func receivePlaybackStatus(_ event: WallpaperPlaybackEvent) {
+        guard let request = requestedPlayback else { return }
+        switch event {
+        case .ready(let assetID):
+            guard assetID == request.asset.id else { return }
+            activeWallpaperAssetID = assetID
+            if request.remember {
+                userDefaults.set(assetID, forKey: PreferenceKey.lastPlayedAssetId)
+            }
+            reportReadyPlayback(request.asset)
+        case .failed(let assetID, let message):
+            guard assetID == request.asset.id else { return }
+            requestedPlayback = nil
+            status = message
+        }
+        playbackEvent = event
+    }
+
+    private func reportReadyPlayback(_ asset: WallpaperAsset) {
         let lockScreenError = refreshLockScreenAnimationConfiguration(asset: asset)
-        var playbackStatus = autoPauseWhenCovered
-            ? "Playing on the desktop layer. You can minimize this app; playback pauses only behind other apps."
-            : "Playing continuously on the desktop layer. You can minimize this app."
-        if asset.kind == .web || asset.kind == .scene {
-            playbackStatus += " " + L(wallpaperInteractionEnabled ? "playback.interaction.on" : "playback.interaction.off")
-        }
+        let playbackStatus = L("workshop.play.ready")
         status = lockScreenError.map {
             "\(playbackStatus) Screen Saver update failed: \($0)"
         } ?? playbackStatus

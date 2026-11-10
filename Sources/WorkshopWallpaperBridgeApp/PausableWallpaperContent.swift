@@ -11,6 +11,17 @@ protocol DisplayModeUpdatableContent: AnyObject {
 }
 
 @MainActor
+protocol WallpaperContentPreparing: AnyObject {
+    /// Completes once initial loading has succeeded or failed; closing cancels delivery.
+    func whenReady(_ completion: @escaping (Result<Void, Error>) -> Void)
+}
+
+struct WallpaperPreparationError: LocalizedError {
+    let message: String
+    var errorDescription: String? { message }
+}
+
+@MainActor
 protocol WallpaperContentLifecycle: AnyObject {
     func prepareForClose()
 }

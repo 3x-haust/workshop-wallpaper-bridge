@@ -155,7 +155,7 @@ public struct WallpaperScanner: Sendable {
             guard let entrypoint else {
                 return .unsupported
             }
-            return SceneRenderPlanBuilder().canBuild(url: entrypoint) ? .playable : .unsupported
+            return SceneRenderPlanBuilder().canPrepare(url: entrypoint) ? .playable : .unsupported
         case .unknown:
             return .unsupported
         }

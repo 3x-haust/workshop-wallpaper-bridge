@@ -1,54 +1,134 @@
-import AppKit
 import SwiftUI
-import WorkshopWallpaperCore
 
-private enum SettingsTab: Hashable {
-    case library
-    case settings
+private enum SettingsTab: CaseIterable, Hashable {
+    case workshop, library, settings
+
+    var titleKey: String {
+        switch self {
+        case .workshop: "workshop.browser.explore"
+        case .library: "tab.library"
+        case .settings: "tab.settings"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .workshop: "safari"
+        case .library: "photo.on.rectangle"
+        case .settings: "slider.horizontal.3"
+        }
+    }
 }
 
 struct ContentView: View {
     @ObservedObject var model: AppViewModel
-    @State private var selectedTab: SettingsTab = .library
+    @ObservedObject private var workshop: WorkshopViewModel
+    @State private var selectedTab: SettingsTab = .workshop
+    @State private var showsAccount = false
+
+    init(model: AppViewModel) {
+        self.model = model
+        self.workshop = model.workshop
+    }
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider()
-            TabView(selection: $selectedTab) {
-                LibraryTabView(model: model)
-                    .tabItem { Text(model.L("tab.library")) }
-                    .tag(SettingsTab.library)
-                SettingsTabView(model: model)
-                    .tabItem { Text(model.L("tab.settings")) }
-                    .tag(SettingsTab.settings)
+        GeometryReader { geometry in
+            HStack(spacing: 0) {
+                sidebar(compact: geometry.size.width < 900)
+                Rectangle().fill(BrowserPalette.border).frame(width: 1)
+                page.frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            Divider()
-            statusBar
         }
         .frame(minWidth: 640, minHeight: 560)
-        .alert(item: $model.updateAlert) { alert in
-            updateAlert(alert)
+        .background(BrowserPalette.background)
+        .foregroundStyle(BrowserPalette.text)
+        .preferredColorScheme(.dark)
+        .tint(BrowserPalette.accent)
+        .sheet(isPresented: $showsAccount) {
+            WorkshopAuthenticationView(model: model, workshop: workshop)
+        }
+        .alert(item: $model.updateAlert) { alert in updateAlert(alert) }
+    }
+
+    @ViewBuilder
+    private var page: some View {
+        switch selectedTab {
+        case .workshop:
+            WorkshopTabView(model: model, workshop: workshop, showsAccount: $showsAccount)
+        case .library:
+            LibraryTabView(model: model)
+        case .settings:
+            SettingsTabView(model: model)
         }
     }
 
-    private var header: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(model.L("app.title"))
-                    .font(.title3.weight(.semibold))
-                Text(model.L("app.subtitle"))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+    private func sidebar(compact: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 9) {
+                Image(systemName: "photo.on.rectangle.angled")
+                    .font(.system(size: 24, weight: .light)).foregroundStyle(BrowserPalette.accent)
+                if !compact {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Workshop").font(.system(size: 14, weight: .semibold))
+                        Text("Wallpaper Bridge").font(.system(size: 10)).foregroundStyle(BrowserPalette.secondary)
+                    }
+                }
             }
-            Spacer()
-            Button(model.L("app.stop")) {
-                model.stopPlayback()
+            .padding(.horizontal, 7).padding(.top, 24).padding(.bottom, 24)
+            ForEach(SettingsTab.allCases.filter { $0 != .settings }, id: \.self) { tab in
+                navigationButton(tab, compact: compact)
             }
-            .keyboardShortcut(".", modifiers: [.command, .shift])
+            Spacer(minLength: 20)
+            navigationButton(.settings, compact: compact)
+            Rectangle().fill(BrowserPalette.border).frame(height: 1).padding(.vertical, 8)
+            Button { showsAccount = true } label: {
+                HStack(spacing: 9) {
+                    Image(systemName: workshop.isAuthenticated ? "person.crop.circle.fill" : "person.crop.circle")
+                        .font(.system(size: 26, weight: .light))
+                        .foregroundStyle(workshop.isAuthenticated ? BrowserPalette.accent : BrowserPalette.secondary)
+                    if !compact {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(workshop.account ?? model.L("workshop.browser.connect"))
+                                .font(.system(size: 11, weight: .medium)).lineLimit(1)
+                            Text(model.L(workshop.isAuthenticated ? "workshop.browser.connected" : "workshop.browser.signInRequired"))
+                                .font(.system(size: 10)).foregroundStyle(BrowserPalette.secondary)
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: compact ? .center : .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain).accessibilityLabel(model.L("workshop.browser.account"))
+            .help(model.L("workshop.browser.account"))
+            .padding(.bottom, 16)
         }
-        .padding()
+        .padding(.horizontal, 12).frame(width: compact ? 64 : 174)
+        .background(BrowserPalette.sidebar)
+    }
+
+    private func navigationButton(_ tab: SettingsTab, compact: Bool) -> some View {
+        Button { selectedTab = tab } label: {
+            HStack(spacing: 10) {
+                Image(systemName: tab.symbol).font(.system(size: 15))
+                    .frame(width: 18)
+                if !compact {
+                    Text(model.L(tab.titleKey)).font(.system(size: 12, weight: .medium))
+                    Spacer(minLength: 0)
+                    if tab == .library, workshop.isBusy {
+                        ProgressView().controlSize(.mini)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: compact ? .center : .leading)
+            .padding(.horizontal, compact ? 0 : 10).padding(.vertical, 11)
+            .foregroundStyle(selectedTab == tab ? BrowserPalette.accent : BrowserPalette.secondary)
+            .background(selectedTab == tab ? BrowserPalette.selection : .clear, in: RoundedRectangle(cornerRadius: 6))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(model.L(tab.titleKey))
+        .accessibilityAddTraits(selectedTab == tab ? .isSelected : [])
+        .help(model.L(tab.titleKey))
     }
 
     private func updateAlert(_ alert: UpdateAlert) -> Alert {
@@ -59,24 +139,6 @@ struct ContentView: View {
         )
     }
 
-    private var statusBar: some View {
-        HStack {
-            if let progress = model.importProgress {
-                ProgressView(value: progress.fraction)
-                    .controlSize(.small)
-                    .frame(width: 120)
-            } else if model.isWorking {
-                ProgressView()
-                    .controlSize(.small)
-            }
-            Text(model.status)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-            Spacer()
-        }
-        .padding(.horizontal)
-        .padding(.vertical, 8)
-    }
 }
 
 /// A small "ⓘ" affordance that reveals a one-time explanation in a popover,
@@ -105,185 +167,5 @@ struct HelpPopoverButton: View {
             .padding()
             .frame(width: 300)
         }
-    }
-}
-
-struct AssetPreview: View {
-    let asset: WallpaperAsset?
-    let placeholderTitle: String
-    let placeholderDescription: String
-
-    var body: some View {
-        HStack(spacing: 12) {
-            previewImage
-            VStack(alignment: .leading, spacing: 4) {
-                Text(asset?.title ?? placeholderTitle)
-                    .font(.callout.weight(.semibold))
-                    .lineLimit(1)
-                Text(assetDescription)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-                if let issue = asset?.issues.first {
-                    Text(issue.message)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-            }
-            Spacer()
-        }
-        .padding(10)
-        .frame(minHeight: 112, alignment: .leading)
-        .background(Color(nsColor: .controlBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-    }
-
-    @ViewBuilder
-    private var previewImage: some View {
-        AssetThumbnail(asset: asset, width: 144, height: 88, cornerRadius: 6)
-    }
-
-    private var assetDescription: String {
-        guard let asset else {
-            return placeholderDescription
-        }
-        return "\(asset.kind.rawValue) · \(asset.supportStatus.rawValue)"
-    }
-}
-
-struct AssetRow: View {
-    let asset: WallpaperAsset
-    // Unused beyond forcing SwiftUI to re-evaluate this row's body: SwiftUI
-    // skips recomputing a child view's body when its stored properties are
-    // structurally unchanged, even if the enclosing `@ObservedObject`
-    // published an unrelated change. Without a property here that changes
-    // when a scene's video render completes, `displayStatus` below would
-    // keep returning its first-render value until `asset` itself changed
-    // (e.g. on the next library rescan), so the badge would look stuck on
-    // "renders on first play" even after the cached video exists.
-    let sceneVideoRenderRevision: Int
-    var isNew: Bool = false
-    var newBadgeText: String = "NEW"
-
-    // Derived fresh on every body evaluation (not cached in the row) so the
-    // badge picks up a completed scene video render as soon as the list
-    // re-renders, without needing dedicated per-row observation wiring.
-    private var displayStatus: LibraryRowDisplayStatus {
-        LibraryRowStatusResolver.status(for: asset)
-    }
-
-    var body: some View {
-        HStack(spacing: 10) {
-            AssetThumbnail(asset: asset, width: 64, height: 40, cornerRadius: 5)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(asset.title)
-                    .font(.body.weight(.medium))
-                    .lineLimit(1)
-                Text(asset.projectDirectory)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                if let issue = asset.issues.first {
-                    Text(issue.message)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-            }
-            Spacer()
-            if isNew {
-                Text(newBadgeText)
-                    .font(.caption2.weight(.bold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Capsule().fill(Color.accentColor))
-            }
-            if let dateAddedText {
-                Text(dateAddedText)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-            }
-            Text(asset.kind.rawValue)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Text(displayStatus.label)
-                .font(.caption)
-                .foregroundStyle(displayStatus.isPositive ? .green : .orange)
-        }
-        .padding(.vertical, 4)
-    }
-
-    private var dateAddedText: String? {
-        guard let dateAdded = asset.dateAdded else {
-            return nil
-        }
-        return Self.dateFormatter.string(from: dateAdded)
-    }
-
-    private static let dateFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .short
-        formatter.timeStyle = .short
-        return formatter
-    }()
-}
-
-private struct AssetThumbnail: View {
-    let asset: WallpaperAsset?
-    let width: CGFloat
-    let height: CGFloat
-    let cornerRadius: CGFloat
-
-    var body: some View {
-        ZStack {
-            Rectangle()
-                .fill(.black.opacity(0.72))
-            if let image = previewNSImage {
-                Image(nsImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: width, height: height)
-            } else {
-                Text(asset?.kind.rawValue.uppercased() ?? "PREVIEW")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.white.opacity(0.72))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.6)
-                    .padding(.horizontal, 6)
-            }
-        }
-        .frame(width: width, height: height)
-        .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
-        .accessibilityLabel(accessibilityLabel)
-    }
-
-    private var previewNSImage: NSImage? {
-        guard let url = previewURL else {
-            return nil
-        }
-        return NSImage(contentsOf: url)
-    }
-
-    private var previewURL: URL? {
-        guard let asset else {
-            return nil
-        }
-        if let thumbnail = asset.thumbnail {
-            return URL(filePath: thumbnail)
-        }
-        guard asset.kind == .image, let entrypoint = asset.entrypoint else {
-            return nil
-        }
-        return URL(filePath: entrypoint)
-    }
-
-    private var accessibilityLabel: String {
-        guard let asset else {
-            return "Wallpaper preview placeholder"
-        }
-        return "Wallpaper preview for \(asset.title)"
     }
 }

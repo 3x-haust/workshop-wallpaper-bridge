@@ -5,9 +5,9 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Downloads](https://img.shields.io/github/downloads/3x-haust/workshop-wallpaper-bridge/total.svg)](https://github.com/3x-haust/workshop-wallpaper-bridge/releases)
 
-로컬 Wallpaper Engine Workshop 파일을 macOS에서 배경화면처럼 사용합니다.
+지원되는 Wallpaper Engine Workshop 콘텐츠를 macOS에서 배경화면처럼 사용합니다.
 
-Workshop Wallpaper Bridge는 복사해 온 Wallpaper Engine Workshop 폴더를 Mac 전용 로컬 라이브러리로 가져오고, 지원되는 월페이퍼를 데스크톱 레이어에서 재생합니다. 이미 로컬에 가지고 있는 파일을 쓰기 위한 앱입니다. Steam에 접속하지 않고, Workshop 항목을 다운로드하지 않고, 복사해 온 Workshop 폴더를 수정하지 않습니다.
+Workshop Wallpaper Bridge는 Wallpaper Engine Workshop 프로젝트를 Mac 전용 로컬 라이브러리로 가져오고, 지원되는 월페이퍼를 데스크톱 레이어에서 재생합니다. 복사한 폴더 가져오기와 로컬 재생은 그대로 유지합니다. Steam 연동은 정상 Steam 인증과 계정 권한 내에서 앱 ID `431960`의 Steam Workshop(창작마당) 항목 검색·다운로드를 제공합니다. 원본으로 복사해 온 Workshop 폴더는 수정하지 않습니다.
 
 [웹사이트](https://3x-haust.github.io/workshop-wallpaper-bridge/) · [English](README.md) · [기여 안내](CONTRIBUTING.md) · [보안 정책](SECURITY.md) · [릴리즈](https://github.com/3x-haust/workshop-wallpaper-bridge/releases) · [후원](https://www.patreon.com/c/3xhaust)
 
@@ -15,6 +15,7 @@ Workshop Wallpaper Bridge는 복사해 온 Wallpaper Engine Workshop 폴더를 M
 
 - [다운로드](#다운로드): 최신 DMG를 설치합니다.
 - [사용 방법](#사용-방법): 복사한 Workshop 폴더를 가져오거나 로컬 영상을 추가합니다.
+- [Steam 창작마당](#steam-창작마당개발-중): 인증 기반 검색·다운로드, 저장 위치, 현재 검증 상태를 확인합니다.
 - [지원 범위](#지원-범위): 지원되는 월페이퍼 유형을 확인합니다.
 - [소스에서 빌드](#소스에서-빌드): 앱을 로컬에서 실행하거나 DMG를 패키징합니다.
 - [메인테이너와 기여자](#메인테이너와-기여자): 프로젝트 메인테이너와 기여자 목록입니다.
@@ -51,7 +52,7 @@ Workshop Wallpaper Bridge가 도움이 되었다면 [Patreon](https://www.patreo
 
 ## 사용 방법
 
-Wallpaper Engine 프로젝트를 쓰는 경우:
+로컬에 복사한 Wallpaper Engine 프로젝트를 쓰는 경우:
 
 1. Windows에서 Workshop 폴더를 찾습니다.
 
@@ -61,9 +62,9 @@ Wallpaper Engine 프로젝트를 쓰는 경우:
 
 2. `431960` 폴더를 Mac으로 복사합니다.
 3. 메뉴바 아이콘에서 **Workshop Wallpaper Bridge Settings**를 엽니다.
-4. **Browse**를 누르고 복사한 `431960` 폴더를 선택한 뒤 **Scan**을 누릅니다.
+4. **내 배경화면 → 로컬 파일 가져오기**를 열고 **Browse**를 눌러 복사한 `431960` 폴더를 선택한 뒤 **Scan**을 누릅니다.
 5. 지원되는 항목을 선택하고 **Import Selected**를 누릅니다.
-6. **Play on Desktop**을 누릅니다.
+6. **내 배경화면**에서 가져온 항목을 선택하면 적용됩니다. 상세 화면의 **데스크톱에서 재생** 버튼도 사용할 수 있습니다.
 
 - 스캔 목록은 기본적으로 macOS 폴더 **Date Added** 값을 기준으로 최신순 정렬됩니다(읽을 수 없으면 수정일을 fallback으로 사용).
 - 알파벳순으로 보고 싶으면 정렬을 **Name**으로 바꿀 수 있습니다.
@@ -88,9 +89,9 @@ Wallpaper Engine 프로젝트를 쓰는 경우:
 - **Open at Login**을 켜면 로그인 후 마지막 월페이퍼를 복구합니다.
 - **Play on Desktop**은 macOS 데스크톱 사진을 바꾸지 않습니다. 그래서 투명 메뉴 바 색은 현재 시스템 배경화면 기준으로 유지됩니다.
 - macOS 데스크톱 및 Lock Screen 정적 이미지를 실제로 바꾸고 싶을 때만 **Set Still Wallpaper**를 사용합니다.
-- **Remove**는 확인 절차를 거친 뒤 Mac 라이브러리에 복사된 항목만 휴지통으로 이동합니다(복원 가능). 원본 복사 폴더나 원본 영상은 건드리지 않습니다.
+- **Remove**는 확인 뒤 Mac 라이브러리 사본과 같은 항목의 완료된 Workshop 다운로드·재생 캐시를 함께 정리하며 휴지통을 우선 사용합니다. 원본 폴더·원본 영상·엔진 자산·Steam 인증 정보는 지우지 않습니다.
 
-설정 창은 **Library** 탭(가져오기, Mac 라이브러리, Display mode, **Play on Desktop** / **Remove**)과 **Settings** 탭(재생 토글, Audio, Scene Engine Assets, Screen Saver, Language)으로 나뉩니다. **Convert Video**와 **Set Still Wallpaper**는 라이브러리 목록의 우클릭 컨텍스트 메뉴와 **Play on Desktop** 옆 **More**("⋯") 메뉴에서 사용할 수 있으며, 항상 보이는 버튼으로 노출되지 않습니다.
+탐색 창의 왼쪽 메뉴에는 **탐색**, **내 배경화면**, **설정**이 있습니다. 받은 항목은 별도 다운로드 탭 없이 **내 배경화면**에서 관리합니다. 탐색과 로컬 라이브러리는 썸네일 격자와 큰 미리보기·상세 정보를 표시하며, 작은 창에서는 상세 화면을 별도로 엽니다. 기존 로컬 가져오기·표시 방식·재생·순환·삭제 기능은 유지합니다. **영상 변환**과 **정적 배경화면 설정**은 항목 상세와 라이브러리 우클릭 메뉴에서 사용할 수 있습니다. 설정에는 기존 재생·오디오·씬 엔진 자산·화면 보호기·언어 기능이 있습니다. [화면 디자인 안내](DESIGN.md)를 참고하세요.
 
 Settings 탭의 **Language** 선택기로 앱 UI 텍스트를 **System**, **한국어**, **简体中文**, **English** 사이에서 전환할 수 있습니다. 앱을 재시작하지 않아도 즉시 적용되며, 버튼·섹션 제목·안내 문구 등 정적 UI 문구만 번역 대상이므로 앱 실행 중 생성되는 상태 메시지는 영어로 표시될 수 있습니다. **System**을 선택하면 macOS 언어가 한국어 또는 간체 중국어일 때 해당 번역을 쓰고, 그 외 언어는 영어로 표시됩니다.
 
@@ -107,11 +108,46 @@ Settings 탭의 **Language** 선택기로 앱 UI 텍스트를 **System**, **한�
 ~/Library/Application Support/WorkshopWallpaperBridge
 ```
 
+### Steam 창작마당(개발 중)
+
+Steam 연동은 개발 중이며, 패키징된 앱의 로그인부터 재생까지 전체 흐름은 아직 미검증입니다. 최신 공개 릴리즈에 포함되어 있다는 뜻은 아닙니다.
+
+1. **탐색**을 열고 왼쪽 아래 Steam 계정 버튼에서 QR 코드 또는 Steam 계정과 Steam Guard로 로그인합니다. Wallpaper Engine(앱 ID `431960`)에 대해 해당 계정이 접근 권한을 가진 콘텐츠만 받습니다.
+2. 썸네일을 둘러보거나 검색하고 인기·최신·평가순으로 정렬합니다. **필터**에서 연령·형식·장르·해상도와 검수 승인·오디오 반응 등의 기능을 포함·제외·무관으로 조합합니다. 기본값은 전체 이용가만 포함하고 주의 필요·성인을 제외하며, 초기화하면 이 값으로 돌아갑니다. 설정은 앱을 다시 켜도 유지됩니다. 작품 태그가 부정확할 수 있으며 Steam 커뮤니티 콘텐츠 설정은 별개입니다. 숫자 버튼으로 페이지를 선택하며 현재 페이지는 강조됩니다. 페이지를 성공적으로 바꾸면 목록 맨 위로 이동합니다. 항목을 선택하면 미리보기와 상세 정보가 표시됩니다. 호환성 안내는 미리보기 도움말에서 확인하며 지원 배지와 문제 목록은 그대로 표시됩니다.
+3. **다운로드 후 적용**을 누르고 진행률을 확인합니다. 취소하거나 재시도할 수 있습니다. 일반 요청이나 프로젝트 검사 실패는 유효한 Steam 로그인을 유지합니다. 다운로드 취소는 보조 프로그램을 종료하지만, 로그인된 상태였다면 저장된 인증으로 한 번 자동 재연결합니다. 예기치 않은 연결 종료도 같은 방식으로 복구하며 실패하면 수동으로 다시 연결합니다. 명시적인 로그아웃과 로그인 자체의 취소는 자동 재연결하지 않습니다.
+4. 명시적인 완료 응답과 저장소 검증을 거친 프로젝트만 **내 배경화면**에 보관합니다. 일부만 받았거나 취소된 항목은 완료 항목이 아닙니다.
+5. **다운로드 후 적용**에는 라이브러리 가져오기와 필요한 씬 렌더링이 포함됩니다. 준비가 끝나면 적용하며, 다음 적용부터 유효한 렌더 캐시를 재사용합니다. 별도의 창 전체 하단 상태줄 없이 탐색과 좁은 창의 상세 화면에서 진행률·오류·취소·재시도를 확인할 수 있습니다. 배경화면을 정지하려면 메뉴 막대 메뉴의 **Stop Playback**을 사용합니다. 씬 영상 생성 실패는 다운로드 실패와 구분하여 표시하며 저장된 라이브러리 사본과 기존 배경화면은 유지합니다. 준비를 취소하면 적용하지 않지만 실행 중인 공유 렌더 작업은 캐시 생성을 마칠 수 있으며, 그동안 해당 항목의 삭제는 막습니다. 같은 항목 ID가 이미 있으면 기존 라이브러리 사본을 연결·선택하며 덮어쓰지 않습니다.
+6. 지원되는 설치 항목은 선택하면 바로 적용됩니다. 미지원 항목도 상세를 확인할 수 있으며, 추가 변환은 **내 배경화면**에서 진행합니다. 새 콘텐츠가 준비되기 전에는 이전 배경화면을 유지합니다. 아래 지원 범위가 그대로 적용됩니다.
+
+**다운로드 성공은 재생 성공이 아닙니다.** 미지원 형식·씬 기능이나 엔진 자산 누락으로 재생되지 않거나 미리보기만 표시될 수 있습니다. 이 연동은 공식 Wallpaper Engine 호환성을 보장하거나 기존 씬 지원 범위를 넓히지 않습니다.
+
+다운로드는 가져온 라이브러리 사본과 별도로 저장합니다.
+
+```text
+~/Library/Application Support/WorkshopWallpaperBridge/WorkshopDownloads
+```
+
+#### 저장 인증과 로그아웃
+
+인증은 앱을 다시 실행해도 유지되도록 앱 전용 파일에 영구 저장합니다.
+
+```text
+~/Library/Application Support/WorkshopWallpaperBridge/Steam/credentials.json
+```
+
+- `Steam` 디렉토리는 `0700`, 인증 파일은 `0600` 권한을 사용합니다. **키체인이 아닌 영구 파일 저장 방식**입니다. 파일과 백업을 비밀 정보로 취급하세요. 파일 권한은 같은 사용자로 실행되는 다른 프로세스의 접근까지 막아 주지 않습니다.
+- 앱을 켜면 저장된 인증으로 자동 연결합니다. 인증이 만료되거나 폐기되었으면 다시 로그인해야 합니다.
+- **로그아웃**은 보조 프로그램의 세션과 자동 연결을 끄지만 저장 인증은 남깁니다. **다시 연결**하거나 로그인하면 자동 연결이 다시 켜집니다.
+- **저장 인증 삭제**는 이 앱의 `Steam` 디렉토리에 있는 `credentials.json`과 원자적 저장이 중단되면 남는 임시 파일 `credentials.json.tmp` 두 파일만 삭제합니다. Steam 앱이나 다른 Steam 클라이언트의 인증·세션에는 영향을 주지 않으며, Steam 서버의 토큰을 폐기하는 기능도 아닙니다.
+- 보고서나 로그에 인증 정보, QR 로그인 데이터, 토큰, Steam Guard 코드를 포함하지 마세요. [보안 정책](SECURITY.md)을 참고하세요.
+
+Steam 보조 프로그램은 [SteamRE/DepotDownloader 3.4.0](https://github.com/SteamRE/DepotDownloader/tree/DepotDownloader_3.4.0) 기반의 별도 GPL 구성 요소이며, SteamKit을 정상 인증 클라이언트로 사용합니다. Steam 연동 앱 패키지에는 자체 런타임을 포함한 macOS arm64 보조 프로그램을 번들하는 방식으로, 일반 사용자는 이 연동을 위해 .NET을 설치하거나 CLI 명령을 실행할 필요가 없습니다.
+
 ## 지원 범위
 
 | 프로젝트 유형 | 지원 |
 | --- | --- |
-| `.mp4`, `.mov`, `.m4v` 동영상 | 바로 재생 |
+| `.mp4`, `.mov`, `.m4v` 동영상 | 바로 재생하며 HEVC `hev1` 영상은 macOS용 `hvc1` 사본으로 무손실 재포장해 캐시 |
 | `.webm`, `.mkv`, `.avi` 동영상 | 로컬 `ffmpeg`로 변환 후 재생 |
 | `index.html` 웹 월페이퍼 | 로컬 WebView에서 마우스 조작, WebGL, 기본 사용자 설정, 시스템 오디오 콜백 지원 |
 | `.jpg`, `.png`, `.gif`, `.heic` 이미지 | 정적 데스크톱 레이어로 표시 |
@@ -143,7 +179,7 @@ scene 지원은 보수적입니다. 실시간 재생은 [SceneScript 호환 범�
 - CLI/개발 실행에서는 `WWB_SCENE_ENGINE_ASSETS_DIR=/path/to/assets`가 앱 설정보다 우선하며, 그 외에는 `~/Library/Application Support/WorkshopWallpaperBridge/wallpaper-engine-assets`를 확인합니다.
 - 렌더링 구성 요소가 없으면 호환 캐시 영상, 완전하게 표시할 수 있는 기본 네이티브 씬, 프로젝트 미리보기 순으로 사용합니다.
 - 캐시된 scene 비디오는 asset별로 `~/Library/Application Support/WorkshopWallpaperBridge/SceneVideoCache/`에 저장되며, 원본 `scene.pkg`가 바뀌면 자동으로 다시 만들어집니다.
-- 이 프로젝트는 Steam Workshop 항목을 다운로드하지 않고, 제작자 asset을 재배포하지 않고, Steam content를 번들하지 않습니다. renderer binary는 별도 GPL component이며 자체 source notice가 필요합니다.
+- 인증 기반 창작마당 다운로드는 Wallpaper Engine runtime assets를 제공하지 않습니다. 이 프로젝트는 제작자 asset을 재배포하거나 Steam content를 번들하지 않습니다. renderer binary는 별도 GPL component이며 자체 source notice가 필요합니다.
 
 **음악 정보 표시**는 이미 실행 중인 Music·Spotify의 곡명·표지·재생 시간을 읽으며 macOS 자동화 권한이 필요합니다. Spotify 표지는 HTTPS 이미지 서비스에서 불러옵니다.
 
@@ -160,6 +196,8 @@ scene 지원은 보수적입니다. 실시간 재생은 [SceneScript 호환 범�
 - puppet-warp 모델(`MDLV0013` skeleton — Wallpaper Engine이 물고기·캐릭터의 몸을 휘게 하는 포맷): mesh/bone/mirror 모드 bone 애니메이션까지 디코드해 CPU skinning으로 재생하므로 puppet 몸체가 뻣뻣하게 미끄러지지 않고 실제로 휘어집니다.
 - scene 패키지에 들어있는 GLSL shader를 Core Image로 그대로 포팅한 shader effect: `spin`, `shake`, `waterripple`, `waterwaves`, `waterflow`, `scroll` — flow-map 기반 shake 덕분에 지느러미와 꼬리만 움직이며, scene 전체를 덮는 compose layer의 `waterripple` 같은 full-canvas warp는 아래 layer들로 분배되어 살아있는 keyframe 모션 위에 물결이 적용됩니다.
 - 근사 처리되는 particle/glint effect: 단순 sprite/pulse-ring particle system은 Core Animation emitter로, `nitro` 계열 glint effect는 noise 기반 twinkle 근사로 재생.
+
+이미지 레이어에 크기와 구조가 검증된 TEXB0003 MP4 영상 텍스처가 들어 있는 씬은 내장 이미지 해독기가 처리하지 못해도 외부 엔진 준비를 시도할 수 있습니다. 렌더링이 성공한 뒤에만 적용하며, 이는 네이티브 실시간 영상 지원이나 모든 영상 텍스처 씬의 호환성을 뜻하지 않습니다.
 
 여전히 생략되거나 근사치인 항목: 복잡한 particle operator, masked effect composition, 스칼라 값 이외의 effect 속성 script, 전체 3D/model·animation API, 지원하는 전체 사각형 패스 이외의 custom shader pipeline, Music·Spotify 외 앱의 미디어 정보, sound layer 제어, 내장 MP4 video texture — 네이티브 scene engine이 해당 runtime 기능을 구현하기 전까지 Wallpaper Engine과 다르게 보일 수 있습니다. package analyzer가 effect file, shader file, shader uniform, SceneScript, particle, sound layer, audio-analysis input, video texture 같은 scene runtime 요구사항을 보존하므로 이 parity 작업을 정확히 겨냥할 수 있습니다.
 
@@ -192,6 +230,7 @@ scene 지원은 보수적입니다. 실시간 재생은 [SceneScript 호환 범�
 - macOS 14 이상
 - Xcode command line tools
 - Swift 6 toolchain
+- 별도 Steam 보조 프로그램을 빌드할 때 필요한 .NET 9 SDK(`net9.0`)
 - 선택: WebM, MKV, AVI 변환용 `ffmpeg`
 
 ```bash
@@ -213,11 +252,20 @@ open "dist/Workshop Wallpaper Bridge.app"
 dist/WorkshopWallpaperBridge-macOS-arm64.dmg
 ```
 
-선택적인 외부 GPL scene renderer를 로컬 패키지에 포함하려면:
+Steam 연동 패키지는 패키징 전에 별도 보조 프로그램을 빌드합니다.
 
-- `bash Scripts/build-scene-renderer.sh`로 고정된 공개 소스와 라이선스 고지를 빌드할 수 있습니다. 릴리즈 CI도 패키징 전에 이 단계를 실행합니다.
-- `Scripts/package-app.sh`를 실행하기 전에 `SCENE_RENDERER_BINARY=/path/to/wwb-scene-renderer`를 설정하거나 실행 파일을 `ExternalRenderers/wwb-scene-renderer`에 둡니다.
-- 패키지 script는 renderer가 있으면 app resources로 복사하고, [3x-haust/wallpaperengine-mac-renderer](https://github.com/3x-haust/wallpaperengine-mac-renderer)의 [Scripts/scene-renderer.env](Scripts/scene-renderer.env)에 고정한 source ref와 source link를 담은 `Renderer Notices/GPL Scene Renderer Notice.txt`를 항상 씁니다.
+```bash
+bash Scripts/build-steam-helper.sh
+bash Scripts/package-app.sh
+```
+
+`Scripts/build-steam-helper.sh`는 SteamRE/DepotDownloader 3.4.0 기반의 자체 런타임 포함 macOS arm64 보조 프로그램을 빌드하고, `Scripts/package-app.sh`는 이를 앱 번들에 통합합니다. 보조 프로그램 배포에는 GPL 라이선스와 대응 소스 고지를 함께 포함해야 합니다. .NET은 개발자 빌드 요건이며, 일반 사용자가 별도로 설치해야 하는 실행 요건이 아닙니다.
+
+로컬 패키지에는 외부 GPL 씬 렌더러가 포함됩니다.
+
+- `Scripts/package-app.sh`는 사용할 렌더러가 없으면 `Scripts/build-scene-renderer.sh`로 고정된 공개 소스를 빌드하며, 빌드가 실패하면 패키징도 중단합니다. 위에 안내한 렌더러 빌드·실행 의존성이 설치되어 있어야 합니다. 릴리스 CI도 패키징 전에 이 단계를 실행합니다.
+- 기존 빌드를 쓰려면 `SCENE_RENDERER_BINARY=/path/to/wwb-scene-renderer`를 설정하거나 실행 파일을 `ExternalRenderers/wwb-scene-renderer`에 둡니다.
+- 패키징 스크립트는 렌더러와 로컬 라이브러리를 앱 리소스로 복사하고, [3x-haust/wallpaperengine-mac-renderer](https://github.com/3x-haust/wallpaperengine-mac-renderer)의 [Scripts/scene-renderer.env](Scripts/scene-renderer.env)에 고정한 source ref와 source link를 담은 `Renderer Notices/GPL Scene Renderer Notice.txt`를 항상 씁니다.
 - 다른 renderer build를 배포한다면 해당 공개 source에 맞게 `SCENE_RENDERER_SOURCE_URL`과 `SCENE_RENDERER_SOURCE_REF`를 설정하세요.
 
 패키지는 Wallpaper Engine runtime assets를 절대 포함하지 않습니다:
@@ -288,15 +336,15 @@ brew install ffmpeg
 
 ## 프로젝트 경계
 
-Workshop Wallpaper Bridge는 local-only 앱입니다.
+Workshop Wallpaper Bridge는 월페이퍼 재생과 가져온 라이브러리를 로컬에 유지하며, 선택적으로 정상 인증을 통한 Steam 창작마당 접근을 제공합니다.
 
-- Steam Workshop 항목을 다운로드하지 않습니다.
-- Steam 인증을 우회하지 않습니다.
-- DRM을 우회하지 않습니다.
-- Steam protocol을 흉내 내지 않습니다.
-- 완전한 `scene.pkg` 런타임 호환을 주장하지 않습니다.
+- 검색·다운로드는 Wallpaper Engine(앱 ID `431960`)과 로그인한 계정의 권한 범위로 제한합니다.
+- Steam 인증, 계정 권한, DRM을 우회하지 않습니다.
+- Steam 프로토콜을 모방하거나 사칭하지 않습니다. 별도 보조 프로그램의 정상 인증 SteamKit 클라이언트 사용은 허용하며, 금지된 프로토콜 모방과 구분합니다.
+- 완전한 `scene.pkg` 런타임 또는 공식 Wallpaper Engine 호환성을 주장하지 않습니다. 다운로드만으로 재생 가능성이 입증되지는 않습니다.
 - 제작자 asset을 업로드, 공유, 재배포하지 않습니다.
 - 원본으로 복사해 온 Workshop 폴더를 수정하지 않습니다.
+- Wallpaper Engine runtime `assets`를 다운로드하거나 번들하지 않습니다. 사용자가 위 안내대로 자신의 설치본에서 준비해야 합니다.
 
 Workshop Wallpaper Bridge는 Valve, Steam, Wallpaper Engine과 관련이 없는 비공식 프로젝트입니다. Wallpaper Engine은 해당 소유자의 상표입니다.
 
@@ -321,4 +369,4 @@ Workshop Wallpaper Bridge는 Valve, Steam, Wallpaper Engine과 관련이 없는 
 
 ## 라이선스
 
-MIT
+본 앱은 MIT 라이선스입니다. 별도 Steam 보조 프로그램은 [SteamRE/DepotDownloader 3.4.0](https://github.com/SteamRE/DepotDownloader/tree/DepotDownloader_3.4.0) 기반으로, 앱의 MIT가 아닌 해당 [GPL 라이선스](https://github.com/SteamRE/DepotDownloader/blob/DepotDownloader_3.4.0/LICENSE)를 따릅니다. 선택적인 외부 씬 렌더러에도 별도의 GPL 라이선스·소스 고지가 적용됩니다. 배포 시 각 라이선스를 유지하고 수정 사항을 포함한 GPL 구성 요소의 대응 소스를 제공해야 합니다.
