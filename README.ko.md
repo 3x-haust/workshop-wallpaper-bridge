@@ -93,7 +93,7 @@ Workshop Wallpaper Bridge가 도움이 되었다면 [Patreon](https://www.patreo
 
 탐색 창의 왼쪽 메뉴에는 **탐색**, **내 배경화면**, **설정**이 있습니다. 받은 항목은 별도 다운로드 탭 없이 **내 배경화면**에서 관리합니다. 탐색과 로컬 라이브러리는 썸네일 격자와 큰 미리보기·상세 정보를 표시하며, 작은 창에서는 상세 화면을 별도로 엽니다. 기존 로컬 가져오기·표시 방식·재생·순환·삭제 기능은 유지합니다. **영상 변환**과 **정적 배경화면 설정**은 항목 상세와 라이브러리 우클릭 메뉴에서 사용할 수 있습니다. 설정에는 기존 재생·오디오·씬 엔진 자산·화면 보호기·언어 기능이 있습니다. [화면 디자인 안내](DESIGN.md)를 참고하세요.
 
-Settings 탭의 **Language** 선택기로 앱 UI 텍스트를 **System**, **한국어**, **English** 사이에서 전환할 수 있습니다. 앱을 재시작하지 않아도 즉시 적용되며, 버튼·섹션 제목·안내 문구 등 정적 UI 문구만 번역 대상이므로 앱 실행 중 생성되는 상태 메시지는 영어로 표시될 수 있습니다.
+Settings 탭의 **Language** 선택기로 앱 UI 텍스트를 **System**, **한국어**, **简体中文**, **English** 사이에서 전환할 수 있습니다. 앱을 재시작하지 않아도 즉시 적용되며, 버튼·섹션 제목·안내 문구 등 정적 UI 문구만 번역 대상이므로 앱 실행 중 생성되는 상태 메시지는 영어로 표시될 수 있습니다. **System**을 선택하면 macOS 언어가 한국어 또는 간체 중국어일 때 해당 번역을 쓰고, 그 외 언어는 영어로 표시됩니다.
 
 라이브러리 순환(로테이션):
 
@@ -360,6 +360,7 @@ Workshop Wallpaper Bridge는 Valve, Steam, Wallpaper Engine과 관련이 없는 
 
 - <a href="https://github.com/3x-haust"><img src="https://avatars.githubusercontent.com/u/94370559?v=4&s=72" width="36" height="36" alt="@3x-haust"></a> [유성윤](https://github.com/3x-haust) `@3x-haust`
 - <a href="https://github.com/dev-di-tto"><img src="https://avatars.githubusercontent.com/u/297542341?v=4&s=72" width="36" height="36" alt="@dev-di-tto"></a> [메타몽](https://github.com/dev-di-tto) `@dev-di-tto`
+- <a href="https://github.com/cl1107"><img src="https://avatars.githubusercontent.com/u/21985353?v=4&s=72" width="36" height="36" alt="@cl1107"></a> [@cl1107](https://github.com/cl1107)
 - <a href="https://github.com/lotgood"><img src="https://avatars.githubusercontent.com/u/31810171?v=4&s=72" width="36" height="36" alt="@lotgood"></a> [@lotgood](https://github.com/lotgood)
 - <a href="https://github.com/ohjack83-lab"><img src="https://avatars.githubusercontent.com/u/263676419?v=4&s=72" width="36" height="36" alt="@ohjack83-lab"></a> [ohjack83](https://github.com/ohjack83-lab) `@ohjack83-lab`
 <!-- profile-roster:end -->

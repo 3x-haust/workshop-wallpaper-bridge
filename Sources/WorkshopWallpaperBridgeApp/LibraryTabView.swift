@@ -210,7 +210,7 @@ struct LibraryTabView: View {
         HStack(spacing: 10) {
             Picker(model.L("library.rotate.every"), selection: $model.rotationInterval) {
                 ForEach(AppViewModel.rotationIntervalOptions, id: \.seconds) { option in
-                    Text(option.label).tag(option.seconds)
+                    Text(model.L(option.key)).tag(option.seconds)
                 }
             }
             .frame(maxWidth: 190)

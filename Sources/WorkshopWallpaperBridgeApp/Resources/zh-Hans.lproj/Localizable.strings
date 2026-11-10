@@ -1,0 +1,128 @@
+/* App chrome */
+"app.title" = "Workshop Wallpaper Bridge";
+"app.subtitle" = "面向已复制 Wallpaper Engine 项目的菜单栏壁纸工具。";
+"app.stop" = "停止";
+
+/* Tabs */
+"tab.library" = "资料库";
+"tab.settings" = "设置";
+
+/* Library tab: source import */
+"library.source.title" = "导入";
+"library.source.placeholder" = ".../steamapps/workshop/content/431960";
+"library.browse" = "浏览";
+"library.scan" = "扫描";
+"library.import" = "导入所选项目";
+"library.import.help.title" = "导入项目";
+"library.import.help.body" = "选择已复制的 Workshop 文件夹并点击扫描，然后勾选一个或多个已扫描项目，再点击导入所选项目，将其加入 Mac 资料库。";
+"library.scanned.empty" = "已扫描项目";
+"library.imported.empty" = "已导入项目";
+"library.sort.title" = "排序";
+"library.new.badge" = "NEW";
+"library.preview.placeholder" = "选择壁纸";
+"library.preview.empty" = "所选壁纸的预览会显示在这里。";
+
+/* Library tab: toolbar */
+"library.display" = "显示";
+"library.addVideo" = "添加视频文件";
+
+/* Library tab: rotation */
+"library.rotate" = "循环播放资料库";
+"library.rotate.shuffle" = "随机播放";
+"library.rotate.every" = "间隔";
+"library.rotate.next" = "下一个";
+"library.rotate.interval.30s" = "30 秒";
+"library.rotate.interval.1m" = "1 分钟";
+"library.rotate.interval.5m" = "5 分钟";
+"library.rotate.interval.15m" = "15 分钟";
+"library.rotate.interval.30m" = "30 分钟";
+"library.rotate.interval.1h" = "1 小时";
+
+/* Library tab: actions */
+"library.play" = "在桌面播放";
+"library.remove" = "移除";
+"library.remove.selected" = "移除所选项目";
+"library.remove.confirm.title" = "将“%@”移到废纸篓？";
+"library.remove.confirm.title.fallback" = "移到废纸篓？";
+"library.remove.confirm.message" = "这会把已导入的副本移到废纸篓，之后可以还原。不会改动你原先复制的 Workshop 文件夹。";
+"library.remove.confirm.button" = "移到废纸篓";
+"library.more" = "更多";
+"library.convert" = "转换视频";
+"library.setStillWallpaper" = "设为静态壁纸";
+"library.screenSaverSettings" = "屏幕保护程序设置";
+"library.help.title" = "关于资料库";
+"library.help.body" = "导入的文件只保存在本机，不会修改原件。视频壁纸会生成一帧用作静态壁纸；屏幕保护程序动画支持 MP4、MOV 和 M4V。";
+
+/* Settings tab: playback */
+"settings.playback.title" = "播放";
+"settings.openAtLogin" = "登录时打开";
+"settings.autoPause" = "被其他应用遮挡时自动暂停";
+"settings.animateScreenSaver" = "屏幕保护程序动画";
+"settings.autoCheckUpdates" = "自动检查更新";
+"settings.checkUpdates" = "检查更新";
+"settings.downloadUpdate" = "下载更新";
+
+/* Settings tab: audio */
+"settings.audio.title" = "音频";
+"settings.audio.toggle" = "播放壁纸音频";
+"settings.audio.help.title" = "关于壁纸音频";
+"settings.audio.help.body" = "适用于视频壁纸，以及场景的背景音乐/环境音。如果壁纸因被其他应用遮挡而暂停，音频也会一并暂停。";
+
+/* Settings tab: scene engine assets */
+"settings.scene.title" = "场景引擎资源";
+"settings.scene.choose" = "选择资源文件夹…";
+"settings.scene.choose.message" = "请选择 Wallpaper Engine assets 文件夹中的内容。";
+"settings.scene.reset" = "重置";
+"settings.scene.help.title" = "关于场景引擎资源";
+"settings.scene.help.body" = "请复制 Windows 安装目录 steamapps/common/wallpaper_engine/assets 中的内容。";
+"settings.scene.status.unset" = "未设置。如果应用支持目录中已有默认资源文件夹，场景渲染器会使用它。";
+"settings.scene.status.ready" = "场景引擎资源已就绪：%@";
+"settings.scene.status.incomplete" = "场景引擎资源文件夹缺失或不完整：%@";
+"settings.scene.status.envReady" = "正在使用 WWB_SCENE_ENGINE_ASSETS_DIR：%@";
+"settings.scene.status.envIncomplete" = "已设置 WWB_SCENE_ENGINE_ASSETS_DIR，但资源文件夹缺失或不完整。";
+"settings.scene.status.invalid" = "这不像 Wallpaper Engine 的 assets 文件夹。其中必须包含 materials/ 和 shaders/。请复制 steamapps/common/wallpaper_engine/assets 的内容，而不是上一级文件夹。";
+"settings.scene.status.copyFailed" = "无法将场景引擎资源复制到应用支持目录：%@";
+"settings.scene.status.copied" = "已将场景引擎资源复制到应用支持目录。";
+"settings.scene.status.reset" = "已将场景引擎资源文件夹重置为默认路径。";
+
+/* Settings tab: language */
+"settings.language.title" = "语言";
+"settings.language.system" = "系统";
+"settings.language.korean" = "한국어";
+"settings.language.simplifiedChinese" = "简体中文";
+"settings.language.english" = "English";
+"settings.language.help.title" = "关于语言";
+"settings.language.help.body" = "更改会立即作用于本窗口。应用运行过程中生成的状态消息可能仍显示为英文。";
+
+/* Common */
+"common.ok" = "好";
+"common.cancel" = "取消";
+
+"settings.interaction.toggle" = "与壁纸交互";
+"settings.interaction.help" = "点击并拖动场景或网页壁纸。这会暂时盖住桌面图标；在菜单栏关闭交互后即可再次使用图标。";
+"settings.audioReactive.toggle" = "响应系统音频";
+"settings.audioReactive.permission" = "要让壁纸响应声音，请允许录制屏幕和系统音频。";
+"settings.audioReactive.authorize" = "允许访问…";
+"settings.audioReactive.retry" = "重试音频捕获";
+"settings.audioReactive.restart" = "权限已开启。请退出并重新打开应用以使设置生效。";
+"settings.audioReactive.help" = "让壁纸响应 Mac 上正在播放的声音。macOS 会请求捕获权限。音频仅在本机分析，不会被录制。";
+"settings.liveScenes.toggle" = "优先实时场景";
+"settings.liveScenes.help" = "运行场景脚本以驱动时钟和输入。如果效果看起来不对，请关闭此项改用已渲染视频。需先停止，再点击在桌面播放后生效。";
+"library.playInteractive" = "播放并交互";
+"playback.interaction.on" = "鼠标和键盘交互已开启。要使用桌面图标，请在菜单栏关闭交互。";
+"playback.interaction.off" = "交互已关闭。请使用“播放并交互”来点击或拖动此壁纸。";
+"web.openExternal" = "在浏览器中打开 %@";
+"settings.media.toggle" = "显示音乐信息";
+"settings.media.help" = "从音乐或 Spotify 读取曲目、封面和播放时间。macOS 会请求自动化权限。Spotify 封面从其图片服务加载。";
+
+/* Menu bar */
+"menu.openSettings" = "打开设置";
+"menu.autoPause" = "被其他应用遮挡时自动暂停";
+"menu.checkForUpdates" = "检查更新";
+"menu.openLoginItems" = "打开登录项设置";
+"menu.openScreenSaverSettings" = "打开屏幕保护程序设置";
+"menu.stopPlayback" = "停止播放";
+"menu.shuffleRotation" = "随机循环";
+"menu.nextWallpaper" = "下一张壁纸";
+"menu.rotateEvery" = "循环间隔";
+"menu.quit" = "退出";

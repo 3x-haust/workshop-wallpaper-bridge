@@ -93,7 +93,7 @@ Playback notes:
 
 The browser has **Explore**, **My Wallpapers**, and **Settings** in its sidebar. Completed wallpapers are managed in **My Wallpapers**; there is no separate Downloads tab. Explore and the local library use thumbnail grids with a large selected-item preview and details. Smaller windows open details in a sheet. The existing local import, display mode, playback, rotation and removal controls remain available; **Convert Video** and **Set Still Wallpaper** are available from item details and the library's context menu. Settings retains playback, Audio, Scene Engine Assets, Screen Saver, and Language controls. See [the browser design guide](DESIGN.md).
 
-Use the **Language** picker in the Settings tab to switch the app's UI text between **System**, **한국어**, and **English**. The change applies immediately, without restarting the app; only static UI chrome (buttons, section titles, captions) is localized, so status messages generated while the app runs may still appear in English.
+Use the **Language** picker in the Settings tab to switch the app's UI text between **System**, **한국어**, **简体中文**, and **English**. The change applies immediately, without restarting the app; only static UI chrome (buttons, section titles, captions) is localized, so status messages generated while the app runs may still appear in English. When Language is set to **System**, Korean and Simplified Chinese macOS preferences use those bundled translations; other system languages fall back to English.
 
 Library rotation:
 
@@ -358,6 +358,7 @@ This section is generated from GitHub user profiles.
 
 - <a href="https://github.com/3x-haust"><img src="https://avatars.githubusercontent.com/u/94370559?v=4&s=72" width="36" height="36" alt="@3x-haust"></a> [유성윤](https://github.com/3x-haust) `@3x-haust`
 - <a href="https://github.com/dev-di-tto"><img src="https://avatars.githubusercontent.com/u/297542341?v=4&s=72" width="36" height="36" alt="@dev-di-tto"></a> [메타몽](https://github.com/dev-di-tto) `@dev-di-tto`
+- <a href="https://github.com/cl1107"><img src="https://avatars.githubusercontent.com/u/21985353?v=4&s=72" width="36" height="36" alt="@cl1107"></a> [@cl1107](https://github.com/cl1107)
 - <a href="https://github.com/lotgood"><img src="https://avatars.githubusercontent.com/u/31810171?v=4&s=72" width="36" height="36" alt="@lotgood"></a> [@lotgood](https://github.com/lotgood)
 - <a href="https://github.com/ohjack83-lab"><img src="https://avatars.githubusercontent.com/u/263676419?v=4&s=72" width="36" height="36" alt="@ohjack83-lab"></a> [ohjack83](https://github.com/ohjack83-lab) `@ohjack83-lab`
 <!-- profile-roster:end -->
