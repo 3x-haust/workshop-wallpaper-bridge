@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import Combine
 import UniformTypeIdentifiers
 import WorkshopWallpaperCore
 
@@ -49,18 +50,47 @@ protocol WallpaperPlaying: AnyObject {
         audioEnabled: Bool?,
         audioVolume: Double?
     ) throws
+    func play(asset: WallpaperAsset, on displayIDs: Set<String>, autoPauseWhenCovered: Bool,
+              displayMode: WallpaperDisplayMode, audioEnabled: Bool?, audioVolume: Double?) throws
+    func stop(on displayIDs: Set<String>)
+    func setDisplayMode(_ mode: WallpaperDisplayMode, on displayIDs: Set<String>)
+    func setAudioSettings(enabled: Bool, volume: Double)
     func stop()
     func setDisplayMode(_ mode: WallpaperDisplayMode)
     func setAutoPauseWhenCovered(_ enabled: Bool)
     func setInteractionEnabled(_ enabled: Bool)
     func setPlaybackStatusHandler(_ handler: @escaping (WallpaperPlaybackEvent) -> Void)
     func cancelPendingPlayback()
+    func cancelPendingPlayback(on displayIDs: Set<String>)
+    func play(asset: WallpaperAsset, on displayIDs: Set<String>, autoPauseWhenCovered: Bool,
+              displayMode: WallpaperDisplayMode, audioEnabled: Bool?, audioVolume: Double?,
+              completion: @escaping (Result<Set<String>, Error>) -> Void) throws
 }
 
 extension WallpaperPlaying {
     func setInteractionEnabled(_ enabled: Bool) {}
+    func setAudioSettings(enabled: Bool, volume: Double) {}
+    func play(asset: WallpaperAsset, on displayIDs: Set<String>, autoPauseWhenCovered: Bool,
+              displayMode: WallpaperDisplayMode, audioEnabled: Bool?, audioVolume: Double?) throws {
+        try play(asset: asset, autoPauseWhenCovered: autoPauseWhenCovered, displayMode: displayMode,
+                 audioEnabled: audioEnabled, audioVolume: audioVolume)
+    }
+    func stop(on displayIDs: Set<String>) {
+        if !displayIDs.isEmpty { stop() }
+    }
+    func setDisplayMode(_ mode: WallpaperDisplayMode, on displayIDs: Set<String>) { setDisplayMode(mode) }
     func setPlaybackStatusHandler(_ handler: @escaping (WallpaperPlaybackEvent) -> Void) {}
     func cancelPendingPlayback() {}
+    func cancelPendingPlayback(on displayIDs: Set<String>) {
+        if !displayIDs.isEmpty { cancelPendingPlayback() }
+    }
+    func play(asset: WallpaperAsset, on displayIDs: Set<String>, autoPauseWhenCovered: Bool,
+              displayMode: WallpaperDisplayMode, audioEnabled: Bool?, audioVolume: Double?,
+              completion: @escaping (Result<Set<String>, Error>) -> Void) throws {
+        try play(asset: asset, on: displayIDs, autoPauseWhenCovered: autoPauseWhenCovered,
+                 displayMode: displayMode, audioEnabled: audioEnabled, audioVolume: audioVolume)
+        completion(.success(displayIDs))
+    }
 }
 
 extension WallpaperPlayer: WallpaperPlaying {}
@@ -87,11 +117,49 @@ final class AppViewModel: ObservableObject {
     @Published private(set) var sceneVideoRenderRevision = 0
     @Published var pendingLibraryRemoval: PendingLibraryRemoval?
     @Published private(set) var importProgress: ImportProgress?
+    @Published private(set) var connectedDisplays: [WallpaperDisplay] = []
+    @Published private(set) var displayAssignments: [String: DisplayWallpaperAssignment] = [:]
+    @Published var selectedDisplayID = "" {
+        didSet {
+            if selectedDisplayID != oldValue { beginApplicationIntent() }
+        }
+    }
+    private var displayObservation: AnyCancellable?
+    private var displaysProvider: () -> [WallpaperDisplay] = { WallpaperDisplay.connected() }
+    private var restoringPreferences = false
+    private(set) var rotationDisplayIDs: Set<String> = []
+
+    var selectedDisplayIDs: Set<String> {
+        selectedDisplayID.isEmpty ? Set(connectedDisplays.map(\.id)) : [selectedDisplayID]
+    }
+
+    var selectedDisplayMode: WallpaperDisplayMode? {
+        let modes = selectedDisplayIDs.map { displayAssignments[$0]?.displayMode ?? displayMode }
+        guard let first = modes.first, modes.allSatisfy({ $0 == first }) else { return nil }
+        return first
+    }
+
+    func applySelectedDisplayMode(_ mode: WallpaperDisplayMode?) {
+        guard let mode else { return }
+        displayMode = mode
+    }
+
+    func identifyDisplays() { DisplayIdentification.shared.show(displays: connectedDisplays) }
+
     @Published var displayMode: WallpaperDisplayMode = .fit {
         didSet {
-            wallpaperPlayer.setDisplayMode(displayMode)
+            guard !restoringPreferences else { return }
+            wallpaperPlayer.setDisplayMode(displayMode, on: selectedDisplayIDs)
+            for id in selectedDisplayIDs {
+                if displayAssignments[id] == nil {
+                    displayAssignments[id] = DisplayWallpaperAssignment(assetID: nil, displayMode: displayMode, isPlaying: false)
+                } else {
+                    displayAssignments[id]?.displayMode = displayMode
+                }
+            }
+            saveDisplayAssignments()
             userDefaults.set(displayMode.rawValue, forKey: PreferenceKey.displayMode)
-            if lockScreenAnimationEnabled, let asset = selectedLibraryAsset {
+            if lockScreenAnimationEnabled, let asset = lastActiveWallpaper {
                 _ = refreshLockScreenAnimationConfiguration(asset: asset)
             }
         }
@@ -130,13 +198,13 @@ final class AppViewModel: ObservableObject {
     /// Existing users retain silent playback until they opt in.
     @Published var wallpaperAudioEnabled = false {
         didSet {
-            WallpaperPlayer.shared.setAudioSettings(enabled: wallpaperAudioEnabled, volume: wallpaperAudioVolume)
+            wallpaperPlayer.setAudioSettings(enabled: wallpaperAudioEnabled, volume: wallpaperAudioVolume)
             userDefaults.set(wallpaperAudioEnabled, forKey: PreferenceKey.wallpaperAudioEnabled)
         }
     }
     @Published var wallpaperAudioVolume = 0.5 {
         didSet {
-            WallpaperPlayer.shared.setAudioSettings(enabled: wallpaperAudioEnabled, volume: wallpaperAudioVolume)
+            wallpaperPlayer.setAudioSettings(enabled: wallpaperAudioEnabled, volume: wallpaperAudioVolume)
             userDefaults.set(wallpaperAudioVolume, forKey: PreferenceKey.wallpaperAudioVolume)
         }
     }
@@ -187,9 +255,7 @@ final class AppViewModel: ObservableObject {
             if rotationEnabled {
                 startRotation()
             } else {
-                stopRotationTimer()
-                userDefaults.set(false, forKey: PreferenceKey.rotationEnabled)
-                status = "Rotation stopped."
+                disableRotation(status: "Rotation stopped.")
             }
         }
     }
@@ -248,14 +314,14 @@ final class AppViewModel: ObservableObject {
     private var rotationQueue: [WallpaperAsset.ID] = []
     private var rotationIndex = 0
     private(set) var applicationIntentID = UUID()
-    private var requestedPlayback: (asset: WallpaperAsset, remember: Bool)?
+    private var requestedPlayback: [String: (asset: WallpaperAsset, requestID: UUID)] = [:]
 
     @discardableResult
     func beginApplicationIntent() -> UUID {
         applicationIntentID = UUID()
-        requestedPlayback = nil
+        for id in selectedDisplayIDs { requestedPlayback[id] = nil }
         SceneWallpaperContentFactory.cancelWorkshopPreparations()
-        wallpaperPlayer.cancelPendingPlayback()
+        wallpaperPlayer.cancelPendingPlayback(on: selectedDisplayIDs)
         return applicationIntentID
     }
 
@@ -270,7 +336,7 @@ final class AppViewModel: ObservableObject {
         currentVersionProvider = { AppVersionProvider.currentVersion() }
         do {
             store = try LibraryStore.defaultStore()
-            connectPlaybackStatus()
+            configureDisplays()
             restorePreferences()
             loadLibrary()
             playLastWallpaperIfAvailable()
@@ -280,7 +346,7 @@ final class AppViewModel: ObservableObject {
             store = LibraryStore(
                 root: FileManager.default.temporaryDirectory.appending(path: "WorkshopWallpaperBridge")
             )
-            connectPlaybackStatus()
+            configureDisplays()
             status = error.localizedDescription
         }
         syncLaunchAtLoginStatus()
@@ -302,6 +368,7 @@ final class AppViewModel: ObservableObject {
         wallpaperPlayer: WallpaperPlaying = WallpaperPlayer.shared,
         currentVersionProvider: @escaping () -> String = { "0.0.0" },
         userDefaults: UserDefaults = .standard,
+        displaysProvider: @escaping () -> [WallpaperDisplay] = { WallpaperDisplay.connected() },
         scenePreparer: (@MainActor (WallpaperAsset, @escaping @MainActor (Double) -> Void) async throws -> Void)? = nil
     ) {
         self.store = store
@@ -313,7 +380,8 @@ final class AppViewModel: ObservableObject {
         self.scenePreparer = scenePreparer
         self.currentVersionProvider = currentVersionProvider
         self.userDefaults = userDefaults
-        connectPlaybackStatus()
+        self.displaysProvider = displaysProvider
+        configureDisplays()
         restorePreferences()
         loadLibrary()
         playLastWallpaperIfAvailable()
@@ -657,9 +725,6 @@ extension AppViewModel {
             status = "Select a library project first."
             return false
         }
-        if rotationEnabled {
-            disableRotation()
-        }
         do {
             try play(asset: asset, remember: true)
             return true
@@ -742,9 +807,10 @@ extension AppViewModel {
         do {
             for asset in assets {
                 try store.removeAsset(id: asset.id)
-                if requestedPlayback?.asset.id == asset.id { beginApplicationIntent() }
+                let pendingDisplays = Set(requestedPlayback.filter { $0.value.asset.id == asset.id }.keys)
+                wallpaperPlayer.cancelPendingPlayback(on: pendingDisplays)
+                for id in pendingDisplays { requestedPlayback[id] = nil }
                 if activeWallpaperAssetID == asset.id {
-                    wallpaperPlayer.stop()
                     activeWallpaperAssetID = nil
                     playbackEvent = nil
                     userDefaults.removeObject(forKey: PreferenceKey.lastPlayedAssetId)
@@ -800,11 +866,27 @@ extension AppViewModel {
         }
     }
 
+    func stopSelectedPlayback() {
+        beginApplicationIntent()
+        let ids = selectedDisplayIDs
+        wallpaperPlayer.stop(on: ids)
+        for id in ids { displayAssignments[id]?.isPlaying = false }
+        saveDisplayAssignments()
+        excludeRotationDisplays(ids)
+        if !displayAssignments.values.contains(where: { $0.isPlaying && $0.assetID == activeWallpaperAssetID }) {
+            activeWallpaperAssetID = nil
+            playbackEvent = nil
+        }
+        status = "Playback stopped on selected displays."
+    }
+
     func stopPlayback() {
         beginApplicationIntent()
-        requestedPlayback = nil
+        requestedPlayback = [:]
         activeWallpaperAssetID = nil
         playbackEvent = nil
+        for id in displayAssignments.keys { displayAssignments[id]?.isPlaying = false }
+        saveDisplayAssignments()
         if rotationEnabled {
             disableRotation()
         }
@@ -887,6 +969,18 @@ extension AppViewModel {
     func loadLibrary(allowEmptySelection: Bool = false) {
         do {
             libraryAssets = try store.load().assets
+            let removedDisplays = Set(displayAssignments.filter { assignment in
+                guard let assetID = assignment.value.assetID else { return false }
+                return !libraryAssets.contains(where: { $0.id == assetID })
+            }.keys)
+            if !removedDisplays.isEmpty {
+                wallpaperPlayer.stop(on: removedDisplays)
+                for id in removedDisplays {
+                    displayAssignments[id]?.assetID = nil
+                    displayAssignments[id]?.isPlaying = false
+                }
+                saveDisplayAssignments()
+            }
             normalizeLibrarySelection(allowEmpty: allowEmptySelection)
             if rotationEnabled {
                 if playableLibraryAssets.isEmpty {
@@ -940,7 +1034,7 @@ extension AppViewModel {
         do {
             try lockScreenAnimationController.setEnabled(
                 enabled,
-                activeAsset: selectedLibraryAsset,
+                activeAsset: lastActiveWallpaper,
                 displayMode: displayMode
             )
             userDefaults.set(enabled, forKey: PreferenceKey.lockScreenAnimationEnabled)
@@ -955,7 +1049,32 @@ extension AppViewModel {
         }
     }
 
+    private func configureDisplays() {
+        connectedDisplays = displaysProvider()
+        displayObservation = NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)
+            .sink { [weak self] _ in
+                Task { @MainActor in self?.refreshConnectedDisplays() }
+            }
+        if let player = wallpaperPlayer as? WallpaperPlayer {
+            player.errorHandler = { [weak self] message in self?.status = message }
+        }
+    }
+
+    func refreshConnectedDisplays() { connectedDisplays = displaysProvider() }
+
+    private func saveDisplayAssignments() {
+        guard let data = try? JSONEncoder().encode(displayAssignments) else { return }
+        userDefaults.set(data, forKey: PreferenceKey.displayAssignments)
+    }
+
     private func restorePreferences() {
+        restoringPreferences = true
+        defer { restoringPreferences = false }
+        if let data = userDefaults.data(forKey: PreferenceKey.displayAssignments),
+           let saved = try? JSONDecoder().decode([String: DisplayWallpaperAssignment].self, from: data) {
+            displayAssignments = saved
+        }
+        rotationDisplayIDs = Set(userDefaults.stringArray(forKey: PreferenceKey.rotationDisplayIDs) ?? [])
         if let rawDisplayMode = userDefaults.string(forKey: PreferenceKey.displayMode),
            let storedDisplayMode = WallpaperDisplayMode(rawValue: rawDisplayMode) {
             displayMode = storedDisplayMode
@@ -1038,12 +1157,31 @@ extension AppViewModel {
         }
     }
 
+    private var lastActiveWallpaper: WallpaperAsset? {
+        if let id = userDefaults.string(forKey: PreferenceKey.lastPlayedAssetId),
+           let asset = libraryAssets.first(where: { $0.id == id }) { return asset }
+        return selectedLibraryAsset
+    }
+
     private func playLastWallpaperIfAvailable() {
-        // If rotation was on, let restoreRotationIfNeeded() own the initial play
-        // to avoid playing a wallpaper twice on launch (double play / flicker).
-        guard !userDefaults.bool(forKey: PreferenceKey.rotationEnabled) else {
+        if userDefaults.data(forKey: PreferenceKey.displayAssignments) != nil {
+            if let id = userDefaults.string(forKey: PreferenceKey.lastPlayedAssetId),
+               libraryAssets.contains(where: { $0.id == id }) {
+                selectedLibraryAssetId = id
+            }
+            let rotating = userDefaults.bool(forKey: PreferenceKey.rotationEnabled) ? rotationDisplayIDs : []
+            for (displayID, assignment) in displayAssignments where assignment.isPlaying && !rotating.contains(displayID) {
+                guard let asset = libraryAssets.first(where: { $0.id == assignment.assetID }) else { continue }
+                do {
+                    try applyWallpaper(asset, on: [displayID], remember: false)
+                } catch {
+                    status = "\(displayID): \(error.localizedDescription)"
+                }
+            }
             return
         }
+        // A legacy rotation applies only to displays connected during migration.
+        guard !userDefaults.bool(forKey: PreferenceKey.rotationEnabled) else { return }
         guard let id = userDefaults.string(forKey: PreferenceKey.lastPlayedAssetId),
               let asset = libraryAssets.first(where: { $0.id == id }),
               asset.supportStatus == .playable else {
@@ -1051,7 +1189,7 @@ extension AppViewModel {
         }
         selectedLibraryAssetId = id
         do {
-            try play(asset: asset, remember: false)
+            try applyWallpaper(asset, on: selectedDisplayIDs, remember: false)
         } catch {
             userDefaults.removeObject(forKey: PreferenceKey.lastPlayedAssetId)
             status = "Could not restore \(asset.title): \(error.localizedDescription)"
@@ -1065,7 +1203,7 @@ extension AppViewModel {
         do {
             try lockScreenAnimationController.setEnabled(
                 true,
-                activeAsset: selectedLibraryAsset,
+                activeAsset: lastActiveWallpaper,
                 displayMode: displayMode
             )
         } catch {
@@ -1074,51 +1212,12 @@ extension AppViewModel {
     }
 
     private func play(asset: WallpaperAsset, remember: Bool) throws {
-        beginApplicationIntent()
-        requestedPlayback = (asset, remember)
-        playbackEvent = nil
-        status = L("workshop.play.requested")
-        do {
-            try wallpaperPlayer.play(
-                asset: asset,
-                autoPauseWhenCovered: autoPauseWhenCovered,
-                displayMode: displayMode,
-                audioEnabled: wallpaperAudioEnabled,
-                audioVolume: wallpaperAudioVolume
-            )
-        } catch {
-            requestedPlayback = nil
-            throw error
-        }
+        try applyWallpaper(asset, on: selectedDisplayIDs, remember: remember, excludingRotation: true)
     }
 
-    private func connectPlaybackStatus() {
-        wallpaperPlayer.setPlaybackStatusHandler { [weak self] event in
-            self?.receivePlaybackStatus(event)
-        }
-    }
-
-    private func receivePlaybackStatus(_ event: WallpaperPlaybackEvent) {
-        guard let request = requestedPlayback else { return }
-        switch event {
-        case .ready(let assetID):
-            guard assetID == request.asset.id else { return }
-            activeWallpaperAssetID = assetID
-            if request.remember {
-                userDefaults.set(assetID, forKey: PreferenceKey.lastPlayedAssetId)
-            }
-            reportReadyPlayback(request.asset)
-        case .failed(let assetID, let message):
-            guard assetID == request.asset.id else { return }
-            requestedPlayback = nil
-            status = message
-        }
-        playbackEvent = event
-    }
-
-    private func reportReadyPlayback(_ asset: WallpaperAsset) {
-        let lockScreenError = refreshLockScreenAnimationConfiguration(asset: asset)
-        let playbackStatus = L("workshop.play.ready")
+    private func reportReadyPlayback(_ asset: WallpaperAsset, updateScreenSaver: Bool, readyStatus: String?) {
+        let lockScreenError = updateScreenSaver ? refreshLockScreenAnimationConfiguration(asset: asset) : nil
+        let playbackStatus = readyStatus ?? L("workshop.play.ready")
         status = lockScreenError.map {
             "\(playbackStatus) Screen Saver update failed: \($0)"
         } ?? playbackStatus
@@ -1140,9 +1239,7 @@ extension AppViewModel {
     /// pinned to the scene's still image (written on the initial play) until
     /// the user replayed the wallpaper.
     private func refreshLockScreenAnimationConfigurationAfterSceneVideoRender(assetId: String) {
-        guard let asset = libraryAssets.first(where: { $0.id == assetId }) else {
-            return
-        }
+        guard let asset = lastActiveWallpaper, asset.id == assetId else { return }
         _ = refreshLockScreenAnimationConfiguration(asset: asset)
     }
 
@@ -1254,19 +1351,29 @@ extension AppViewModel {
         guard userDefaults.bool(forKey: PreferenceKey.rotationEnabled) else {
             return
         }
+        if userDefaults.object(forKey: PreferenceKey.rotationDisplayIDs) == nil {
+            rotationDisplayIDs = Set(connectedDisplays.map(\.id))
+        }
+        guard !rotationDisplayIDs.isEmpty else { disableRotation(); return }
+        if let currentID = rotationDisplayIDs.sorted().compactMap({ displayAssignments[$0]?.assetID }).first {
+            selectedLibraryAssetIds = [currentID]
+        }
         setRotationEnabledSilently(true)
-        startRotation()
+        startRotation(restoring: true)
     }
 
-    func startRotation() {
+    func startRotation(restoring: Bool = false) {
+        if !restoring { rotationDisplayIDs = selectedDisplayIDs }
         guard !playableLibraryAssets.isEmpty else {
             disableRotation(status: "Import or add a playable wallpaper before starting rotation.")
             return
         }
+        guard !rotationDisplayIDs.isEmpty else { disableRotation(); return }
+        userDefaults.set(Array(rotationDisplayIDs).sorted(), forKey: PreferenceKey.rotationDisplayIDs)
         userDefaults.set(true, forKey: PreferenceKey.rotationEnabled)
         buildRotationQueue()
         restartRotationTimer()
-        advanceRotation(initial: true)
+        advanceRotation(initial: true, rememberActiveAsset: !restoring)
     }
 
     func setRotationEnabledSilently(_ value: Bool) {
@@ -1282,9 +1389,18 @@ extension AppViewModel {
         stopRotationTimer()
         setRotationEnabledSilently(false)
         userDefaults.set(false, forKey: PreferenceKey.rotationEnabled)
+        rotationDisplayIDs = []
+        userDefaults.set([], forKey: PreferenceKey.rotationDisplayIDs)
         if let message {
             status = message
         }
+    }
+
+    private func excludeRotationDisplays(_ ids: Set<String>) {
+        guard rotationEnabled else { return }
+        rotationDisplayIDs.subtract(ids)
+        userDefaults.set(Array(rotationDisplayIDs).sorted(), forKey: PreferenceKey.rotationDisplayIDs)
+        if rotationDisplayIDs.isEmpty { disableRotation() }
     }
 
     func buildRotationQueue() {
@@ -1301,7 +1417,7 @@ extension AppViewModel {
         }
     }
 
-    func advanceRotation(initial: Bool = false) {
+    func advanceRotation(initial: Bool = false, rememberActiveAsset: Bool = true) {
         guard !rotationQueue.isEmpty else {
             disableRotation()
             return
@@ -1314,10 +1430,11 @@ extension AppViewModel {
         while attempts < rotationQueue.count {
             let id = rotationQueue[rotationIndex]
             if let asset = libraryAssets.first(where: { $0.id == id && $0.supportStatus == .playable }) {
-                selectedLibraryAssetId = id
+                selectedLibraryAssetIds = [id]
                 do {
-                    try play(asset: asset, remember: true)
-                    status = "Rotating \(rotationIndex + 1)/\(rotationQueue.count): \(asset.title)"
+                    let targets = rotationDisplayIDs.isEmpty ? selectedDisplayIDs : rotationDisplayIDs
+                    try applyWallpaper(asset, on: targets, remember: rememberActiveAsset,
+                        readyStatus: "Rotating \(rotationIndex + 1)/\(rotationQueue.count): \(asset.title)")
                 } catch {
                     lastPlaybackError = error.localizedDescription
                     rotationIndex = (rotationIndex + 1) % rotationQueue.count
@@ -1334,6 +1451,57 @@ extension AppViewModel {
             return
         }
         disableRotation(status: "No playable wallpapers left to rotate.")
+    }
+
+    private func applyWallpaper(
+        _ asset: WallpaperAsset, on ids: Set<String>, remember: Bool = true,
+        excludingRotation: Bool = false, readyStatus: String? = nil
+    ) throws {
+        guard !ids.isEmpty else { throw PlaybackError.notPlayable("No display selected") }
+        let intent = applicationIntentID
+        let requestID = UUID()
+        let modes = Dictionary(uniqueKeysWithValues: ids.map { ($0, displayAssignments[$0]?.displayMode ?? displayMode) })
+        let initialMode = modes.values.first.flatMap { first in modes.values.allSatisfy { $0 == first } ? first : nil } ?? displayMode
+        for id in ids { requestedPlayback[id] = (asset, requestID) }
+        playbackEvent = nil
+        status = L("workshop.play.requested")
+        do {
+            try wallpaperPlayer.play(asset: asset, on: ids, autoPauseWhenCovered: autoPauseWhenCovered,
+                displayMode: initialMode, audioEnabled: wallpaperAudioEnabled, audioVolume: wallpaperAudioVolume
+            ) { [weak self] result in
+                guard let self else { return }
+                switch result {
+                case .success(let readyIDs):
+                    let completedIDs = readyIDs.filter { self.requestedPlayback[$0]?.requestID == requestID }
+                    guard !completedIDs.isEmpty else { return }
+                    for id in completedIDs {
+                        let mode = self.displayAssignments[id]?.displayMode ?? modes[id] ?? self.displayMode
+                        self.wallpaperPlayer.setDisplayMode(mode, on: [id])
+                        self.displayAssignments[id] = DisplayWallpaperAssignment(assetID: asset.id, displayMode: mode, isPlaying: true)
+                        self.requestedPlayback[id] = nil
+                    }
+                    self.saveDisplayAssignments()
+                    if excludingRotation { self.excludeRotationDisplays(completedIDs) }
+                    if self.applicationIntentID == intent {
+                        if remember { self.userDefaults.set(asset.id, forKey: PreferenceKey.lastPlayedAssetId) }
+                        self.activeWallpaperAssetID = asset.id
+                        self.reportReadyPlayback(asset, updateScreenSaver: remember, readyStatus: readyStatus)
+                        self.playbackEvent = .ready(assetID: asset.id)
+                    }
+                case .failure(let error):
+                    let failedIDs = ids.filter { self.requestedPlayback[$0]?.requestID == requestID }
+                    guard !failedIDs.isEmpty else { return }
+                    for id in failedIDs { self.requestedPlayback[id] = nil }
+                    if self.applicationIntentID == intent {
+                        self.status = error.localizedDescription
+                        self.playbackEvent = .failed(assetID: asset.id, message: error.localizedDescription)
+                    }
+                }
+            }
+        } catch {
+            for id in ids where requestedPlayback[id]?.requestID == requestID { requestedPlayback[id] = nil }
+            throw error
+        }
     }
 
     func restartRotationTimer() {
@@ -1354,6 +1522,8 @@ extension AppViewModel {
 }
 
 private enum PreferenceKey {
+    static let displayAssignments = "displayWallpaperAssignments"
+    static let rotationDisplayIDs = "rotationDisplayIDs"
     static let displayMode = "displayMode"
     static let autoPauseWhenCovered = "autoPauseWhenCovered"
     static let lockScreenAnimationEnabled = "lockScreenAnimationEnabled"

@@ -10,6 +10,21 @@ struct DesktopVisibilityMonitor {
         )
     }
 
+    /// CGWindow bounds have a top-left origin at the primary display, unlike AppKit.
+    func coveredDisplayIDs(_ displays: [WallpaperDisplay]) -> Set<String> {
+        let windows = windowSnapshots()
+        let primaryTop = displays.first(where: \.isPrimary)?.frame.maxY ?? 0
+        return Set(displays.filter { display in
+            let frame = Self.windowServerFrame(display.frame, primaryTop: primaryTop)
+            return !Self.isDesktopVisible(windows: windows,
+                currentProcessId: Int(ProcessInfo.processInfo.processIdentifier), screenFrames: [frame])
+        }.map(\.id))
+    }
+
+    static func windowServerFrame(_ frame: CGRect, primaryTop: CGFloat) -> CGRect {
+        CGRect(x: frame.minX, y: primaryTop - frame.maxY, width: frame.width, height: frame.height)
+    }
+
     static func isDesktopVisible(
         windows: [WindowSnapshot],
         currentProcessId: Int,
@@ -36,6 +51,9 @@ struct DesktopVisibilityMonitor {
         screenFrames: [CGRect]
     ) -> Bool {
         guard window.layer == 0, window.alpha > 0.05, window.bounds.area > 12_000 else {
+            return false
+        }
+        if !screenFrames.isEmpty, !screenFrames.contains(where: { $0.intersects(window.bounds) }) {
             return false
         }
         if window.processId == currentProcessId {

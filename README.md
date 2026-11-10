@@ -78,6 +78,16 @@ Display modes:
 - **Fill** covers the screen and may crop edges.
 - **Stretch** fills the screen exactly and may distort the image.
 
+### Multiple displays
+
+- Choose a display in **Display** before selecting a wallpaper or using **Play on Desktop**. **Stop selected** stops only the selected displays. The same selection and display-mode controls are available in **Settings** and the menu bar. **Identify** briefly shows each screen's number and name; the picker also shows pixel dimensions, scale, and the primary screen.
+- Choose **All connected displays** to apply the same wallpaper to every connected screen. Each screen has its own player; this is not frame-synchronized cloning or a stretched multi-screen canvas.
+- Fit/Fill/Stretch is remembered per display, even before assigning its first wallpaper. Selecting a display only reads its settings; **Mixed** means the selected screens use different modes. Choosing a mode explicitly applies it to the selected screens. Playing a new wallpaper preserves each screen's mode. Rendered scene videos remain aspect-fill.
+- Assignments use macOS display UUIDs, not screen numbers, positions, or names. Layout, primary-display and scale changes keep existing players. Disconnecting releases that screen's resources but retains its assignment; reconnecting and restarting the app restore it. Stopped screens stay stopped. An unknown display is left unassigned, rather than borrowing another screen's wallpaper. If a dock/adapter changes the UUID, select that display and assign it again.
+- Auto-pause is evaluated separately for each screen. Sleep temporarily pauses playback without changing saved assignments. Audio and interaction toggles remain global.
+- Applying to multiple screens prepares every replacement before changing existing players; a failed preparation leaves the prior wallpapers and settings intact.
+- **Stop Playback** in the menu bar stops all assigned displays, including disconnected ones. **Set Still Wallpaper** and the screen saver remain system-wide features, separate from these desktop playback assignments. The screen saver follows the last wallpaper played manually or advanced by rotation and restores that choice after restart.
+
 Playback notes:
 
 - Playback runs continuously by default to avoid Dock and Space transition flicker.
@@ -100,7 +110,7 @@ Library rotation:
 - Turn on **Rotate Library** to automatically cycle through every playable wallpaper in your Mac library on a timer.
 - **Shuffle** randomizes the order, **Rotate Every** sets the interval (30s, 1m, 5m, 15m, 30m, 1h), and **Next** jumps to the next wallpaper immediately.
 - Rotation is available in both the settings window and the menu bar menu. The on/off state, shuffle, and interval are remembered across launches and resume after login.
-- **Play on Desktop** or **Stop** turns rotation off so manual selection always wins. Non-playable items are skipped automatically.
+- Rotation targets the displays selected when it starts; choosing a different screen later does not move the playlist. Manual play or **Stop selected** removes only those screens from rotation, leaving other screens rotating. The remaining targets and fixed wallpapers restore independently after restart. Menu-bar **Stop Playback** stops everything. Non-playable items are skipped automatically.
 
 Imported files are stored in:
 
@@ -166,7 +176,7 @@ Choose **Play & Interact** to play scene/web content with mouse and keyboard inp
 - When the renderer supports it, frames stream directly into the encoder with no intermediate PNG files, making the first render noticeably faster; older renderer builds fall back to record-then-encode automatically.
 - The cached clip is 20 seconds long, and the encode crossfades its last ~1.2 seconds into its first ~1.2 seconds, so the loop seam is blended away rather than just made less frequent.
 - Authored sound layers (background music, ambience) are extracted from `scene.pkg` and mixed into the cached video as a looping audio track. Audio is muted by default (turn on **Play wallpaper audio** to hear it) and, unlike the video, is not crossfaded at the seam, so a subtle audio seam may be audible. A failed extraction still produces a silent video rather than failing the render.
-- During rendering, the app keeps a source-fresh v6 video if available (v7 changed audio duration, not pictures), otherwise the project preview. v6 audio may loop sooner until the v7 render completes. Older visual cache versions are not reused. Renderer capability probing and recording waits have time limits.
+- The v8 cache records the authored scene canvas ratio, independent of the first screen's size or scale. Earlier v7/v6 recordings are not reused because their baked ratio may be wrong on another monitor; the project preview stays visible while v8 is rendered. Renderer capability probing and recording waits have time limits.
 - The status line shows live "Rendering scene to video… N%" progress while the first render is in flight.
 - Video playback is a fixed loop and cannot respond to live inputs. The basic live and media overlay paths run scripts; shader-only audio effects are not implemented by the script bridge.
 - Once cached, playback uses the normal video-wallpaper path: gapless `AVPlayerLooper` looping, always aspect-fill regardless of the app's fit/fill/stretch setting, and reuse by the bundled screen saver (see Screen Saver below).

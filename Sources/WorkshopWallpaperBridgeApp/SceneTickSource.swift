@@ -51,6 +51,7 @@ protocol SceneTickSource: AnyObject {
     var isRunning: Bool { get }
     var onTick: ((SceneTick) -> Void)? { get set }
 
+    func attach(to view: NSView)
     func start()
     func stop()
     func suspend()
@@ -59,8 +60,13 @@ protocol SceneTickSource: AnyObject {
     func invalidate()
 }
 
+extension SceneTickSource {
+    func attach(to view: NSView) {}
+}
+
 @MainActor
 final class CADisplayLinkSceneTickSource: SceneTickSource {
+    private weak var view: NSView?
     private var clock = SceneTickClock()
     private var displayLink: CADisplayLink?
     private var lastTimestamp: TimeInterval?
@@ -79,16 +85,23 @@ final class CADisplayLinkSceneTickSource: SceneTickSource {
         displayLink != nil
     }
 
+    func attach(to view: NSView) {
+        guard self.view !== view else { return }
+        stop()
+        self.view = view
+    }
+
     func start() {
-        guard displayLink == nil, !clock.isInvalidated else {
+        guard displayLink == nil, !clock.isInvalidated, let view else {
             return
         }
-        guard let displayLink = NSScreen.main?.displayLink(
+        // AppKit follows this view across displays and suppresses callbacks
+        // while it is hidden or detached, unlike a main-screen display link.
+        let displayLink = view.displayLink(
             target: self,
             selector: #selector(handleDisplayLink(_:))
-        ) else {
-            return
-        }
+        )
+        displayLink.isPaused = clock.isSuspended
         displayLink.add(to: .main, forMode: .common)
         self.displayLink = displayLink
     }

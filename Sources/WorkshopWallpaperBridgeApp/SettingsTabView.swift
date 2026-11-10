@@ -12,6 +12,11 @@ struct SettingsTabView: View {
                 Text(model.L("tab.settings"))
                     .font(.title2.weight(.semibold))
                     .padding(.bottom, 4)
+                settingsSection(title: model.L("displays.target")) {
+                    WallpaperDisplayControls(model: model)
+                    WallpaperDisplayModePicker(model: model)
+                    caption(model.L("displays.settings.help"))
+                }
                 playbackSection
                 audioSection
                 integrationSection

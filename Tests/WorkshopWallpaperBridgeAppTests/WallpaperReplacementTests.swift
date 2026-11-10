@@ -109,19 +109,19 @@ final class WallpaperReplacementTests: XCTestCase {
         XCTAssertEqual(harness.windows.map(\.closeCount), [1, 1, 1, 0, 0])
     }
 
-    func testWakeReopenFailurePreservesCurrentWindowsAndAllowsRetry() throws {
+    func testWakeKeepsHealthyPlayersInsteadOfRestartingTheirContent() throws {
         let harness = Harness()
         let player = harness.player()
         defer { player.stop() }
         try player.play(asset: asset("current"), autoPauseWhenCovered: false)
-        harness.failAtRequest = 4
+        harness.failAtRequest = 3
 
         player.reopenAfterWake()
-
-        XCTAssertEqual(harness.windows.map(\.closeCount), [0, 0, 1])
-        harness.failAtRequest = nil
         player.reopenAfterWake()
-        XCTAssertEqual(harness.windows.map(\.closeCount), [1, 1, 1, 0, 0])
+
+        XCTAssertEqual(harness.requests.count, 2, "Wake must resume healthy per-display players without decoding them again")
+        XCTAssertEqual(harness.windows.map(\.closeCount), [0, 0])
+        XCTAssertEqual(harness.windows.map(\.showCount), [1, 1])
     }
 
     func testReplacementWaitsForEveryScreenBeforeReadyEvent() throws {
@@ -329,6 +329,128 @@ final class WallpaperReplacementTests: XCTestCase {
         XCTAssertEqual(harness.windows.map(\.audioEnabled), [true, true])
         XCTAssertEqual(harness.windows.map(\.displayMode), [.stretch, .stretch])
         XCTAssertTrue(harness.windows.allSatisfy { $0.interactionEnabled })
+    }
+
+    func testApplyingAnotherDisplayDoesNotCancelPendingReadiness() throws {
+        let harness = Harness()
+        let player = harness.player()
+        defer { player.stop() }
+        harness.automaticallyReady = false
+        var completions: [String: Set<String>] = [:]
+        try player.play(asset: asset("left"), on: ["screen-0"], autoPauseWhenCovered: false,
+                        displayMode: .fit, audioEnabled: nil, audioVolume: nil) {
+            completions["left"] = try? $0.get()
+        }
+        try player.play(asset: asset("right"), on: ["screen-1"], autoPauseWhenCovered: false,
+                        displayMode: .fill, audioEnabled: nil, audioVolume: nil) {
+            completions["right"] = try? $0.get()
+        }
+
+        harness.windows[1].complete(.success(()))
+        XCTAssertEqual(completions, ["right": ["screen-1"]])
+        XCTAssertEqual(harness.windows.map(\.closeCount), [0, 0])
+        XCTAssertEqual(harness.windows.map(\.showCount), [0, 1])
+        harness.windows[0].complete(.success(()))
+
+        XCTAssertEqual(completions, ["left": ["screen-0"], "right": ["screen-1"]])
+        XCTAssertEqual(harness.windows.map(\.showCount), [1, 1])
+    }
+
+    func testStoppingOnlyPendingDisplayDoesNotStopAnotherPendingDisplay() throws {
+        let harness = Harness()
+        let player = harness.player()
+        defer { player.stop() }
+        harness.automaticallyReady = false
+        var completed: [Set<String>] = []
+        for id in ["screen-0", "screen-1"] {
+            try player.play(asset: asset(id), on: [id], autoPauseWhenCovered: false,
+                            displayMode: .fit, audioEnabled: nil, audioVolume: nil) {
+                if let ids = try? $0.get() { completed.append(ids) }
+            }
+        }
+
+        player.stop(on: ["screen-1"])
+        harness.windows[1].complete(.success(()))
+        harness.windows[0].complete(.success(()))
+
+        XCTAssertEqual(completed, [["screen-0"]])
+        XCTAssertEqual(harness.windows.map(\.closeCount), [0, 1])
+        XCTAssertEqual(harness.windows.map(\.showCount), [1, 0])
+        XCTAssertTrue(player.isPlaying(assetID: "screen-0"))
+        XCTAssertFalse(player.isPlaying(assetID: "screen-1"))
+    }
+
+    func testPartiallySupersededBatchReportsOnlyItsRemainingDisplay() throws {
+        let harness = Harness()
+        let player = harness.player()
+        defer { player.stop() }
+        harness.automaticallyReady = false
+        var completed: [String: Set<String>] = [:]
+        try player.play(asset: asset("both"), on: ["screen-0", "screen-1"], autoPauseWhenCovered: false,
+                        displayMode: .fit, audioEnabled: nil, audioVolume: nil) {
+            completed["both"] = try? $0.get()
+        }
+        try player.play(asset: asset("right"), on: ["screen-1"], autoPauseWhenCovered: false,
+                        displayMode: .fill, audioEnabled: nil, audioVolume: nil) {
+            completed["right"] = try? $0.get()
+        }
+
+        harness.windows[1].complete(.failure(PreparationError.failed))
+        harness.windows[2].complete(.success(()))
+        harness.windows[0].complete(.success(()))
+
+        XCTAssertEqual(completed, ["both": ["screen-0"], "right": ["screen-1"]])
+        XCTAssertEqual(harness.windows.map(\.closeCount), [0, 1, 0])
+        XCTAssertEqual(harness.windows.map(\.showCount), [1, 0, 1])
+    }
+
+    func testTargetedCancellationCommitsReadyRemainderWithoutClosingOtherCurrentWindow() throws {
+        let harness = Harness()
+        let player = harness.player()
+        defer { player.stop() }
+        try player.play(asset: asset("current"), autoPauseWhenCovered: false)
+        harness.automaticallyReady = false
+        var completed: [Set<String>] = []
+        try player.play(asset: asset("replacement"), on: ["screen-0", "screen-1"], autoPauseWhenCovered: false,
+                        displayMode: .fit, audioEnabled: nil, audioVolume: nil) {
+            if let ids = try? $0.get() { completed.append(ids) }
+        }
+        harness.windows[2].complete(.success(()))
+
+        player.cancelPendingPlayback(on: ["screen-1"])
+        harness.windows[3].complete(.success(()))
+
+        XCTAssertEqual(completed, [["screen-0"]])
+        XCTAssertEqual(harness.windows.map(\.closeCount), [1, 0, 0, 1])
+        XCTAssertEqual(harness.windows.map(\.showCount), [1, 1, 1, 0])
+    }
+
+    func testFailureOnOneRequestKeepsOtherDisplayPreparationAndCurrentWallpaper() throws {
+        let harness = Harness()
+        let player = harness.player()
+        defer { player.stop() }
+        try player.play(asset: asset("current"), autoPauseWhenCovered: false)
+        harness.automaticallyReady = false
+        var leftCompleted: Set<String>?
+        var rightFailure: String?
+        try player.play(asset: asset("left"), on: ["screen-0"], autoPauseWhenCovered: false,
+                        displayMode: .fit, audioEnabled: nil, audioVolume: nil) {
+            leftCompleted = try? $0.get()
+        }
+        try player.play(asset: asset("right"), on: ["screen-1"], autoPauseWhenCovered: false,
+                        displayMode: .fit, audioEnabled: nil, audioVolume: nil) {
+            if case .failure(let error) = $0 { rightFailure = error.localizedDescription }
+        }
+
+        harness.windows[3].complete(.failure(WallpaperPreparationError(message: "right failed")))
+        XCTAssertEqual(rightFailure, "right failed")
+        XCTAssertNil(leftCompleted)
+        XCTAssertEqual(harness.windows.map(\.closeCount), [0, 0, 0, 1])
+        harness.windows[2].complete(.success(()))
+
+        XCTAssertEqual(leftCompleted, ["screen-0"])
+        XCTAssertEqual(harness.windows.map(\.closeCount), [1, 0, 0, 1])
+        XCTAssertEqual(harness.windows.map(\.showCount), [1, 1, 1, 0])
     }
 
     private func asset(_ id: String, supportStatus: SupportStatus = .playable,

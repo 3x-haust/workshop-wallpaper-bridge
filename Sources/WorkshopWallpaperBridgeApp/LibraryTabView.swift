@@ -86,6 +86,8 @@ struct LibraryTabView: View {
                     sortPicker
                 }
             }
+            WallpaperDisplayControls(model: model)
+            WallpaperDisplayModePicker(model: model)
             HStack(spacing: 8) {
                 if !model.selectedLibraryAssetIds.isEmpty {
                     Text(String(format: model.L("library.selection.count"), model.selectedLibraryAssetCount))
@@ -242,6 +244,70 @@ struct LibraryTabView: View {
             model.requestRemoveSelectedLibraryAssets()
         }
         .disabled(model.isWorking)
+    }
+}
+
+struct WallpaperDisplayControls: View {
+    @ObservedObject var model: AppViewModel
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) {
+                WallpaperDisplayPicker(model: model)
+                actions
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                WallpaperDisplayPicker(model: model)
+                actions
+            }
+        }
+        .controlSize(.small)
+    }
+
+    private var actions: some View {
+        HStack(spacing: 8) {
+            Button(model.L("displays.identify")) { model.identifyDisplays() }
+                .disabled(model.connectedDisplays.isEmpty)
+            Button(model.L("displays.stop")) { model.stopSelectedPlayback() }
+        }
+        .fixedSize()
+    }
+}
+
+struct WallpaperDisplayPicker: View {
+    @ObservedObject var model: AppViewModel
+
+    var body: some View {
+        Picker(model.L("displays.target"), selection: $model.selectedDisplayID) {
+            Text(model.L("displays.all")).tag("")
+            ForEach(Array(model.connectedDisplays.enumerated()), id: \.element.id) { index, display in
+                Text("\(index + 1) · \(display.name) · \(display.pixelSizeLabel)"
+                     + (display.isPrimary ? " · \(model.L("displays.primary"))" : ""))
+                    .tag(display.id)
+            }
+            if !model.selectedDisplayID.isEmpty,
+               !model.connectedDisplays.contains(where: { $0.id == model.selectedDisplayID }) {
+                Text(model.L("displays.disconnected")).tag(model.selectedDisplayID)
+            }
+        }
+    }
+}
+
+struct WallpaperDisplayModePicker: View {
+    @ObservedObject var model: AppViewModel
+
+    var body: some View {
+        Picker(model.L("library.display"), selection: Binding(
+            get: { model.selectedDisplayMode },
+            set: { model.applySelectedDisplayMode($0) }
+        )) {
+            if model.selectedDisplayMode == nil {
+                Text(model.L("displays.mixed")).tag(nil as WallpaperDisplayMode?)
+            }
+            ForEach(WallpaperDisplayMode.allCases) { mode in
+                Text(mode.title).tag(Optional(mode))
+            }
+        }
     }
 }
 

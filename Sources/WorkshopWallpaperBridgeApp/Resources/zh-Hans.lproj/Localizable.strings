@@ -370,6 +370,14 @@
 "playback.interaction.on" = "鼠标和键盘交互已开启。要使用桌面图标，请在菜单栏关闭交互。";
 "playback.interaction.off" = "交互已关闭。请使用“播放并交互”来点击或拖动此壁纸。";
 "web.openExternal" = "在浏览器中打开 %@";
+"displays.target" = "显示器";
+"displays.all" = "所有已连接的显示器";
+"displays.primary" = "主显示器";
+"displays.disconnected" = "已断开的显示器";
+"displays.identify" = "识别显示器";
+"displays.stop" = "停止所选显示器";
+"displays.mixed" = "不同设置";
+"displays.settings.help" = "显示模式和停止所选显示器仅影响所选显示器。音频和交互设置适用于所有显示器。";
 "settings.media.toggle" = "显示音乐信息";
 "settings.media.help" = "从音乐或 Spotify 读取曲目、封面和播放时间。macOS 会请求自动化权限。Spotify 封面从其图片服务加载。";
 

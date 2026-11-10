@@ -42,6 +42,9 @@ struct WorkshopTabView: View {
             HStack(spacing: 0) {
                 VStack(alignment: .leading, spacing: 0) {
                     heading
+                    WallpaperDisplayControls(model: model)
+                        .padding(.horizontal, 22)
+                        .padding(.bottom, 12)
                     searchTools
                     searchGrid(compact: !hasInspector)
                     pagination

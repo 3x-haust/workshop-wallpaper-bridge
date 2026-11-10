@@ -9,6 +9,12 @@ struct StatusMenu: View {
             SettingsWindowCoordinator.shared.show(model: model)
         }
         Divider()
+        WallpaperDisplayPicker(model: model)
+        WallpaperDisplayModePicker(model: model)
+        Button(model.L("displays.identify")) { model.identifyDisplays() }
+            .disabled(model.connectedDisplays.isEmpty)
+        Button(model.L("displays.stop")) { model.stopSelectedPlayback() }
+        Divider()
         Toggle(model.L("settings.interaction.toggle"), isOn: $model.wallpaperInteractionEnabled)
         Toggle(model.L("settings.openAtLogin"), isOn: $model.launchAtLogin)
         Toggle(model.L("menu.autoPause"), isOn: $model.autoPauseWhenCovered)

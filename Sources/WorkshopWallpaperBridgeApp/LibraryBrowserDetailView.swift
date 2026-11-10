@@ -27,18 +27,14 @@ struct LibraryBrowserDetailView: View {
                     Divider().overlay(BrowserPalette.border)
                     VStack(alignment: .leading, spacing: 10) {
                         BrowserSectionLabel(title: model.L("library.display"))
-                        Picker(model.L("library.display"), selection: $model.displayMode) {
-                            ForEach(WallpaperDisplayMode.allCases) { mode in
-                                Text(mode.title).tag(mode)
-                            }
-                        }
-                        .labelsHidden()
-                        .pickerStyle(.segmented)
+                        WallpaperDisplayModePicker(model: model)
+                            .labelsHidden()
+                            .pickerStyle(.segmented)
                         HStack(spacing: 8) {
                             Button(model.L("library.play")) { model.playSelected() }
                                 .buttonStyle(.borderedProminent)
                                 .disabled(asset.supportStatus != .playable)
-                            Button(model.L("app.stop")) { model.stopPlayback() }
+                            Button(model.L("displays.stop")) { model.stopSelectedPlayback() }
                         }
                         if asset.kind == .web || asset.kind == .scene {
                             Button(model.L("library.playInteractive")) { model.playSelectedInteractively() }

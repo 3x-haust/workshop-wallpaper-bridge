@@ -145,18 +145,30 @@ final class WorkshopScenePreparationTests: XCTestCase {
         XCTAssertFalse(SceneWallpaperContentFactory.isRendering(assetID: fixture.asset.id))
     }
 
-    func testPreparationJoinsScheduledRenderWithoutRefreshingOldWallpaper() async throws {
+    func testPreparationJoinsScheduledRenderWithoutSuppressingExistingDisplayRefresh() async throws {
+        try await checkScheduledRenderRefresh(cancelPreparation: false)
+    }
+
+    func testCancellingWorkshopPreparationPreservesExistingDisplayBackgroundRefresh() async throws {
+        try await checkScheduledRenderRefresh(cancelPreparation: true)
+    }
+
+    private func checkScheduledRenderRefresh(cancelPreparation: Bool) async throws {
         let fixture = try PreparationFixture()
         defer { fixture.cleanUp() }
         fixture.installTools()
         let started = expectation(description: "Background render started")
         let joined = expectation(description: "Preparation joined")
         joined.assertForOverFulfill = false
+        let refreshed = expectation(description: "Existing background render can refresh its displays")
         var release: CheckedContinuation<Void, Never>?
         var renders = 0
         var refreshes = 0
         let oldHandler = SceneWallpaperContentFactory.sceneVideoRenderCompletionHandler
-        SceneWallpaperContentFactory.sceneVideoRenderCompletionHandler = { _ in refreshes += 1 }
+        SceneWallpaperContentFactory.sceneVideoRenderCompletionHandler = { _ in
+            refreshes += 1
+            refreshed.fulfill()
+        }
         defer { SceneWallpaperContentFactory.sceneVideoRenderCompletionHandler = oldHandler }
         SceneWallpaperContentFactory.renderVideo = { config, _, _ in
             renders += 1
@@ -172,9 +184,15 @@ final class WorkshopScenePreparationTests: XCTestCase {
         let preparation = Task { try await SceneWallpaperContentFactory.prepare(asset: fixture.asset, frame: frame) { _ in joined.fulfill() } }
         await fulfillment(of: [joined], timeout: 2)
         XCTAssertEqual(renders, 1)
+        if cancelPreparation {
+            SceneWallpaperContentFactory.cancelWorkshopPreparations()
+            do { try await preparation.value; XCTFail("The Workshop waiter must be cancelled") }
+            catch { XCTAssertTrue(error is CancellationError) }
+        }
         release?.resume()
-        try await preparation.value
-        XCTAssertEqual(refreshes, 0)
+        if !cancelPreparation { try await preparation.value }
+        await fulfillment(of: [refreshed], timeout: 2)
+        XCTAssertEqual(refreshes, 1)
     }
 
     func testAppPreparationDoesNotApplyAndRejectsSupersededIntent() async throws {

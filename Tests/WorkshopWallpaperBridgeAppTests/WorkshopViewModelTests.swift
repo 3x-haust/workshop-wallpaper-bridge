@@ -1082,7 +1082,7 @@ private final class WorkshopTestPlayer: WallpaperPlaying {
     var readySynchronously = false
     var pendingID: String?
     var activeID: String?
-    func cancelPendingPlayback() { pendingID = nil }
+    func cancelPendingPlayback() { pendingID = nil; handler = nil }
     func finishPendingPlayback() {
         guard let id = pendingID else { return }
         pendingID = nil
@@ -1097,7 +1097,25 @@ private final class WorkshopTestPlayer: WallpaperPlaying {
         pendingID = asset.id
         if readySynchronously { finishPendingPlayback() }
     }
-    func stop() { stopCount += 1 }
+    func play(asset: WallpaperAsset, on displayIDs: Set<String>, autoPauseWhenCovered: Bool,
+              displayMode: WallpaperDisplayMode, audioEnabled: Bool?, audioVolume: Double?,
+              completion: @escaping (Result<Set<String>, Error>) -> Void) throws {
+        handler = { [weak self] event in
+            switch event {
+            case .ready(let id) where id == asset.id:
+                self?.handler = nil
+                completion(.success(displayIDs))
+            case .failed(let id, let message) where id == asset.id:
+                self?.handler = nil
+                completion(.failure(NSError(domain: "WorkshopTest", code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: message])))
+            default: break
+            }
+        }
+        try play(asset: asset, autoPauseWhenCovered: autoPauseWhenCovered, displayMode: displayMode,
+                 audioEnabled: audioEnabled, audioVolume: audioVolume)
+    }
+    func stop() { stopCount += 1; cancelPendingPlayback() }
     func setDisplayMode(_ mode: WallpaperDisplayMode) {}
     func setAutoPauseWhenCovered(_ enabled: Bool) {}
 }
