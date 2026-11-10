@@ -113,8 +113,8 @@ Imported files are stored in:
 Steam integration is in development; the packaged login-to-playback flow is not yet verified, and inclusion in the latest public release is not implied.
 
 1. Open **Explore** and use the Steam account control to sign in with a QR code or your Steam account and Steam Guard. Access is limited to what that account is authorized to retrieve for Wallpaper Engine (App ID `431960`).
-2. Browse thumbnails, search, sort by popularity, date or rating, and filter by type and genre. Select an item for its preview image and details; a preview image is not the running project.
-3. Choose **Download & Apply** and follow its progress. You can cancel or retry; cancellation terminates the helper and disconnects its current login. Reconnect with saved authentication before retrying.
+2. Browse thumbnails, search, sort by popularity, date or rating, and filter by type and genre. Use the numbered page buttons to jump between results; the current page is highlighted, and a successful page change returns the list to the top. Select an item for its preview and details. Compatibility notes are available in the preview help; support badges and issues remain visible.
+3. Choose **Download & Apply** and follow its progress. You can cancel or retry; cancelling a download disconnects Steam. Reconnect with saved authentication before retrying.
 4. The item enters **Downloads** only after explicit completion and storage validation. Partial or cancelled downloads are not completed items.
 5. The app automatically saves the completed project in **My Wallpapers** and requests playback if it is supported. No separate import button is needed. If that item ID already exists, the app links/selects the existing library copy rather than overwriting it.
 6. Selecting a supported installed item applies it directly. Unsupported items remain available for inspection; use **My Wallpapers** for additional conversion. Preparing a replacement preserves the previous wallpaper until the new content is ready. The support limits below still apply.
@@ -256,11 +256,11 @@ bash Scripts/package-app.sh
 
 `Scripts/build-steam-helper.sh` targets a self-contained macOS arm64 helper based on SteamRE/DepotDownloader 3.4.0; `Scripts/package-app.sh` integrates it into the app bundle. Distribute its GPL license and corresponding-source notices with the helper. .NET is a developer build prerequisite, not a consumer runtime installation requirement.
 
-To include the optional external GPL scene renderer in a local package:
+Local packages include the external GPL scene renderer:
 
-- Run `bash Scripts/build-scene-renderer.sh` to build the pinned public source, including its license notices. Release CI runs this step before packaging.
-- Set `SCENE_RENDERER_BINARY=/path/to/wwb-scene-renderer`, or place the executable at `ExternalRenderers/wwb-scene-renderer`, before running `Scripts/package-app.sh`.
-- The package script copies the binary into app resources when present, and always writes `Renderer Notices/GPL Scene Renderer Notice.txt` with the source link and the pinned source ref from [Scripts/scene-renderer.env](Scripts/scene-renderer.env) for [3x-haust/wallpaperengine-mac-renderer](https://github.com/3x-haust/wallpaperengine-mac-renderer) (a macOS port of [Almamu/linux-wallpaperengine](https://github.com/Almamu/linux-wallpaperengine)).
+- `Scripts/package-app.sh` builds the pinned public renderer source with `Scripts/build-scene-renderer.sh` when no renderer is available, and stops if the build fails. The renderer's build and runtime dependencies listed above must be installed. Release CI builds it before packaging.
+- To use an existing build, set `SCENE_RENDERER_BINARY=/path/to/wwb-scene-renderer`, or place the executable at `ExternalRenderers/wwb-scene-renderer`.
+- The package script copies the renderer and its local libraries into app resources, and writes `Renderer Notices/GPL Scene Renderer Notice.txt` with the source link and the pinned source ref from [Scripts/scene-renderer.env](Scripts/scene-renderer.env) for [3x-haust/wallpaperengine-mac-renderer](https://github.com/3x-haust/wallpaperengine-mac-renderer) (a macOS port of [Almamu/linux-wallpaperengine](https://github.com/Almamu/linux-wallpaperengine)).
 - If you ship a different renderer build, set `SCENE_RENDERER_SOURCE_URL` and `SCENE_RENDERER_SOURCE_REF` to the corresponding published source.
 
 The package never bundles Wallpaper Engine runtime assets:

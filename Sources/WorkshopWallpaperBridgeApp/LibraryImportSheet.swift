@@ -14,9 +14,6 @@ struct LibraryImportSheet: View {
                 Button(model.L("common.close")) { dismiss() }
                     .keyboardShortcut(.cancelAction)
             }
-            Text(model.L("library.import.local.help"))
-                .font(.caption).foregroundStyle(BrowserPalette.secondary)
-                .fixedSize(horizontal: false, vertical: true)
             BrowserSectionLabel(title: model.L("library.source.title"))
             HStack(spacing: 8) {
                 TextField(model.L("library.source.placeholder"), text: $model.sourcePath)
@@ -66,7 +63,7 @@ struct LibraryImportSheet: View {
             .background(BrowserPalette.surface, in: RoundedRectangle(cornerRadius: 8))
             .overlay {
                 if model.scannedAssets.isEmpty {
-                    Text(model.L("library.import.help.body"))
+                    Text(model.L("library.import.local.help"))
                         .font(.callout).foregroundStyle(BrowserPalette.secondary)
                         .multilineTextAlignment(.center).padding(24)
                 }

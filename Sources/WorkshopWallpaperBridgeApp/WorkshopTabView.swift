@@ -85,7 +85,6 @@ struct WorkshopTabView: View {
                 }
                 BrowserThumbnail(url: previewURL, contentMode: .fit)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                Text(model.L("workshop.browser.previewCaption")).font(.caption).foregroundStyle(BrowserPalette.secondary)
             }
             .padding(20).frame(minWidth: 540, idealWidth: 800, minHeight: 380, idealHeight: 560)
             .background(BrowserPalette.background)
@@ -169,6 +168,15 @@ struct WorkshopTabView: View {
     }
 
     private func searchGrid(compact: Bool) -> some View {
+        ScrollViewReader { proxy in
+            searchResults(compact: compact)
+                .onChange(of: workshop.page) { _, _ in
+                    proxy.scrollTo("searchResultsTop", anchor: .top)
+                }
+        }
+    }
+
+    private func searchResults(compact: Bool) -> some View {
         Group {
             if workshop.items.isEmpty {
                 VStack(spacing: 16) {
@@ -198,6 +206,7 @@ struct WorkshopTabView: View {
                         }
                     }
                     .padding(.horizontal, 22).padding(.bottom, 20)
+                    .id("searchResultsTop")
                 }
             }
         }
@@ -257,17 +266,45 @@ struct WorkshopTabView: View {
     }
 
     private var pagination: some View {
-        HStack(spacing: 14) {
-            Button { workshop.search(page: workshop.page - 1) } label: { Image(systemName: "chevron.left") }
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Button { workshop.search(page: workshop.page - 1) } label: {
+                    Image(systemName: "chevron.left").frame(width: 28, height: 28)
+                }
                 .disabled(workshop.page <= 1).accessibilityLabel(model.L("workshop.page.previous"))
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 4) { pageButtons }
+                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 4) { pageButtons }
+                }
+                Button { workshop.search(page: workshop.page + 1) } label: {
+                    Image(systemName: "chevron.right").frame(width: 28, height: 28)
+                }
+                .disabled(!workshop.hasNextPage).accessibilityLabel(model.L("workshop.page.next"))
+                Spacer(minLength: 0)
+            }
             Text(String(format: model.L("workshop.page.summary"), workshop.page, workshop.total))
                 .font(.caption).foregroundStyle(BrowserPalette.secondary)
-            Button { workshop.search(page: workshop.page + 1) } label: { Image(systemName: "chevron.right") }
-                .disabled(!workshop.hasNextPage).accessibilityLabel(model.L("workshop.page.next"))
-            Spacer()
         }
         .buttonStyle(.plain).padding(.horizontal, 22).padding(.vertical, 10)
         .disabled(mutationsDisabled || !workshop.isAuthenticated)
+    }
+
+    private var pageButtons: some View {
+        ForEach(workshop.pageNumbers, id: \.self) { page in
+            Button {
+                if page != workshop.page { workshop.search(page: page) }
+            } label: {
+                Text(String(page))
+                    .font(.system(size: 12, weight: page == workshop.page ? .semibold : .regular).monospacedDigit())
+                    .padding(.horizontal, 8).frame(minWidth: 32, minHeight: 28)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .foregroundStyle(page == workshop.page ? BrowserPalette.text : BrowserPalette.secondary)
+                    .background(page == workshop.page ? BrowserPalette.selection : .clear, in: RoundedRectangle(cornerRadius: 6))
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(page == workshop.page ? BrowserPalette.accent : .clear, lineWidth: 1))
+            }
+            .accessibilityLabel(String(format: model.L("workshop.page.button"), page))
+            .accessibilityAddTraits(page == workshop.page ? .isSelected : [])
+        }
     }
 
     private var inspector: some View {
@@ -275,7 +312,11 @@ struct WorkshopTabView: View {
             if let title = inspectedTitle {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 15) {
-                        BrowserSectionLabel(title: model.L("workshop.detail.preview"))
+                        HStack {
+                            BrowserSectionLabel(title: model.L("workshop.detail.preview"))
+                            Spacer()
+                            HelpPopoverButton(title: model.L("workshop.detail.preview"), message: model.L("workshop.compatibility.help"))
+                        }
                         BrowserThumbnail(url: previewURL, contentMode: .fit)
                             .frame(height: 180).frame(maxWidth: .infinity)
                             .background(.black.opacity(0.3), in: RoundedRectangle(cornerRadius: 7))
@@ -288,16 +329,12 @@ struct WorkshopTabView: View {
                                 .accessibilityLabel(model.L("workshop.browser.expandPreview"))
                                 .disabled(previewURL == nil)
                             }
-                        Text(model.L("workshop.browser.previewCaption")).font(.system(size: 10)).foregroundStyle(BrowserPalette.secondary)
                         Text(title).font(.system(size: 20, weight: .semibold)).textSelection(.enabled)
                         if let download = inspectedDownload {
                             downloadedDetails(download)
                         } else if let item = inspectedItem {
                             remoteDetails(item)
                         }
-                        Text(model.L("workshop.compatibility.help"))
-                            .font(.caption).foregroundStyle(BrowserPalette.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
                     }
                     .padding(20)
                 }
@@ -319,6 +356,7 @@ struct WorkshopTabView: View {
             }
             .buttonStyle(.borderedProminent)
             .disabled(mutationsDisabled || (!workshop.isAuthenticated && !isDownloaded(item.id)))
+            .help(model.L("workshop.browser.automaticallySaved"))
             if !workshop.isAuthenticated, !isDownloaded(item.id) {
                 Button(model.L("workshop.browser.connect")) { showsAccount = true }.buttonStyle(.link)
             }
@@ -364,7 +402,6 @@ struct WorkshopTabView: View {
             }
             .buttonStyle(.borderedProminent)
             .disabled(mutationsDisabled || workshop.libraryAsset?.supportStatus != .playable)
-            Text(model.L("workshop.browser.automaticallySaved")).font(.caption).foregroundStyle(BrowserPalette.secondary)
             Divider()
             Button(model.L("workshop.download.remove"), role: .destructive) { workshop.pendingRemoval = download }
                 .disabled(mutationsDisabled)
@@ -386,7 +423,10 @@ struct WorkshopTabView: View {
                 Text(model.L(workshop.statusKey)).font(.caption).foregroundStyle(BrowserPalette.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 5)
-                if workshop.canCancel { Button(model.L("common.cancel")) { workshop.cancel() } }
+                if workshop.canCancel {
+                    Button(model.L("common.cancel")) { workshop.cancel() }
+                        .help(model.L("workshop.cancel.help"))
+                }
                 if workshop.retryItem != nil {
                     Button(model.L("workshop.download.retry")) { workshop.retryDownload() }
                         .disabled(mutationsDisabled || !workshop.isAuthenticated)
@@ -398,9 +438,6 @@ struct WorkshopTabView: View {
                 }
                 Text("\(Self.byteCount(workshop.completedBytes)) / \(Self.byteCount(workshop.totalBytes))")
                     .font(.caption.monospacedDigit()).foregroundStyle(BrowserPalette.secondary)
-            }
-            if workshop.canCancel {
-                Text(model.L("workshop.cancel.help")).font(.caption2).foregroundStyle(BrowserPalette.secondary)
             }
         }
         .padding(.horizontal, 22).padding(.vertical, 12)

@@ -97,10 +97,8 @@ struct WorkshopAuthenticationView: View {
                         Spacer()
                         if workshop.canCancel {
                             Button(model.L("common.cancel")) { workshop.cancel() }
+                                .help(model.L("workshop.cancel.help"))
                         }
-                    }
-                    if workshop.canCancel {
-                        Text(model.L("workshop.cancel.help")).font(.caption).foregroundStyle(BrowserPalette.secondary)
                     }
                     if workshop.hasStoredAuthentication {
                         Button(model.L("workshop.credentials.delete"), role: .destructive) { confirmsDeletion = true }

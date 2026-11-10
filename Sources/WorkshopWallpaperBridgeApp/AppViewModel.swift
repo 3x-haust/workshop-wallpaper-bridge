@@ -1052,12 +1052,7 @@ extension AppViewModel {
 
     private func reportReadyPlayback(_ asset: WallpaperAsset) {
         let lockScreenError = refreshLockScreenAnimationConfiguration(asset: asset)
-        var playbackStatus = autoPauseWhenCovered
-            ? "Playing on the desktop layer. You can minimize this app; playback pauses only behind other apps."
-            : "Playing continuously on the desktop layer. You can minimize this app."
-        if asset.kind == .web || asset.kind == .scene {
-            playbackStatus += " " + L(wallpaperInteractionEnabled ? "playback.interaction.on" : "playback.interaction.off")
-        }
+        let playbackStatus = L("workshop.play.ready")
         status = lockScreenError.map {
             "\(playbackStatus) Screen Saver update failed: \($0)"
         } ?? playbackStatus

@@ -14,6 +14,7 @@ final class WorkshopViewModel: ObservableObject {
     @Published private(set) var detail: WorkshopItem?
     @Published private(set) var page = 1
     @Published private(set) var total = 0
+    @Published private(set) var pageCount: Int?
     @Published private(set) var hasNextPage = false
     @Published private(set) var completedBytes: UInt64 = 0
     @Published private(set) var totalBytes: UInt64 = 0
@@ -61,6 +62,13 @@ final class WorkshopViewModel: ObservableObject {
             default: break
             }
         }
+    }
+
+    var pageNumbers: [Int] {
+        guard let pageCount, page <= pageCount else { return [page] }
+        let count = min(6, pageCount)
+        let start = min(max(1, page - 2), pageCount - count + 1)
+        return Array(start...(start + (count - 1)))
     }
 
     var isBusy: Bool { operation != nil }
@@ -218,12 +226,13 @@ final class WorkshopViewModel: ObservableObject {
             }
             self.items = items
             self.page = page
-            total = event.total ?? items.count
-            if let pageSize = event.pageSize, pageSize > 0, page <= Int.max / pageSize {
-                hasNextPage = page * pageSize < total
+            total = max(0, event.total ?? items.count)
+            if let pageSize = event.pageSize, pageSize > 0 {
+                pageCount = total > 0 ? (total - 1) / pageSize + 1 : 1
             } else {
-                hasNextPage = false
+                pageCount = nil
             }
+            hasNextPage = pageCount.map { page < $0 } ?? false
             finishRequest(status: items.isEmpty ? "workshop.search.empty" : "workshop.search.finished")
         case "detail" where operation == "details":
             guard let item = event.item, item.id == detail?.id else {

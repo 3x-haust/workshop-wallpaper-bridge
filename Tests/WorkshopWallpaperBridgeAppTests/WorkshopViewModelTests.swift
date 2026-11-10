@@ -243,6 +243,82 @@ final class WorkshopViewModelTests: XCTestCase {
         XCTAssertTrue(fixture.model.hasNextPage, "Filtered collections must not hide subsequent pages")
     }
 
+    func testSearchPageNumbersUseServerTotalsAndStayWithinSixPages() throws {
+        let cases: [(page: Int, total: Int, pageSize: Int?, count: Int?, numbers: [Int])] = [
+            (1, 0, 20, 1, [1]),
+            (1, 1, 20, 1, [1]),
+            (2, 41, 20, 3, [1, 2, 3]),
+            (1, 120, 20, 6, [1, 2, 3, 4, 5, 6]),
+            (4, 200, 20, 10, [2, 3, 4, 5, 6, 7]),
+            (10, 200, 20, 10, [5, 6, 7, 8, 9, 10]),
+            (3, 200, nil, nil, [3]),
+            (3, 200, 0, nil, [3]),
+            (3, 200, -1, nil, [3]),
+            (1, -1, 20, 1, [1]),
+            (5, 0, 20, 1, [5]),
+            (1, Int.max, Int.max, 1, [1]),
+            (Int.max, Int.max, 1, Int.max, Array((Int.max - 5)...Int.max)),
+            (Int.max / 20, Int.max, 20, Int.max / 20 + 1,
+             Array((Int.max / 20 - 4)...(Int.max / 20 + 1)))
+        ]
+        for value in cases {
+            let fixture = try makeFixture()
+            authenticate(fixture)
+            fixture.model.search(page: value.page)
+            fixture.client.emit(SteamEvent(id: fixture.client.commands.last!.id, type: "items", items: [],
+                                           total: value.total, page: value.page, pageSize: value.pageSize))
+
+            XCTAssertEqual(fixture.model.pageCount, value.count, "\(value)")
+            XCTAssertEqual(fixture.model.pageNumbers, value.numbers, "\(value)")
+            XCTAssertEqual(fixture.model.hasNextPage, value.count.map { value.page < $0 } ?? false, "\(value)")
+            XCTAssertEqual(fixture.model.total, max(0, value.total))
+        }
+    }
+
+    func testSearchPageNumbersFallBackToReceivedItemsWhenTotalIsMissing() throws {
+        let fixture = try makeFixture()
+        authenticate(fixture)
+        fixture.model.search()
+        fixture.client.emit(SteamEvent(id: fixture.client.commands.last!.id, type: "items", items: [item()], page: 1, pageSize: 20))
+
+        XCTAssertEqual(fixture.model.total, 1)
+        XCTAssertEqual(fixture.model.pageCount, 1)
+        XCTAssertEqual(fixture.model.pageNumbers, [1])
+        XCTAssertFalse(fixture.model.hasNextPage)
+    }
+
+    func testSearchPageNumbersChangeOnlyAfterLatestSuccessfulResponse() async throws {
+        let fixture = try makeFixture()
+        authenticate(fixture)
+        fixture.model.search(page: 2)
+        fixture.client.emit(SteamEvent(id: fixture.client.commands.last!.id, type: "items", items: [item()], total: 200, page: 2, pageSize: 20))
+        fixture.model.search(page: 4)
+        let pending = try XCTUnwrap(fixture.client.commands.last)
+        fixture.model.genreFilter = "Nature"
+        fixture.model.applyFilters()
+        XCTAssertEqual(fixture.model.page, 2)
+        XCTAssertEqual(fixture.model.pageNumbers, [1, 2, 3, 4, 5, 6])
+        XCTAssertEqual(fixture.client.commands.last?.id, pending.id)
+
+        fixture.client.emit(SteamEvent(id: pending.id, type: "items", items: [item()], total: 200, page: 4, pageSize: 20))
+        let filtered = try XCTUnwrap(fixture.client.commands.last)
+        XCTAssertEqual(filtered.page, 1)
+        XCTAssertEqual(filtered.genre, "Nature")
+        XCTAssertEqual(fixture.model.page, 2)
+        XCTAssertEqual(fixture.model.pageCount, 10)
+        fixture.client.emit(SteamEvent(id: filtered.id, type: "items", items: [item()], total: 21, page: 1, pageSize: 20))
+        XCTAssertEqual(fixture.model.page, 1)
+        XCTAssertEqual(fixture.model.pageCount, 2)
+        XCTAssertEqual(fixture.model.pageNumbers, [1, 2])
+
+        fixture.model.search(page: 2)
+        fixture.client.emit(SteamEvent(id: fixture.client.commands.last!.id, type: "error", code: "accessdenied"))
+        await waitUntil { !fixture.model.isBusy }
+        XCTAssertEqual(fixture.model.page, 1)
+        XCTAssertEqual(fixture.model.pageNumbers, [1, 2])
+        XCTAssertEqual(fixture.model.statusKey, "workshop.error.access")
+    }
+
     func testFiltersReachServerResetPageAndSerializeLateSearchResponses() throws {
         let fixture = try makeFixture()
         authenticate(fixture)
@@ -400,6 +476,7 @@ final class WorkshopViewModelTests: XCTestCase {
         XCTAssertEqual(fixture.library.activeWallpaperAssetID, download.id)
         XCTAssertEqual(fixture.defaults.string(forKey: "lastPlayedAssetId"), download.id)
         XCTAssertEqual(fixture.model.statusKey, "workshop.play.ready")
+        XCTAssertEqual(fixture.library.status, fixture.library.L("workshop.play.ready"))
     }
 
     func testAsynchronousFailurePreservesPreviouslyReadyWallpaperAndPreference() async throws {

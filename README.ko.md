@@ -113,8 +113,8 @@ Settings 탭의 **Language** 선택기로 앱 UI 텍스트를 **System**, **한�
 Steam 연동은 개발 중이며, 패키징된 앱의 로그인부터 재생까지 전체 흐름은 아직 미검증입니다. 최신 공개 릴리즈에 포함되어 있다는 뜻은 아닙니다.
 
 1. **탐색**을 열고 왼쪽 아래 Steam 계정 버튼에서 QR 코드 또는 Steam 계정과 Steam Guard로 로그인합니다. Wallpaper Engine(앱 ID `431960`)에 대해 해당 계정이 접근 권한을 가진 콘텐츠만 받습니다.
-2. 썸네일을 둘러보거나 검색하고 인기·최신·평가순 정렬과 형식·장르 필터를 사용합니다. 항목을 선택하면 미리보기 이미지와 상세 정보가 표시됩니다. 미리보기 이미지는 실제 프로젝트 재생이 아닙니다.
-3. **다운로드 후 적용**을 누르고 진행률을 확인합니다. 취소하거나 재시도할 수 있으며, 취소하면 보조 프로그램이 종료되어 현재 로그인도 끊어집니다. 재시도 전에 저장된 인증으로 다시 연결합니다.
+2. 썸네일을 둘러보거나 검색하고 인기·최신·평가순 정렬과 형식·장르 필터를 사용합니다. 숫자 버튼으로 페이지를 선택하며 현재 페이지는 강조됩니다. 페이지를 성공적으로 바꾸면 목록 맨 위로 이동합니다. 항목을 선택하면 미리보기와 상세 정보가 표시됩니다. 호환성 안내는 미리보기 도움말에서 확인하며 지원 배지와 문제 목록은 그대로 표시됩니다.
+3. **다운로드 후 적용**을 누르고 진행률을 확인합니다. 취소하거나 재시도할 수 있으며, 다운로드를 취소하면 Steam 연결이 끊어집니다. 재시도 전에 저장된 인증으로 다시 연결합니다.
 4. 명시적인 완료 응답과 저장소 검증을 거친 항목만 **다운로드** 목록에 표시됩니다. 일부만 받았거나 취소된 항목은 완료 항목이 아닙니다.
 5. 완료된 프로젝트는 **내 배경화면**에 자동 보관하고 지원되는 형식이면 재생을 요청합니다. 별도 추가 버튼은 필요하지 않습니다. 같은 항목 ID가 이미 있으면 기존 라이브러리 사본을 연결·선택하며 덮어쓰지 않습니다.
 6. 지원되는 설치 항목은 선택하면 바로 적용됩니다. 미지원 항목도 상세를 확인할 수 있으며, 추가 변환은 **내 배경화면**에서 진행합니다. 새 콘텐츠가 준비되기 전에는 이전 배경화면을 유지합니다. 아래 지원 범위가 그대로 적용됩니다.
@@ -258,11 +258,11 @@ bash Scripts/package-app.sh
 
 `Scripts/build-steam-helper.sh`는 SteamRE/DepotDownloader 3.4.0 기반의 자체 런타임 포함 macOS arm64 보조 프로그램을 빌드하고, `Scripts/package-app.sh`는 이를 앱 번들에 통합합니다. 보조 프로그램 배포에는 GPL 라이선스와 대응 소스 고지를 함께 포함해야 합니다. .NET은 개발자 빌드 요건이며, 일반 사용자가 별도로 설치해야 하는 실행 요건이 아닙니다.
 
-선택적인 외부 GPL scene renderer를 로컬 패키지에 포함하려면:
+로컬 패키지에는 외부 GPL 씬 렌더러가 포함됩니다.
 
-- `bash Scripts/build-scene-renderer.sh`로 고정된 공개 소스와 라이선스 고지를 빌드할 수 있습니다. 릴리즈 CI도 패키징 전에 이 단계를 실행합니다.
-- `Scripts/package-app.sh`를 실행하기 전에 `SCENE_RENDERER_BINARY=/path/to/wwb-scene-renderer`를 설정하거나 실행 파일을 `ExternalRenderers/wwb-scene-renderer`에 둡니다.
-- 패키지 script는 renderer가 있으면 app resources로 복사하고, [3x-haust/wallpaperengine-mac-renderer](https://github.com/3x-haust/wallpaperengine-mac-renderer)의 [Scripts/scene-renderer.env](Scripts/scene-renderer.env)에 고정한 source ref와 source link를 담은 `Renderer Notices/GPL Scene Renderer Notice.txt`를 항상 씁니다.
+- `Scripts/package-app.sh`는 사용할 렌더러가 없으면 `Scripts/build-scene-renderer.sh`로 고정된 공개 소스를 빌드하며, 빌드가 실패하면 패키징도 중단합니다. 위에 안내한 렌더러 빌드·실행 의존성이 설치되어 있어야 합니다. 릴리스 CI도 패키징 전에 이 단계를 실행합니다.
+- 기존 빌드를 쓰려면 `SCENE_RENDERER_BINARY=/path/to/wwb-scene-renderer`를 설정하거나 실행 파일을 `ExternalRenderers/wwb-scene-renderer`에 둡니다.
+- 패키징 스크립트는 렌더러와 로컬 라이브러리를 앱 리소스로 복사하고, [3x-haust/wallpaperengine-mac-renderer](https://github.com/3x-haust/wallpaperengine-mac-renderer)의 [Scripts/scene-renderer.env](Scripts/scene-renderer.env)에 고정한 source ref와 source link를 담은 `Renderer Notices/GPL Scene Renderer Notice.txt`를 항상 씁니다.
 - 다른 renderer build를 배포한다면 해당 공개 source에 맞게 `SCENE_RENDERER_SOURCE_URL`과 `SCENE_RENDERER_SOURCE_REF`를 설정하세요.
 
 패키지는 Wallpaper Engine runtime assets를 절대 포함하지 않습니다:
