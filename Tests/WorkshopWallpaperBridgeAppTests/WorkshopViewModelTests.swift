@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 import Darwin
 import XCTest
 @testable import WorkshopWallpaperBridgeApp
@@ -88,25 +89,36 @@ final class WorkshopViewModelTests: XCTestCase {
         XCTAssertEqual(fixture.model.statusKey, "workshop.error.connection")
     }
 
-    func testDownloadImportAndApplyAreThreeSeparateActions() async throws {
+    func testCompletedDownloadAutomaticallyImportsAndRequestsPlayback() async throws {
         let fixture = try makeFixture()
         let download = try await completeDownload(fixture)
         XCTAssertEqual(fixture.model.downloads.map(\.id), [download.id])
-        XCTAssertTrue(fixture.library.libraryAssets.isEmpty)
-        XCTAssertNil(fixture.player.playedID)
         XCTAssertEqual(fixture.model.selectedAsset?.supportStatus, .playable)
-
-        fixture.model.importSelected()
-        XCTAssertTrue(fixture.model.isBusy)
-        fixture.model.removeDownloaded(download)
-        fixture.model.download(item())
-        XCTAssertTrue(FileManager.default.fileExists(atPath: download.directory))
-        await waitUntil { !fixture.model.isBusy }
         XCTAssertEqual(fixture.library.libraryAssets.map(\.id), [download.id])
-        XCTAssertNil(fixture.player.playedID)
-        fixture.model.applySelected()
         XCTAssertEqual(fixture.player.playedID, download.id)
         XCTAssertEqual(fixture.model.statusKey, "workshop.play.requested")
+    }
+
+    func testSelectingDownloadAutomaticallyAppliesExistingLibraryCopy() async throws {
+        let fixture = try makeFixture()
+        let download = try await completeDownload(fixture)
+        fixture.player.playedID = nil
+        fixture.model.selectDownload(download.id)
+        fixture.model.removeDownloaded(download)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: download.directory))
+        await waitUntil { !fixture.model.isBusy }
+        XCTAssertEqual(fixture.player.playedID, download.id)
+        XCTAssertEqual(fixture.library.libraryAssets.count, 1)
+    }
+
+    func testPlaybackErrorIsNotReportedAsRequestedPlayback() async throws {
+        let fixture = try makeFixture()
+        fixture.player.shouldFail = true
+        _ = try await completeDownload(fixture)
+        XCTAssertNil(fixture.player.playedID)
+        XCTAssertEqual(fixture.model.statusKey, "workshop.error.play")
+        XCTAssertEqual(fixture.library.libraryAssets.count, 1)
+        XCTAssertEqual(fixture.player.stopCount, 0)
     }
 
     func testDuplicateImportPreservesExistingLibraryAndConvertedFiles() async throws {
@@ -128,11 +140,12 @@ final class WorkshopViewModelTests: XCTestCase {
 
     func testLibraryBusyGateRejectsWorkshopImport() async throws {
         let fixture = try makeFixture()
-        _ = try await completeDownload(fixture)
         fixture.library.isWorking = true
-        fixture.model.importSelected()
+        _ = try await completeDownload(fixture)
         XCTAssertFalse(fixture.model.isBusy)
         XCTAssertTrue(fixture.library.libraryAssets.isEmpty)
+        XCTAssertNil(fixture.player.playedID)
+        XCTAssertEqual(fixture.model.statusKey, "workshop.error.busy")
         fixture.library.isWorking = false
     }
 
@@ -230,6 +243,267 @@ final class WorkshopViewModelTests: XCTestCase {
         XCTAssertTrue(fixture.model.hasNextPage, "Filtered collections must not hide subsequent pages")
     }
 
+    func testFiltersReachServerResetPageAndSerializeLateSearchResponses() throws {
+        let fixture = try makeFixture()
+        authenticate(fixture)
+        fixture.model.search(page: 3)
+        let previous = try XCTUnwrap(fixture.client.commands.last)
+        fixture.model.sort = "recent"
+        fixture.model.kindFilter = "scene"
+        fixture.model.genreFilter = "Nature"
+        fixture.model.applyFilters()
+        XCTAssertEqual(fixture.client.commands.last?.id, previous.id)
+        fixture.client.emit(SteamEvent(id: previous.id, type: "items", items: [item()], total: 60, page: 3, pageSize: 20))
+        let filtered = try XCTUnwrap(fixture.client.commands.last)
+        XCTAssertNotEqual(filtered.id, previous.id)
+        XCTAssertEqual(filtered.page, 1)
+        XCTAssertEqual(filtered.sort, "recent")
+        XCTAssertEqual(filtered.kind, "scene")
+        XCTAssertEqual(filtered.genre, "Nature")
+        XCTAssertTrue(fixture.model.items.isEmpty)
+        fixture.client.emit(SteamEvent(id: previous.id, type: "items", items: [item()], page: 3))
+        XCTAssertTrue(fixture.model.isBusy)
+        fixture.client.emit(SteamEvent(id: filtered.id, type: "items", items: [], total: 0, page: 1, pageSize: 20))
+        XCTAssertEqual(fixture.model.page, 1)
+        XCTAssertFalse(fixture.model.isBusy)
+        fixture.model.search(page: 2)
+        XCTAssertEqual(fixture.client.commands.last?.genre, "Nature")
+    }
+
+    func testUnsupportedDownloadIsImportedWithoutPlaybackOrStop() async throws {
+        let fixture = try makeFixture()
+        _ = try await completeDownload(fixture, project: #"{"title":"Fixture","type":"application","file":"test.exe"}"#)
+        XCTAssertEqual(fixture.library.libraryAssets.count, 1)
+        XCTAssertNil(fixture.player.playedID)
+        XCTAssertEqual(fixture.player.stopCount, 0)
+        XCTAssertEqual(fixture.model.statusKey, "workshop.play.unsupported")
+    }
+
+    func testInvalidCompletedProjectNeverImportsOrApplies() async throws {
+        let fixture = try makeFixture()
+        authenticate(fixture)
+        fixture.model.download(item())
+        let command = try XCTUnwrap(fixture.client.commands.last)
+        fixture.client.emit(SteamEvent(id: command.id, type: "completed", itemID: item().id))
+        await waitUntil { !fixture.model.isBusy }
+        XCTAssertTrue(fixture.model.downloads.isEmpty)
+        XCTAssertTrue(fixture.library.libraryAssets.isEmpty)
+        XCTAssertNil(fixture.player.playedID)
+        XCTAssertEqual(fixture.model.statusKey, "workshop.error.project")
+    }
+
+    func testScanErrorDoesNotApplyEvenWhenLibraryCopyExists() async throws {
+        let fixture = try makeFixture()
+        let download = try await completeDownload(fixture)
+        fixture.player.playedID = nil
+        try Data("invalid".utf8).write(to: URL(filePath: download.directory).appending(path: "project.json"))
+        fixture.model.selectDownload(download.id)
+        await waitUntil { !fixture.model.isBusy }
+        XCTAssertNil(fixture.player.playedID)
+        XCTAssertEqual(fixture.player.stopCount, 0)
+        XCTAssertEqual(fixture.model.statusKey, "workshop.error.project")
+    }
+
+    func testImportErrorKeepsCompletedDownloadWithoutClaimingPlayback() async throws {
+        let fixture = try makeFixture()
+        try Data("invalid".utf8).write(to: fixture.root.appending(path: "library.json"))
+        _ = try await completeDownload(fixture)
+        XCTAssertEqual(fixture.model.downloads.count, 1)
+        XCTAssertTrue(fixture.library.libraryAssets.isEmpty)
+        XCTAssertNil(fixture.player.playedID)
+        XCTAssertEqual(fixture.model.statusKey, "workshop.error.import")
+    }
+
+    func testCancelDuringFinalizationRetainsDownloadWithoutApplying() async throws {
+        let fixture = try makeFixture()
+        try startCompletedDownload(fixture)
+        XCTAssertEqual(fixture.model.operation, "finalizing")
+        fixture.model.cancel()
+        XCTAssertTrue(fixture.model.isBusy)
+        await waitUntil { !fixture.model.isBusy }
+        XCTAssertEqual(fixture.model.downloads.count, 1)
+        XCTAssertTrue(fixture.library.libraryAssets.isEmpty)
+        XCTAssertNil(fixture.player.playedID)
+        XCTAssertEqual(fixture.model.statusKey, "workshop.cancelled")
+    }
+
+    func testLibrarySelectionDuringDownloadPreventsLateAutoApply() async throws {
+        let fixture = try makeFixture()
+        try startCompletedDownload(fixture)
+        fixture.library.selectLibraryAssets([])
+        await waitUntil { !fixture.model.isBusy }
+        XCTAssertEqual(fixture.model.downloads.count, 1)
+        XCTAssertTrue(fixture.library.selectedLibraryAssetIds.isEmpty)
+        XCTAssertNil(fixture.player.playedID)
+    }
+
+    func testSelectionDuringImportIsPreservedAndDownloadCannotBeRemovedOrRestarted() async throws {
+        let fixture = try makeFixture()
+        var checked = false
+        let observation = fixture.library.$importProgress.sink { progress in
+            guard progress?.completed == 0, let download = fixture.model.selectedDownload else { return }
+            checked = true
+            fixture.library.selectLibraryAssets([])
+            fixture.model.removeDownloaded(download)
+            fixture.model.download(self.item())
+            XCTAssertTrue(FileManager.default.fileExists(atPath: download.directory))
+            XCTAssertEqual(fixture.client.commands.count, 2)
+        }
+        _ = try await completeDownload(fixture)
+        withExtendedLifetime(observation) {}
+        XCTAssertTrue(checked)
+        XCTAssertTrue(fixture.library.selectedLibraryAssetIds.isEmpty)
+        XCTAssertEqual(fixture.library.libraryAssets.count, 1)
+        XCTAssertNil(fixture.player.playedID)
+    }
+
+    func testCancelDuringImportWaitsForWriteButNeverApplies() async throws {
+        let fixture = try makeFixture()
+        let observation = fixture.library.$importProgress.sink { progress in
+            if progress?.completed == 0 { fixture.model.cancel() }
+        }
+        _ = try await completeDownload(fixture)
+        withExtendedLifetime(observation) {}
+        XCTAssertFalse(fixture.library.isWorking)
+        XCTAssertEqual(fixture.library.libraryAssets.count, 1)
+        XCTAssertNil(fixture.player.playedID)
+        XCTAssertEqual(fixture.model.statusKey, "workshop.cancelled")
+    }
+
+    func testNewestDownloadSelectionSupersedesPendingScan() async throws {
+        let fixture = try makeFixture()
+        let first = try await completeDownload(fixture)
+        let secondItem = WorkshopItem(id: "893418274", title: "Second", description: "", previewURL: nil, kind: "web", size: nil)
+        fixture.model.download(secondItem)
+        let command = try XCTUnwrap(fixture.client.commands.last)
+        let directory = URL(filePath: try XCTUnwrap(command.directory))
+        try writeProject(directory)
+        fixture.client.emit(SteamEvent(id: command.id, type: "completed", itemID: secondItem.id))
+        fixture.player.playedID = nil
+        fixture.model.selectDownload(first.id)
+        await waitUntil { !fixture.model.isBusy }
+        XCTAssertEqual(fixture.model.downloads.count, 2)
+        XCTAssertEqual(fixture.player.playedID, first.id)
+        XCTAssertEqual(fixture.model.selectedDownloadID, first.id)
+        XCTAssertEqual(fixture.library.libraryAssets.map(\.id), [first.id])
+    }
+
+    func testAcceptedPlaybackIsRememberedOnlyAfterReadyEvent() async throws {
+        let fixture = try makeFixture()
+        let download = try await completeDownload(fixture)
+        XCTAssertNil(fixture.library.activeWallpaperAssetID)
+        XCTAssertNil(fixture.defaults.string(forKey: "lastPlayedAssetId"))
+        XCTAssertEqual(fixture.library.status, fixture.library.L("workshop.play.requested"))
+        XCTAssertEqual(fixture.model.statusKey, "workshop.play.requested")
+
+        fixture.player.handler?(.ready(assetID: download.id))
+        XCTAssertEqual(fixture.library.activeWallpaperAssetID, download.id)
+        XCTAssertEqual(fixture.defaults.string(forKey: "lastPlayedAssetId"), download.id)
+        XCTAssertEqual(fixture.model.statusKey, "workshop.play.ready")
+    }
+
+    func testAsynchronousFailurePreservesPreviouslyReadyWallpaperAndPreference() async throws {
+        let fixture = try makeFixture()
+        let download = try await completeDownload(fixture)
+        fixture.player.handler?(.ready(assetID: download.id))
+        let original = try XCTUnwrap(fixture.library.libraryAssets.first)
+        let second = WallpaperAsset(id: "893418274", title: "Second", kind: original.kind,
+                                    supportStatus: .playable, source: original.source,
+                                    projectDirectory: original.projectDirectory, entrypoint: original.entrypoint,
+                                    thumbnail: nil, workshopId: nil, redistributionAllowed: false, issues: [])
+        fixture.library.libraryAssets.append(second)
+        XCTAssertTrue(fixture.library.selectAndApplyLibraryAsset(second.id))
+        fixture.player.handler?(.failed(assetID: second.id, message: "Synthetic load failure"))
+        XCTAssertEqual(fixture.library.activeWallpaperAssetID, download.id)
+        XCTAssertEqual(fixture.defaults.string(forKey: "lastPlayedAssetId"), download.id)
+        XCTAssertEqual(fixture.library.status, "Synthetic load failure")
+        XCTAssertEqual(fixture.player.stopCount, 0)
+        fixture.player.handler?(.ready(assetID: second.id))
+        XCTAssertEqual(fixture.library.activeWallpaperAssetID, download.id)
+    }
+
+    func testNewSelectionOrCancellationDiscardsPendingPlaybackWithoutStoppingActiveWallpaper() async throws {
+        for action in ["unsupported", "multiple", "cancel"] {
+            let fixture = try makeFixture()
+            let download = try await completeDownload(fixture)
+            fixture.player.finishPendingPlayback()
+            let original = try XCTUnwrap(fixture.library.libraryAssets.first)
+            let pending = WallpaperAsset(id: "pending", title: "Pending", kind: original.kind,
+                                         supportStatus: .playable, source: original.source,
+                                         projectDirectory: original.projectDirectory, entrypoint: original.entrypoint,
+                                         thumbnail: nil, workshopId: nil, redistributionAllowed: false, issues: [])
+            let unsupported = WallpaperAsset(id: "unsupported", title: "Unsupported", kind: original.kind,
+                                             supportStatus: .unsupported, source: original.source,
+                                             projectDirectory: original.projectDirectory, entrypoint: original.entrypoint,
+                                             thumbnail: nil, workshopId: nil, redistributionAllowed: false, issues: [])
+            fixture.library.libraryAssets += [pending, unsupported]
+            XCTAssertTrue(fixture.library.selectAndApplyLibraryAsset(pending.id))
+            XCTAssertEqual(fixture.player.pendingID, pending.id)
+
+            switch action {
+            case "unsupported": XCTAssertFalse(fixture.library.selectAndApplyLibraryAsset(unsupported.id))
+            case "multiple": fixture.library.selectLibraryAssets([download.id, pending.id])
+            default:
+                fixture.model.search()
+                XCTAssertTrue(fixture.model.canCancel)
+                fixture.model.cancel()
+            }
+            let statusAfterSelection = fixture.library.status
+            XCTAssertNil(fixture.player.pendingID, action)
+            fixture.player.finishPendingPlayback()
+            // A callback already queued by a cancelled request must also be ignored.
+            fixture.player.handler?(.ready(assetID: pending.id))
+            fixture.player.handler?(.failed(assetID: pending.id, message: "Stale failure"))
+
+            XCTAssertEqual(fixture.player.activeID, download.id, action)
+            XCTAssertEqual(fixture.library.activeWallpaperAssetID, download.id, action)
+            XCTAssertEqual(fixture.defaults.string(forKey: "lastPlayedAssetId"), download.id, action)
+            XCTAssertEqual(fixture.library.status, statusAfterSelection, action)
+            XCTAssertEqual(fixture.player.stopCount, 0, action)
+        }
+    }
+
+    func testStaleAndStoppedReadinessEventsCannotChangeActiveWallpaper() async throws {
+        let fixture = try makeFixture()
+        let download = try await completeDownload(fixture)
+        fixture.player.handler?(.ready(assetID: "stale"))
+        XCTAssertNil(fixture.library.activeWallpaperAssetID)
+        fixture.library.stopPlayback()
+        fixture.player.handler?(.ready(assetID: download.id))
+        XCTAssertNil(fixture.library.activeWallpaperAssetID)
+        XCTAssertNil(fixture.defaults.string(forKey: "lastPlayedAssetId"))
+    }
+
+    func testWorkshopAsynchronousLoadFailureIsNotReady() async throws {
+        let fixture = try makeFixture()
+        let download = try await completeDownload(fixture)
+        fixture.player.handler?(.failed(assetID: download.id, message: "Synthetic load failure"))
+        XCTAssertEqual(fixture.model.statusKey, "workshop.error.play")
+        XCTAssertNil(fixture.library.activeWallpaperAssetID)
+        XCTAssertNil(fixture.defaults.string(forKey: "lastPlayedAssetId"))
+    }
+
+    func testSynchronousReadyCallbackIsNotOverwrittenByRequestedStatus() async throws {
+        let fixture = try makeFixture()
+        fixture.player.readySynchronously = true
+        let download = try await completeDownload(fixture)
+        XCTAssertEqual(fixture.model.statusKey, "workshop.play.ready")
+        XCTAssertEqual(fixture.library.activeWallpaperAssetID, download.id)
+    }
+
+    func testDirectLibrarySelectionAppliesButMultiSelectionDoesNot() async throws {
+        let fixture = try makeFixture()
+        let download = try await completeDownload(fixture)
+        fixture.player.playedID = nil
+        fixture.library.selectLibraryAssets([download.id])
+        XCTAssertNil(fixture.player.playedID)
+        XCTAssertTrue(fixture.library.selectAndApplyLibraryAsset(download.id))
+        XCTAssertEqual(fixture.player.playedID, download.id)
+        fixture.player.shouldFail = true
+        XCTAssertFalse(fixture.library.selectAndApplyLibraryAsset(download.id))
+        XCTAssertFalse(fixture.library.selectAndApplyLibraryAsset("absent"))
+    }
+
     func testWorkshopIDsMustBeASingleNonzeroUInt64DecimalComponent() {
         for value in ["", "0", "../1", "/1", "1/2", "-1", "１２３", "18446744073709551616"] {
             XCTAssertFalse(WorkshopViewModel.validID(value), value)
@@ -243,6 +517,7 @@ final class WorkshopViewModelTests: XCTestCase {
         let model: WorkshopViewModel
         let client: FakeSteamClient
         let player: WorkshopTestPlayer
+        let defaults: UserDefaults
     }
 
     private func makeFixture() throws -> Fixture {
@@ -253,7 +528,7 @@ final class WorkshopViewModelTests: XCTestCase {
         let player = WorkshopTestPlayer()
         let library = AppViewModel(store: LibraryStore(root: root), loginItemController: WorkshopLoginItems(), wallpaperPlayer: player, userDefaults: defaults)
         let client = FakeSteamClient()
-        return Fixture(root: root, library: library, model: WorkshopViewModel(library: library, root: root, client: client), client: client, player: player)
+        return Fixture(root: root, library: library, model: WorkshopViewModel(library: library, root: root, client: client), client: client, player: player, defaults: defaults)
     }
 
     private func temporaryDirectory() throws -> URL {
@@ -274,16 +549,25 @@ final class WorkshopViewModelTests: XCTestCase {
         fixture.client.emit(SteamEvent(id: fixture.client.commands.last!.id, type: "authenticated", account: "test-account"))
     }
 
-    private func completeDownload(_ fixture: Fixture) async throws -> WorkshopDownload {
+    private func completeDownload(_ fixture: Fixture, project: String? = nil) async throws -> WorkshopDownload {
+        try startCompletedDownload(fixture, project: project)
+        await waitUntil { !fixture.model.isBusy && fixture.model.selectedAsset != nil }
+        return try XCTUnwrap(fixture.model.selectedDownload)
+    }
+
+    private func startCompletedDownload(_ fixture: Fixture, project: String? = nil) throws {
         authenticate(fixture)
         fixture.model.download(item())
         let command = try XCTUnwrap(fixture.client.commands.last)
         let directory = URL(filePath: try XCTUnwrap(command.directory))
-        try Data(#"{"title":"Fixture","type":"web","file":"index.html"}"#.utf8).write(to: directory.appending(path: "project.json"))
-        try Data("<html>Local fixture</html>".utf8).write(to: directory.appending(path: "index.html"))
+        try writeProject(directory, project: project)
         fixture.client.emit(SteamEvent(id: command.id, type: "completed", itemID: item().id))
-        await waitUntil { !fixture.model.isBusy && fixture.model.selectedAsset != nil }
-        return try XCTUnwrap(fixture.model.selectedDownload)
+    }
+
+    private func writeProject(_ directory: URL, project: String? = nil) throws {
+        try Data((project ?? #"{"title":"Fixture","type":"web","file":"index.html"}"#).utf8).write(to: directory.appending(path: "project.json"))
+        try Data("<html>Local fixture</html>".utf8).write(to: directory.appending(path: "index.html"))
+        if project != nil { try Data("synthetic executable".utf8).write(to: directory.appending(path: "test.exe")) }
     }
 
     private func waitUntil(_ predicate: () -> Bool, file: StaticString = #filePath, line: UInt = #line) async {
@@ -316,8 +600,27 @@ private final class FakeSteamClient: SteamHelperTransport {
 @MainActor
 private final class WorkshopTestPlayer: WallpaperPlaying {
     var playedID: String?
-    func play(asset: WallpaperAsset, autoPauseWhenCovered: Bool, displayMode: WallpaperDisplayMode, audioEnabled: Bool?, audioVolume: Double?) throws { playedID = asset.id }
-    func stop() {}
+    var shouldFail = false
+    var stopCount = 0
+    var readySynchronously = false
+    var pendingID: String?
+    var activeID: String?
+    func cancelPendingPlayback() { pendingID = nil }
+    func finishPendingPlayback() {
+        guard let id = pendingID else { return }
+        pendingID = nil
+        activeID = id
+        handler?(.ready(assetID: id))
+    }
+    var handler: ((WallpaperPlaybackEvent) -> Void)?
+    func setPlaybackStatusHandler(_ handler: @escaping (WallpaperPlaybackEvent) -> Void) { self.handler = handler }
+    func play(asset: WallpaperAsset, autoPauseWhenCovered: Bool, displayMode: WallpaperDisplayMode, audioEnabled: Bool?, audioVolume: Double?) throws {
+        if shouldFail { throw SteamBridgeError.noProject }
+        playedID = asset.id
+        pendingID = asset.id
+        if readySynchronously { finishPendingPlayback() }
+    }
+    func stop() { stopCount += 1 }
     func setDisplayMode(_ mode: WallpaperDisplayMode) {}
     func setAutoPauseWhenCovered(_ enabled: Bool) {}
 }

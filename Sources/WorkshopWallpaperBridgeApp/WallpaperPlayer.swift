@@ -1,12 +1,28 @@
 import AppKit
 import WorkshopWallpaperCore
 
+enum WallpaperPlaybackEvent: Equatable {
+    case ready(assetID: String)
+    case failed(assetID: String, message: String)
+}
+
 @MainActor
 final class WallpaperPlayer {
     static let shared = WallpaperPlayer()
 
-    private var windows: [WallpaperWindow] = []
+    private var windows: [any WallpaperWindowControlling] = []
+    private var pendingWindows: [any WallpaperWindowControlling] = []
+    private var readyWindows = Set<ObjectIdentifier>()
+    private var pendingPlayback: (asset: WallpaperAsset, frames: [CGRect], autoPause: Bool,
+                                  displayMode: WallpaperDisplayMode, audioEnabled: Bool, audioVolume: Double)?
+    private let screenFrames: () -> [CGRect]
+    private let makeWindow: (WallpaperAsset, URL, CGRect, WallpaperDisplayMode, Bool, Double) throws -> any WallpaperWindowControlling
     private var activeAsset: WallpaperAsset?
+    private var playbackStatusHandler: ((WallpaperPlaybackEvent) -> Void)?
+
+    func setPlaybackStatusHandler(_ handler: @escaping (WallpaperPlaybackEvent) -> Void) {
+        playbackStatusHandler = handler
+    }
     private var autoPauseWhenCovered = true
     private var displayMode: WallpaperDisplayMode = .fit
     private var interactionEnabled = false
@@ -19,6 +35,18 @@ final class WallpaperPlayer {
     private var pendingAutoSuspension: DispatchWorkItem?
     private let visibilityMonitor = DesktopVisibilityMonitor()
 
+    init(
+        screenFrames: @escaping () -> [CGRect] = {
+            WallpaperScreenFrames.wallpaperFrames(for: NSScreen.screens)
+        },
+        makeWindow: @escaping (WallpaperAsset, URL, CGRect, WallpaperDisplayMode, Bool, Double) throws -> any WallpaperWindowControlling = {
+            try WallpaperWindow(asset: $0, url: $1, frame: $2, displayMode: $3, audioEnabled: $4, audioVolume: $5)
+        }
+    ) {
+        self.screenFrames = screenFrames
+        self.makeWindow = makeWindow
+    }
+
     func play(
         asset: WallpaperAsset,
         autoPauseWhenCovered: Bool = true,
@@ -26,16 +54,7 @@ final class WallpaperPlayer {
         audioEnabled: Bool? = nil,
         audioVolume: Double? = nil
     ) throws {
-        closeWindows()
-        activeAsset = asset
-        self.autoPauseWhenCovered = autoPauseWhenCovered
-        self.displayMode = displayMode
-        if let audioEnabled {
-            self.audioEnabled = audioEnabled
-        }
-        if let audioVolume {
-            self.audioVolume = audioVolume
-        }
+        discardPendingWindows()
         guard asset.supportStatus == .playable else {
             throw PlaybackError.notPlayable(asset.supportStatus.rawValue)
         }
@@ -43,23 +62,76 @@ final class WallpaperPlayer {
             throw PlaybackError.missingEntrypoint
         }
         let url = URL(filePath: entrypoint)
-        let screens = NSScreen.screens
-        let screenFrames = WallpaperScreenFrames.wallpaperFrames(for: screens)
-        windows = try screenFrames.map { frame in
-            try WallpaperWindow(
-                asset: asset,
-                url: url,
-                frame: frame,
-                displayMode: displayMode,
-                audioEnabled: self.audioEnabled,
-                audioVolume: self.audioVolume
-            )
+        let screenFrames = screenFrames()
+        guard !screenFrames.isEmpty else { throw PlaybackError.noScreens }
+        let nextAudioEnabled = audioEnabled ?? self.audioEnabled
+        let nextAudioVolume = audioVolume ?? self.audioVolume
+        var prepared: [any WallpaperWindowControlling] = []
+        do {
+            for frame in screenFrames {
+                prepared.append(try makeWindow(asset, url, frame, displayMode, false, nextAudioVolume))
+            }
+        } catch {
+            prepared.forEach { $0.close() }
+            throw error
         }
-        lastScreenFrames = screenFrames
-        windows.forEach { $0.setInteractionEnabled(interactionEnabled); $0.show() }
+        pendingWindows = prepared
+        pendingPlayback = (asset, screenFrames, autoPauseWhenCovered, displayMode, nextAudioEnabled, nextAudioVolume)
+        for window in prepared {
+            // A synchronous failure callback may already have discarded the batch.
+            guard pendingWindows.contains(where: { $0 === window }) else { break }
+            window.whenReady { [weak self, weak window] result in
+                guard let self, let window,
+                      self.pendingWindows.contains(where: { $0 === window }) else { return }
+                switch result {
+                case .success:
+                    self.readyWindows.insert(ObjectIdentifier(window))
+                    if self.readyWindows.count == self.pendingWindows.count {
+                        self.commitPendingWindows()
+                    }
+                case .failure(let error):
+                    self.discardPendingWindows()
+                    self.playbackStatusHandler?(.failed(assetID: asset.id, message: error.localizedDescription))
+                }
+            }
+        }
+    }
+
+    func cancelPendingPlayback() {
+        discardPendingWindows()
+    }
+
+    private func discardPendingWindows() {
+        let discarded = pendingWindows
+        pendingWindows = []
+        pendingPlayback = nil
+        readyWindows.removeAll()
+        discarded.forEach { $0.close() }
+    }
+
+    private func commitPendingWindows() {
+        guard let playback = pendingPlayback else { return }
+        closeWindows()
+        windows = pendingWindows
+        pendingWindows = []
+        pendingPlayback = nil
+        readyWindows.removeAll()
+        activeAsset = playback.asset
+        lastScreenFrames = playback.frames
+        autoPauseWhenCovered = playback.autoPause
+        displayMode = playback.displayMode
+        audioEnabled = playback.audioEnabled
+        audioVolume = playback.audioVolume
+        windows.forEach {
+            $0.setAudio(enabled: audioEnabled, volume: audioVolume)
+            $0.setSuspended(isSuspended)
+            $0.setInteractionEnabled(interactionEnabled)
+            $0.show()
+        }
         startLifecycleObservers()
         startVisibilityTimer()
         updateVisibilityState()
+        playbackStatusHandler?(.ready(assetID: playback.asset.id))
     }
 
     /// Updates mouse handling on current and future wallpaper windows.
@@ -72,18 +144,22 @@ final class WallpaperPlayer {
     func setAudioSettings(enabled: Bool, volume: Double) {
         audioEnabled = enabled
         audioVolume = volume
+        pendingPlayback?.audioEnabled = enabled
+        pendingPlayback?.audioVolume = volume
         windows.forEach { $0.setAudio(enabled: enabled, volume: volume) }
     }
 
     func setDisplayMode(_ displayMode: WallpaperDisplayMode) {
         self.displayMode = displayMode
-        windows.forEach {
+        pendingPlayback?.displayMode = displayMode
+        (windows + pendingWindows).forEach {
             $0.setDisplayMode(displayMode)
         }
     }
 
     func setAutoPauseWhenCovered(_ enabled: Bool) {
         autoPauseWhenCovered = enabled
+        pendingPlayback?.autoPause = enabled
         if !enabled {
             cancelPendingAutoSuspension()
             setSuspended(false)
@@ -94,7 +170,8 @@ final class WallpaperPlayer {
     /// Called once a scene->video render finishes so the newly cached video
     /// swaps in for the still-live native scene fallback.
     func refreshIfNeeded(afterSceneVideoRenderFor assetId: String) {
-        guard let activeAsset, activeAsset.id == assetId, activeAsset.kind == .scene else {
+        guard pendingWindows.isEmpty,
+              let activeAsset, activeAsset.id == assetId, activeAsset.kind == .scene else {
             return
         }
         try? reopen(asset: activeAsset)
@@ -109,6 +186,7 @@ final class WallpaperPlayer {
     }
 
     func stop() {
+        discardPendingWindows()
         activeAsset = nil
         lastScreenFrames = []
         cancelPendingAutoSuspension()
@@ -123,26 +201,7 @@ final class WallpaperPlayer {
     }
 
     private func reopen(asset: WallpaperAsset) throws {
-        guard let entrypoint = asset.entrypoint else {
-            throw PlaybackError.missingEntrypoint
-        }
-        closeWindows()
-        let url = URL(filePath: entrypoint)
-        let screens = NSScreen.screens
-        let screenFrames = WallpaperScreenFrames.wallpaperFrames(for: screens)
-        windows = try screenFrames.map { frame in
-            try WallpaperWindow(
-                asset: asset,
-                url: url,
-                frame: frame,
-                displayMode: displayMode,
-                audioEnabled: audioEnabled,
-                audioVolume: audioVolume
-            )
-        }
-        lastScreenFrames = screenFrames
-        windows.forEach { $0.setInteractionEnabled(interactionEnabled); $0.show() }
-        updateVisibilityState()
+        try play(asset: asset, autoPauseWhenCovered: autoPauseWhenCovered, displayMode: displayMode)
     }
 
     private func startVisibilityTimer() {
@@ -247,22 +306,30 @@ final class WallpaperPlayer {
         workspaceObservers = []
     }
 
-    private func reopenAfterWake() {
-        guard let activeAsset else {
+    func reopenAfterWake() {
+        guard let asset = pendingPlayback?.asset ?? activeAsset else {
             return
         }
+        setSuspended(false)
+        updateVisibilityState()
         do {
-            try play(asset: activeAsset, autoPauseWhenCovered: autoPauseWhenCovered, displayMode: displayMode)
+            try play(asset: asset,
+                     autoPauseWhenCovered: pendingPlayback?.autoPause ?? autoPauseWhenCovered,
+                     displayMode: pendingPlayback?.displayMode ?? displayMode,
+                     audioEnabled: pendingPlayback?.audioEnabled ?? audioEnabled,
+                     audioVolume: pendingPlayback?.audioVolume ?? audioVolume)
         } catch {
-            closeWindows()
+            // The existing content is still valid even if rebuilding it failed.
+            setSuspended(false)
+            updateVisibilityState()
         }
     }
 
     private func reopenAfterScreenFrameChange() {
-        guard activeAsset != nil else {
+        guard activeAsset != nil || pendingPlayback != nil else {
             return
         }
-        let currentScreenFrames = WallpaperScreenFrames.wallpaperFrames(for: NSScreen.screens)
+        let currentScreenFrames = screenFrames()
         guard WallpaperScreenFrames.shouldReopenWindows(
             previous: lastScreenFrames,
             current: currentScreenFrames
@@ -353,7 +420,19 @@ enum WallpaperInteraction {
 }
 
 @MainActor
-private final class WallpaperWindow {
+protocol WallpaperWindowControlling: AnyObject {
+    func whenReady(_ completion: @escaping (Result<Void, Error>) -> Void)
+    func show()
+    func close()
+    func reassertDesktopOrder()
+    func setSuspended(_ suspended: Bool)
+    func setDisplayMode(_ displayMode: WallpaperDisplayMode)
+    func setInteractionEnabled(_ enabled: Bool)
+    func setAudio(enabled: Bool, volume: Double)
+}
+
+@MainActor
+private final class WallpaperWindow: WallpaperWindowControlling {
     private let window: DesktopWallpaperWindow
     private let content: NSView
 
@@ -369,7 +448,8 @@ private final class WallpaperWindow {
             url: url,
             frame: frame,
             displayMode: displayMode,
-            audioEnabled: audioEnabled,
+            // Preparation may start decoding, but must not overlap audible playback.
+            audioEnabled: false,
             audioVolume: audioVolume
         )
         window = DesktopWallpaperWindow(
@@ -388,6 +468,15 @@ private final class WallpaperWindow {
         window.isOpaque = false
         window.backgroundColor = .clear
         window.contentView = content
+        (content as? PausableWallpaperContent)?.setPlaybackSuspended(true)
+    }
+
+    func whenReady(_ completion: @escaping (Result<Void, Error>) -> Void) {
+        if let preparing = content as? WallpaperContentPreparing {
+            preparing.whenReady(completion)
+        } else {
+            completion(.success(()))
+        }
     }
 
     func show() {
@@ -478,8 +567,8 @@ enum SceneWallpaperContentFactory {
     static var lastDiagnostic: String?
     static var statusHandler: ((String) -> Void)?
     /// Invoked with the asset id once a scene's video render finishes
-    /// (successfully), after `WallpaperPlayer` has already swapped the
-    /// desktop wallpaper over to the freshly cached video. Lets callers also
+    /// (successfully), after `WallpaperPlayer` has requested preparation of
+    /// the freshly cached video. Playback readiness is reported separately. Lets callers also
     /// refresh anything else derived from "does this scene have a cached
     /// video yet" (the lock screen animation configuration) without this
     /// factory needing to know about that dependency directly.
@@ -655,7 +744,7 @@ enum SceneWallpaperContentFactory {
                 )
                 await MainActor.run {
                     pendingRenderAssetIDs.remove(assetId)
-                    statusHandler?("Playing")
+                    statusHandler?("Scene video render complete.")
                     WallpaperPlayer.shared.refreshIfNeeded(afterSceneVideoRenderFor: assetId)
                     sceneVideoRenderCompletionHandler?(assetId)
                 }
@@ -832,6 +921,7 @@ private final class ImageWallpaperView: NSView, DisplayModeUpdatableContent {
 private enum PlaybackError: Error, LocalizedError {
     case missingEntrypoint
     case invalidImage
+    case noScreens
     case notPlayable(String)
 
     var errorDescription: String? {
@@ -840,6 +930,8 @@ private enum PlaybackError: Error, LocalizedError {
             return "The selected project has no playable entrypoint."
         case .invalidImage:
             return "The selected image could not be opened."
+        case .noScreens:
+            return "No display is available for wallpaper playback."
         case .notPlayable(let reason):
             return "This project is not playable on macOS: \(reason)."
         }

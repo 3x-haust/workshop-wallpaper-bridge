@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 import WorkshopWallpaperCore
 
 @MainActor
@@ -21,6 +22,9 @@ final class WorkshopViewModel: ObservableObject {
     @Published private(set) var selectedAsset: WallpaperAsset?
     @Published private(set) var retryItem: WorkshopItem?
     @Published var query = ""
+    @Published var sort = "popular"
+    @Published var kindFilter = "all"
+    @Published var genreFilter = ""
     @Published var pendingRemoval: WorkshopDownload?
 
     private weak var library: AppViewModel?
@@ -31,6 +35,12 @@ final class WorkshopViewModel: ObservableObject {
     private var downloading: WorkshopItem?
     private var staging: URL?
     private var stopping = false
+    private var applicationIntent: UUID?
+    private var downloadIntent: UUID?
+    private var pendingSelectionID: String?
+    private var pendingSearch: SteamCommand?
+    private var requestedPlaybackID: String?
+    private var playbackObservation: AnyCancellable?
 
     init(library: AppViewModel, root: URL, client: SteamHelperTransport? = nil) {
         self.library = library
@@ -41,12 +51,22 @@ final class WorkshopViewModel: ObservableObject {
         self.client.onExit = { [weak self] in self?.helperExited() }
         hasSavedSession = authentication.hasSavedSession
         refreshDownloads()
+        playbackObservation = library.$playbackEvent.sink { [weak self] event in
+            guard let self, let event, let id = requestedPlaybackID, selectedDownloadID == id else { return }
+            switch event {
+            case .ready(let assetID) where assetID == id:
+                statusKey = "workshop.play.ready"
+            case .failed(let assetID, _) where assetID == id:
+                statusKey = "workshop.error.play"
+            default: break
+            }
+        }
     }
 
     var isBusy: Bool { operation != nil }
     var isAuthenticated: Bool { account != nil }
     var hasStoredAuthentication: Bool { authentication.hasStoredAuthentication }
-    var canCancel: Bool { requestID != nil && !stopping }
+    var canCancel: Bool { (requestID != nil || applicationIntent != nil) && !stopping }
     var selectedDownload: WorkshopDownload? { downloads.first { $0.id == selectedDownloadID } }
     var libraryAsset: WallpaperAsset? {
         guard let id = selectedDownloadID else { return nil }
@@ -73,7 +93,18 @@ final class WorkshopViewModel: ObservableObject {
 
     func search(page: Int = 1) {
         guard isAuthenticated, page > 0 else { return }
-        begin(SteamCommand(id: UUID().uuidString, command: "search", query: query, page: page), operation: "search")
+        let command = SteamCommand(id: UUID().uuidString, command: "search", query: query, page: page,
+                                   sort: sort, kind: kindFilter, genre: genreFilter)
+        // Serialize helper requests, keeping only the latest requested page/filter combination.
+        if operation == "search" {
+            pendingSearch = command
+        } else {
+            begin(command, operation: "search")
+        }
+    }
+
+    func applyFilters() {
+        search(page: 1)
     }
 
     func showDetails(_ item: WorkshopItem) {
@@ -86,11 +117,13 @@ final class WorkshopViewModel: ObservableObject {
         guard !isBusy, isAuthenticated, Self.validID(item.id) else { return }
         guard !downloads.contains(where: { $0.id == item.id }) else {
             selectDownload(item.id)
-            statusKey = "workshop.alreadyDownloaded"
             return
         }
         do {
             let directory = try storage.begin(itemID: item.id)
+            requestedPlaybackID = nil
+            applicationIntent = library?.beginApplicationIntent()
+            downloadIntent = applicationIntent
             staging = directory
             downloading = item
             retryItem = nil
@@ -107,7 +140,16 @@ final class WorkshopViewModel: ObservableObject {
 
     func cancel() {
         guard canCancel else { return }
-        stop(status: "workshop.cancelled", deleteCredentials: false)
+        library?.beginApplicationIntent()
+        applicationIntent = nil
+        requestedPlaybackID = nil
+        pendingSelectionID = nil
+        if ["finalizing", "inspecting", "importing"].contains(operation) {
+            // Let the current file operation finish before releasing its write/delete gate.
+            statusKey = "workshop.cancelled"
+        } else {
+            stop(status: "workshop.cancelled", deleteCredentials: false)
+        }
     }
 
     func logout() {
@@ -168,6 +210,12 @@ final class WorkshopViewModel: ObservableObject {
                 fail("workshop.error.protocol")
                 return
             }
+            if let command = pendingSearch {
+                pendingSearch = nil
+                finishRequest(status: "workshop.search.finished")
+                begin(command, operation: "search")
+                return
+            }
             self.items = items
             self.page = page
             total = event.total ?? items.count
@@ -195,6 +243,7 @@ final class WorkshopViewModel: ObservableObject {
             requestID = nil
             operation = "finalizing"
             let storage = self.storage
+            let intent = downloadIntent
             Task {
                 do {
                     let downloaded = try await Task.detached {
@@ -202,9 +251,16 @@ final class WorkshopViewModel: ObservableObject {
                     }.value
                     self.staging = nil
                     downloading = nil
+                    downloadIntent = nil
                     refreshDownloads()
-                    finishRequest(status: "workshop.download.finished")
-                    selectDownload(downloaded.id)
+                    if statusKey == "workshop.working.download" { statusKey = "workshop.download.finished" }
+                    if let intent, isCurrentIntent(intent) {
+                        selectedDownloadID = downloaded.id
+                        selectedAsset = nil
+                        statusKey = "workshop.download.finished"
+                        await inspectAndApply(downloaded, intent: intent)
+                    }
+                    finishApplication()
                 } catch { fail("workshop.error.project") }
             }
         case "error":
@@ -240,6 +296,10 @@ final class WorkshopViewModel: ObservableObject {
     private func stop(status: String, deleteCredentials: Bool) {
         guard !stopping else { return }
         stopping = true
+        applicationIntent = nil
+        downloadIntent = nil
+        pendingSelectionID = nil
+        pendingSearch = nil
         requestID = nil
         operation = "stopping"
         qrURL = nil
@@ -266,36 +326,93 @@ final class WorkshopViewModel: ObservableObject {
     }
 
     func selectDownload(_ id: String) {
-        guard !isBusy, let download = downloads.first(where: { $0.id == id }) else { return }
+        guard let download = downloads.first(where: { $0.id == id }), !stopping else { return }
+        guard !isBusy || ["download", "finalizing", "inspecting", "importing"].contains(operation) else { return }
+        requestedPlaybackID = nil
+        applicationIntent = library?.beginApplicationIntent()
         selectedDownloadID = id
         selectedAsset = nil
+        if isBusy {
+            pendingSelectionID = id
+            return
+        }
+        guard let intent = applicationIntent else { return }
+        operation = "inspecting"
+        Task {
+            await inspectAndApply(download, intent: intent)
+            finishApplication()
+        }
+    }
+
+    private func isCurrentIntent(_ intent: UUID) -> Bool {
+        applicationIntent == intent && library?.applicationIntentID == intent
+    }
+
+    private func inspectAndApply(_ download: WorkshopDownload, intent: UUID) async {
         operation = "inspecting"
         let storage = self.storage
-        Task {
-            defer { operation = nil }
-            do { selectedAsset = try await Task.detached { try storage.scan(download) }.value }
-            catch { statusKey = "workshop.error.project" }
+        let asset: WallpaperAsset
+        do { asset = try await Task.detached { try storage.scan(download) }.value }
+        catch {
+            if isCurrentIntent(intent) { statusKey = "workshop.error.project" }
+            return
         }
+        guard isCurrentIntent(intent), let library else { return }
+        selectedAsset = asset
+        guard !library.isWorking else {
+            statusKey = "workshop.error.busy"
+            return
+        }
+        operation = "importing"
+        do {
+            let imported = try await library.importAssets([asset], preservingExisting: true)
+            guard isCurrentIntent(intent), let retained = imported.first else { return }
+            guard retained.supportStatus == .playable else {
+                statusKey = "workshop.play.unsupported"
+                return
+            }
+            // Synchronous acceptance is not evidence that asynchronous rendering succeeded.
+            requestPlayback(retained.id, library: library)
+        } catch {
+            if isCurrentIntent(intent) {
+                statusKey = (error as? SteamBridgeError) == .busy ? "workshop.error.busy" : "workshop.error.import"
+            }
+        }
+    }
+
+    private func finishApplication() {
+        let id = applicationIntent == library?.applicationIntentID ? pendingSelectionID : nil
+        pendingSelectionID = nil
+        operation = nil
+        applicationIntent = nil
+        if let id { selectDownload(id) }
     }
 
     func importSelected() {
-        guard !isBusy, let asset = selectedAsset, let library, !library.isWorking else { return }
-        operation = "importing"
-        Task {
-            defer { operation = nil }
-            do {
-                _ = try await library.importAssets([asset], preservingExisting: true)
-                statusKey = "workshop.import.finished"
-            } catch { statusKey = "workshop.error.import" }
-        }
+        guard !isBusy, let id = selectedDownloadID else { return }
+        selectDownload(id)
     }
 
     func applySelected() {
-        guard !isBusy, let asset = libraryAsset, let library, asset.supportStatus == .playable else { return }
-        library.selectLibraryAssets([asset.id])
-        library.playSelected()
-        // The player owns asynchronous render/load failures; never equate a request with playback success.
+        guard !isBusy, let asset = libraryAsset, let library else { return }
+        guard asset.supportStatus == .playable else {
+            statusKey = "workshop.play.unsupported"
+            return
+        }
+        guard !library.isWorking else {
+            statusKey = "workshop.error.busy"
+            return
+        }
+        requestPlayback(asset.id, library: library)
+    }
+
+    private func requestPlayback(_ id: String, library: AppViewModel) {
+        requestedPlaybackID = id
         statusKey = "workshop.play.requested"
+        if !library.selectAndApplyLibraryAsset(id) {
+            requestedPlaybackID = nil
+            statusKey = "workshop.error.play"
+        }
     }
 
     func removeDownloaded(_ download: WorkshopDownload) {

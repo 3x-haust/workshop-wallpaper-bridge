@@ -13,12 +13,14 @@ private final class WallpaperGestureObserver: NSObject, WKScriptMessageHandler {
 }
 
 @MainActor
-final class RestrictedWebWallpaperView: NSView, WKNavigationDelegate, WKUIDelegate, PausableWallpaperContent, WallpaperContentLifecycle {
+final class RestrictedWebWallpaperView: NSView, WKNavigationDelegate, WKUIDelegate, PausableWallpaperContent, WallpaperContentLifecycle, WallpaperContentPreparing {
     private(set) var webView: WKWebView
     private var frameTimer: Timer?
     private var audioConsumer: UUID?
     private var isSuspended = false
     private var closed = false
+    private var readinessHandler: ((Result<Void, Error>) -> Void)?
+    private var readinessResult: Result<Void, Error>?
     private var frameInFlight = false
     private let url: URL
     private let readAccessURL: URL
@@ -94,7 +96,12 @@ final class RestrictedWebWallpaperView: NSView, WKNavigationDelegate, WKUIDelega
     ) {
         let targetURL = navigationAction.request.url
         let allowed = targetURL.map(isLocalProjectURL) ?? false
-        if !allowed { offerExternalPage(navigationAction) }
+        if !allowed {
+            offerExternalPage(navigationAction)
+            if navigationAction.targetFrame?.isMainFrame == true {
+                finishReadiness(.failure(WallpaperPreparationError(message: "The web entrypoint is outside the local project.")))
+            }
+        }
         decisionHandler(allowed ? .allow : .cancel)
     }
 
@@ -156,6 +163,19 @@ final class RestrictedWebWallpaperView: NSView, WKNavigationDelegate, WKUIDelega
             Task { @MainActor in self?.sendFrame() }
         }
         if let frameTimer { RunLoop.main.add(frameTimer, forMode: .common) }
+        finishReadiness(.success(()))
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        finishReadiness(.failure(error))
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        finishReadiness(.failure(error))
+    }
+
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        finishReadiness(.failure(WallpaperPreparationError(message: "The web wallpaper process terminated during loading.")))
     }
 
     private func sendFrame() {
@@ -171,8 +191,22 @@ final class RestrictedWebWallpaperView: NSView, WKNavigationDelegate, WKUIDelega
         ) { [weak self] _ in self?.frameInFlight = false }
     }
 
+    func whenReady(_ completion: @escaping (Result<Void, Error>) -> Void) {
+        guard !closed else { return }
+        if let readinessResult { completion(readinessResult) } else { readinessHandler = completion }
+    }
+
+    private func finishReadiness(_ result: Result<Void, Error>) {
+        guard !closed, readinessResult == nil else { return }
+        readinessResult = result
+        let handler = readinessHandler
+        readinessHandler = nil
+        handler?(result)
+    }
+
     func prepareForClose() {
         closed = true
+        readinessHandler = nil
         frameTimer?.invalidate()
         frameTimer = nil
         if let audioConsumer { SystemAudioAnalysis.shared.release(audioConsumer) }
@@ -280,6 +314,7 @@ final class RestrictedWebWallpaperView: NSView, WKNavigationDelegate, WKUIDelega
                     return
                 }
                 guard error == nil, let ruleList else {
+                    self.finishReadiness(.failure(error ?? WallpaperPreparationError(message: "The web wallpaper content rules could not be loaded.")))
                     return
                 }
                 self.webView.configuration.userContentController.add(ruleList)

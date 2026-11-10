@@ -7,6 +7,7 @@ final class VideoWallpaperView: NSView,
     PausableWallpaperContent,
     DisplayModeUpdatableContent,
     WallpaperContentLifecycle,
+    WallpaperContentPreparing,
     AudioControllableWallpaperContent {
     private let player: AVQueuePlayer
     private let looper: AVPlayerLooper
@@ -17,6 +18,12 @@ final class VideoWallpaperView: NSView,
     private weak var sampledItem: AVPlayerItem?
     private var frameOutput: AVPlayerItemVideoOutput?
     private var sampledFrame: CIImage?
+    private var readinessHandler: ((Result<Void, Error>) -> Void)?
+    private var readinessResult: Result<Void, Error>?
+    private var readinessObservations: [NSKeyValueObservation] = []
+    private var itemReadinessObservation: NSKeyValueObservation?
+    private weak var readinessItem: AVPlayerItem?
+    private var closed = false
 
     /// Attach lazily to the current looper item; AVPlayerLayer continues normal
     /// presentation. Compose effects sample that same item and playback time.
@@ -95,7 +102,59 @@ final class VideoWallpaperView: NSView,
         player.volume = Float(volume)
     }
 
+    func whenReady(_ completion: @escaping (Result<Void, Error>) -> Void) {
+        guard !closed else { return }
+        if let readinessResult { completion(readinessResult); return }
+        readinessHandler = completion
+        guard readinessObservations.isEmpty else { return }
+        readinessObservations = [
+            player.observe(\.currentItem, options: [.initial, .new]) { [weak self] _, _ in
+                Task { @MainActor in self?.observeCurrentItemReadiness() }
+            },
+            player.observe(\.status, options: [.initial, .new]) { [weak self] _, _ in
+                Task { @MainActor in self?.checkReadiness() }
+            },
+            looper.observe(\.status, options: [.initial, .new]) { [weak self] _, _ in
+                Task { @MainActor in self?.checkReadiness() }
+            }
+        ]
+    }
+
+    private func observeCurrentItemReadiness() {
+        guard !closed, readinessResult == nil else { return }
+        if readinessItem !== player.currentItem {
+            readinessItem = player.currentItem
+            itemReadinessObservation = player.currentItem?.observe(\.status, options: [.initial, .new]) { [weak self] _, _ in
+                Task { @MainActor in self?.checkReadiness() }
+            }
+        }
+        checkReadiness()
+    }
+
+    private func checkReadiness() {
+        guard !closed, readinessResult == nil else { return }
+        if looper.status == .failed || player.status == .failed || player.currentItem?.status == .failed {
+            finishReadiness(.failure(looper.error ?? player.error ?? player.currentItem?.error
+                ?? WallpaperPreparationError(message: "The selected video could not be loaded.")))
+        } else if player.currentItem?.status == .readyToPlay {
+            finishReadiness(.success(()))
+        }
+    }
+
+    private func finishReadiness(_ result: Result<Void, Error>) {
+        readinessResult = result
+        readinessObservations.removeAll()
+        itemReadinessObservation = nil
+        let handler = readinessHandler
+        readinessHandler = nil
+        handler?(result)
+    }
+
     func prepareForClose() {
+        closed = true
+        readinessHandler = nil
+        readinessObservations.removeAll()
+        itemReadinessObservation = nil
         if let sampledItem, let frameOutput { sampledItem.remove(frameOutput) }
         frameOutput = nil; sampledItem = nil; sampledFrame = nil
         player.pause()
