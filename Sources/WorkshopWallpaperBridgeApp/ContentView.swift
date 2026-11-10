@@ -33,14 +33,10 @@ struct ContentView: View {
 
     var body: some View {
         GeometryReader { geometry in
-            VStack(spacing: 0) {
-                HStack(spacing: 0) {
-                    sidebar(compact: geometry.size.width < 900)
-                    Rectangle().fill(BrowserPalette.border).frame(width: 1)
-                    page.frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
-                Rectangle().fill(BrowserPalette.border).frame(height: 1)
-                statusBar
+            HStack(spacing: 0) {
+                sidebar(compact: geometry.size.width < 900)
+                Rectangle().fill(BrowserPalette.border).frame(width: 1)
+                page.frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .frame(minWidth: 640, minHeight: 560)
@@ -143,41 +139,6 @@ struct ContentView: View {
         )
     }
 
-    private var statusBar: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "display").foregroundStyle(BrowserPalette.secondary)
-            if workshop.operation == "preparing" {
-                if let progress = workshop.preparationProgress {
-                    ProgressView(value: progress).controlSize(.small).frame(width: 100)
-                } else {
-                    ProgressView().controlSize(.small)
-                }
-            } else if let progress = model.importProgress {
-                ProgressView(value: progress.fraction)
-                    .controlSize(.small)
-                    .frame(width: 120)
-            } else if model.isWorking {
-                ProgressView()
-                    .controlSize(.small)
-            }
-            let status = workshop.operation == "preparing" ? model.L(workshop.statusKey) : model.status
-            Text(status)
-                .font(.system(size: 11)).foregroundStyle(BrowserPalette.secondary)
-                .lineLimit(1).help(status)
-            if workshop.operation == "preparing", workshop.canCancel {
-                Button(model.L("common.cancel")) { workshop.cancel() }.buttonStyle(.plain)
-            }
-            Spacer(minLength: 8)
-            Button { model.stopPlayback() } label: {
-                Label(model.L("app.stop"), systemImage: "stop.fill")
-                    .font(.system(size: 11))
-            }
-            .buttonStyle(.plain)
-            .keyboardShortcut(".", modifiers: [.command, .shift])
-        }
-        .padding(.horizontal, 18).frame(height: 38)
-        .background(BrowserPalette.sidebar)
-    }
 }
 
 /// A small "ⓘ" affordance that reveals a one-time explanation in a popover,
