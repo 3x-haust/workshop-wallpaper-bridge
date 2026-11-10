@@ -154,7 +154,7 @@ internal static class HelperProgram
             _ => throw new HelperFailure("invalidRequest"),
         };
         var genre = OptionalText(request, "genre", "");
-        if (genre is not ("" or "Abstract" or "Animal" or "Anime" or "Fantasy" or "Game" or "Landscape" or "Music" or "Nature" or "Sci-Fi" or "Technology"))
+        if (genre.Length != 0 && !WorkshopSearchFilters.IsGenre(genre))
             throw new HelperFailure("invalidRequest");
         var search = new SteamKit2.Internal.CPublishedFile_QueryFiles_Request
         {
@@ -165,6 +165,7 @@ internal static class HelperProgram
         if (queryType == EPublishedFileQueryType.RankedByTrend) search.days = 7;
         if (kindTag != null) search.requiredtags.Add(kindTag);
         if (genre.Length != 0) search.requiredtags.Add(genre);
+        WorkshopSearchFilters.Apply(request, search);
         return search;
     }
 
