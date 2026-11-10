@@ -529,7 +529,7 @@ public struct LibraryStore: Sendable {
         let hasRenderCache = SceneRenderCache.existingVideoURL(
             in: URL(filePath: asset.projectDirectory)
         ) != nil
-        let supportStatus: SupportStatus = SceneRenderPlanBuilder().canBuild(url: entrypointURL)
+        let supportStatus: SupportStatus = SceneRenderPlanBuilder().canPrepare(url: entrypointURL)
             ? .playable
             : .unsupported
         let preserved = asset.issues.filter { issue in

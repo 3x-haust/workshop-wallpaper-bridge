@@ -182,6 +182,58 @@ final class ScannerTests: XCTestCase {
         XCTAssertEqual(asset.supportStatus, .playable)
     }
 
+    func testScanAllowsEmbeddedVideoScenePreparationWithoutClaimingNativePlayback() throws {
+        let root = try Fixture.makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = root.appending(path: "video-scene")
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        try #"{"title":"Video Scene","file":"scene.pkg"}"#.write(
+            to: project.appending(path: "project.json"), atomically: true, encoding: .utf8)
+        let movieHeader = Data([0, 0, 0, 20]) + Data("ftypisom".utf8) + Data(repeating: 0, count: 8)
+        var video = Fixture.texData(width: 4, height: 2, imageFormat: -1, imageData: movieHeader)
+        video.replaceSubrange(22..<26, with: [0x23, 0, 0, 0])
+        let scene = project.appending(path: "scene.pkg")
+        func writePackage(_ texture: Data) throws {
+            try Fixture.writeScenePackage(to: scene,
+                sceneJSON: #"{"objects":[{"id":1,"image":"models/background.json","size":"4 2"}]}"#,
+                extraEntries: [
+                    (path: "models/background.json", data: Data(#"{"material":"materials/background.json"}"#.utf8)),
+                    (path: "materials/background.json", data: Data(#"{"passes":[{"textures":["background"]}]}"#.utf8)),
+                    (path: "materials/background.tex", data: texture)
+                ])
+        }
+        try writePackage(video)
+
+        XCTAssertFalse(SceneRenderPlanBuilder().canBuild(url: scene), "Native decoding must still reject embedded video")
+        let asset = try XCTUnwrap(WallpaperScanner().scan(root: root).assets.first)
+        XCTAssertEqual(asset.supportStatus, .playable, "A bounded embedded movie can be prepared by the external engine")
+        let store = LibraryStore(root: root.appending(path: "library"))
+        _ = try store.importAsset(asset)
+        XCTAssertEqual(try store.load().assets.first?.supportStatus, .playable)
+
+        try writePackage(Data(video.dropLast()))
+        XCTAssertEqual(try WallpaperScanner().scan(root: project).assets.first?.supportStatus, .unsupported)
+        var notMovie = video
+        notMovie.replaceSubrange((notMovie.count - 16)..<(notMovie.count - 12), with: Data("junk".utf8))
+        try writePackage(notMovie)
+        XCTAssertEqual(try WallpaperScanner().scan(root: project).assets.first?.supportStatus, .unsupported)
+        for (offset, bytes) in [
+            (0, [UInt8]("BADV".utf8)),
+            (22, [UInt8(0x63), 0, 0, 0]),
+            (26, [UInt8(0), 0, 1, 0]),
+            (55, [UInt8(2), 0, 0, 0]),
+            (63, [UInt8(2), 0, 0, 0]),
+            (75, [UInt8(1), 0, 0, 0]),
+            (83, [UInt8(0), 0, 0, 5])
+        ] {
+            var invalid = video
+            invalid.replaceSubrange(offset..<(offset + 4), with: bytes)
+            try writePackage(invalid)
+            XCTAssertEqual(try WallpaperScanner().scan(root: project).assets.first?.supportStatus, .unsupported,
+                           "Invalid video texture header at offset \(offset) must not enable playback")
+        }
+    }
+
     func testScanMarksTextOnlySceneAsPlayable() throws {
         // Given
         let root = try Fixture.makeTempDirectory()

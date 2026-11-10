@@ -498,6 +498,20 @@ public struct SceneRenderPlanBuilder: Sendable {
         return plan.hasRenderableContent
     }
 
+    /// Eligibility for preparation; an external render still has to succeed before playback.
+    public func canPrepare(url: URL) -> Bool {
+        if canBuild(url: url) { return true }
+        guard let layout = try? buildLayout(url: url), layout.omittedLayerCount == 0,
+              layout.layers.count <= maximumDecodedLayerCount,
+              let package = try? ScenePackageReader().read(url: url) else { return false }
+        let images = layout.layers.filter { !$0.isEffectOnly && $0.text == nil }
+        guard !images.isEmpty else { return false }
+        return images.allSatisfy { layer in
+            guard let data = package.data(forPath: layer.texturePath) else { return false }
+            return (try? SceneTextureDecoder().isEngineVideoTexture(data: data)) == true
+        }
+    }
+
     public func build(url: URL) throws -> SceneRenderPlan {
         try build(url: url, decodeTextures: true)
     }

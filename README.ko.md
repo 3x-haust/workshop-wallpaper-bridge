@@ -114,7 +114,7 @@ Steam 연동은 개발 중이며, 패키징된 앱의 로그인부터 재생까�
 
 1. **탐색**을 열고 왼쪽 아래 Steam 계정 버튼에서 QR 코드 또는 Steam 계정과 Steam Guard로 로그인합니다. Wallpaper Engine(앱 ID `431960`)에 대해 해당 계정이 접근 권한을 가진 콘텐츠만 받습니다.
 2. 썸네일을 둘러보거나 검색하고 인기·최신·평가순으로 정렬합니다. **필터**에서 연령·형식·장르·해상도와 검수 승인·오디오 반응 등의 기능을 포함·제외·무관으로 조합합니다. 기본값은 전체 이용가만 포함하고 주의 필요·성인을 제외하며, 초기화하면 이 값으로 돌아갑니다. 설정은 앱을 다시 켜도 유지됩니다. 작품 태그가 부정확할 수 있으며 Steam 커뮤니티 콘텐츠 설정은 별개입니다. 숫자 버튼으로 페이지를 선택하며 현재 페이지는 강조됩니다. 페이지를 성공적으로 바꾸면 목록 맨 위로 이동합니다. 항목을 선택하면 미리보기와 상세 정보가 표시됩니다. 호환성 안내는 미리보기 도움말에서 확인하며 지원 배지와 문제 목록은 그대로 표시됩니다.
-3. **다운로드 후 적용**을 누르고 진행률을 확인합니다. 취소하거나 재시도할 수 있으며, 다운로드를 취소하면 Steam 연결이 끊어집니다. 재시도 전에 저장된 인증으로 다시 연결합니다.
+3. **다운로드 후 적용**을 누르고 진행률을 확인합니다. 취소하거나 재시도할 수 있습니다. 일반 요청이나 프로젝트 검사 실패는 유효한 Steam 로그인을 유지합니다. 다운로드 취소는 보조 프로그램을 종료하지만, 로그인된 상태였다면 저장된 인증으로 한 번 자동 재연결합니다. 예기치 않은 연결 종료도 같은 방식으로 복구하며 실패하면 수동으로 다시 연결합니다. 명시적인 로그아웃과 로그인 자체의 취소는 자동 재연결하지 않습니다.
 4. 명시적인 완료 응답과 저장소 검증을 거친 프로젝트만 **내 배경화면**에 보관합니다. 일부만 받았거나 취소된 항목은 완료 항목이 아닙니다.
 5. **다운로드 후 적용**에는 라이브러리 가져오기와 필요한 씬 렌더링이 포함됩니다. 준비가 끝나면 적용하며, 다음 적용부터 유효한 렌더 캐시를 재사용합니다. 별도의 창 전체 하단 상태줄 없이 탐색과 좁은 창의 상세 화면에서 진행률·오류·취소·재시도를 확인할 수 있습니다. 배경화면을 정지하려면 메뉴 막대 메뉴의 **Stop Playback**을 사용합니다. 씬 영상 생성 실패는 다운로드 실패와 구분하여 표시하며 저장된 라이브러리 사본과 기존 배경화면은 유지합니다. 준비를 취소하면 적용하지 않지만 실행 중인 공유 렌더 작업은 캐시 생성을 마칠 수 있으며, 그동안 해당 항목의 삭제는 막습니다. 같은 항목 ID가 이미 있으면 기존 라이브러리 사본을 연결·선택하며 덮어쓰지 않습니다.
 6. 지원되는 설치 항목은 선택하면 바로 적용됩니다. 미지원 항목도 상세를 확인할 수 있으며, 추가 변환은 **내 배경화면**에서 진행합니다. 새 콘텐츠가 준비되기 전에는 이전 배경화면을 유지합니다. 아래 지원 범위가 그대로 적용됩니다.
@@ -196,6 +196,8 @@ scene 지원은 보수적입니다. 실시간 재생은 [SceneScript 호환 범�
 - puppet-warp 모델(`MDLV0013` skeleton — Wallpaper Engine이 물고기·캐릭터의 몸을 휘게 하는 포맷): mesh/bone/mirror 모드 bone 애니메이션까지 디코드해 CPU skinning으로 재생하므로 puppet 몸체가 뻣뻣하게 미끄러지지 않고 실제로 휘어집니다.
 - scene 패키지에 들어있는 GLSL shader를 Core Image로 그대로 포팅한 shader effect: `spin`, `shake`, `waterripple`, `waterwaves`, `waterflow`, `scroll` — flow-map 기반 shake 덕분에 지느러미와 꼬리만 움직이며, scene 전체를 덮는 compose layer의 `waterripple` 같은 full-canvas warp는 아래 layer들로 분배되어 살아있는 keyframe 모션 위에 물결이 적용됩니다.
 - 근사 처리되는 particle/glint effect: 단순 sprite/pulse-ring particle system은 Core Animation emitter로, `nitro` 계열 glint effect는 noise 기반 twinkle 근사로 재생.
+
+이미지 레이어에 크기와 구조가 검증된 TEXB0003 MP4 영상 텍스처가 들어 있는 씬은 내장 이미지 해독기가 처리하지 못해도 외부 엔진 준비를 시도할 수 있습니다. 렌더링이 성공한 뒤에만 적용하며, 이는 네이티브 실시간 영상 지원이나 모든 영상 텍스처 씬의 호환성을 뜻하지 않습니다.
 
 여전히 생략되거나 근사치인 항목: 복잡한 particle operator, masked effect composition, 스칼라 값 이외의 effect 속성 script, 전체 3D/model·animation API, 지원하는 전체 사각형 패스 이외의 custom shader pipeline, Music·Spotify 외 앱의 미디어 정보, sound layer 제어, 내장 MP4 video texture — 네이티브 scene engine이 해당 runtime 기능을 구현하기 전까지 Wallpaper Engine과 다르게 보일 수 있습니다. package analyzer가 effect file, shader file, shader uniform, SceneScript, particle, sound layer, audio-analysis input, video texture 같은 scene runtime 요구사항을 보존하므로 이 parity 작업을 정확히 겨냥할 수 있습니다.
 
