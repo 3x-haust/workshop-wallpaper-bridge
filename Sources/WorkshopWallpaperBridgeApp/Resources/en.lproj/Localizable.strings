@@ -98,6 +98,7 @@
 "workshop.working.preparing" = "Preparing downloaded wallpaper…";
 "workshop.error.prepare" = "The download is saved, but wallpaper preparation failed. Try preparing it again.";
 "workshop.prepare.cancel.help" = "Cancel application. An active render may finish caching.";
+"workshop.error.prepare.renderer" = "The download is saved in your library, but scene video creation failed. If retrying fails, this scene may not be supported by the current renderer. Your previous wallpaper is unchanged.";
 "workshop.prepare.retry" = "Retry Preparation";
 
 /* Workshop */

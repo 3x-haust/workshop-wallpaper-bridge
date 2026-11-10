@@ -61,6 +61,7 @@ struct WorkshopTabView: View {
                             .keyboardShortcut(.cancelAction)
                     }.padding(16)
                     inspector
+                    operationStatus
                 }
                 .frame(width: 420, height: 540)
                 .background(BrowserPalette.sidebar)
@@ -383,7 +384,7 @@ struct WorkshopTabView: View {
                     Button(model.L("common.cancel")) { workshop.cancel() }
                         .help(model.L(workshop.operation == "preparing" ? "workshop.prepare.cancel.help" : "workshop.cancel.help"))
                 }
-                if workshop.statusKey == "workshop.error.prepare", let download = workshop.selectedDownload {
+                if workshop.statusKey.hasPrefix("workshop.error.prepare"), let download = workshop.selectedDownload {
                     Button(model.L("workshop.prepare.retry")) { workshop.selectDownload(download.id) }
                         .disabled(mutationsDisabled)
                 }

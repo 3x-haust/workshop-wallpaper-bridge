@@ -98,6 +98,7 @@
 "workshop.working.preparing" = "받은 배경화면을 준비하는 중…";
 "workshop.error.prepare" = "다운로드는 저장됐지만 배경화면 준비에 실패했어요. 준비를 다시 시도하세요.";
 "workshop.prepare.cancel.help" = "적용을 취소합니다. 실행 중인 렌더링은 캐시 저장을 마칠 수 있습니다.";
+"workshop.error.prepare.renderer" = "다운로드와 라이브러리 보관은 완료됐지만 씬 영상 생성에 실패했어요. 재시도해도 실패하면 현재 렌더러가 처리하지 못하는 씬일 수 있어요. 기존 배경화면은 유지돼요.";
 "workshop.prepare.retry" = "준비 재시도";
 
 /* Workshop */

@@ -212,6 +212,19 @@ final class WorkshopViewModelTests: XCTestCase {
         XCTAssertEqual(fixture.client.commands.map(\.command), ["loginQR", "download"])
     }
 
+    func testRendererFailureIsDistinctFromDownloadFailureAndRetainsRetry() async throws {
+        let fixture = try makeFixture(scenePreparer: { _, _ in
+            throw SceneVideoRenderError.noFramesRecorded
+        })
+        _ = try await completeDownload(fixture)
+
+        XCTAssertEqual(fixture.model.statusKey, "workshop.error.prepare.renderer")
+        XCTAssertNil(fixture.player.playedID)
+        XCTAssertEqual(fixture.library.libraryAssets.count, 1)
+        XCTAssertEqual(fixture.model.downloads.count, 1)
+        XCTAssertTrue(fixture.model.isAuthenticated)
+    }
+
     func testCancelledPreparationCannotApplyOrDisconnectSteam() async throws {
         var preparation: CheckedContinuation<Void, Error>?
         let fixture = try makeFixture(scenePreparer: { _, _ in

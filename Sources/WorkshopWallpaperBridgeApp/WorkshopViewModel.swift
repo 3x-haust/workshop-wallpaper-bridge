@@ -427,7 +427,10 @@ final class WorkshopViewModel: ObservableObject {
                     self.preparationProgress = min(1, max(0, progress))
                 }
             } catch {
-                if isCurrentIntent(intent) { statusKey = "workshop.error.prepare" }
+                if isCurrentIntent(intent) {
+                    statusKey = error is SceneVideoRenderError
+                        ? "workshop.error.prepare.renderer" : "workshop.error.prepare"
+                }
                 return
             }
             guard isCurrentIntent(intent) else { return }
