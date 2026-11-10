@@ -4,7 +4,7 @@
 "app.stop" = "정지";
 
 /* Tabs */
-"tab.library" = "라이브러리";
+"tab.library" = "내 배경화면";
 "tab.settings" = "설정";
 "tab.workshop" = "창작마당";
 
@@ -43,7 +43,7 @@
 "workshop.detail.kind" = "유형";
 "workshop.detail.size" = "크기";
 "workshop.detail.unknown" = "제공되지 않음";
-"workshop.downloads.title" = "받은 항목";
+"workshop.downloads.title" = "다운로드";
 "workshop.downloads.empty" = "다운로드가 완료된 항목이 여기에 표시돼요.";
 "workshop.download.badge" = "받음";
 "workshop.download.button" = "다운로드";
@@ -61,7 +61,7 @@
 "workshop.support.needsConversion" = "변환 필요";
 "workshop.support.previewOnly" = "미리보기만 지원";
 "workshop.support.unsupported" = "지원하지 않음";
-"workshop.convert.help" = "프로젝트를 가져온 뒤 라이브러리 탭에서 변환해야 재생할 수 있어요.";
+"workshop.convert.help" = "내 배경화면에서 보관된 프로젝트를 변환한 뒤 재생하세요.";
 "workshop.compatibility.help" = "다운로드 완료가 재생 성공을 보장하지는 않아요. 장면은 Wallpaper Engine과 완전히 호환되지 않으며, 실시간 재생·렌더링 영상·대체 미리보기는 서로 달라요. 지원 판정과 문제 목록을 확인하세요. 실제 재생 상태는 창 아래 상태 표시줄에 나와요.";
 "workshop.cancel.help" = "취소하면 보조 프로그램 전체가 종료되어 Steam 연결이 끊겨요. 계속하려면 저장된 인증으로 다시 연결하세요.";
 
@@ -100,6 +100,76 @@
 "workshop.error.cleanup" = "보조 프로그램은 종료했지만 미완료 다운로드 파일을 삭제하지 못했어요.";
 "workshop.error.credentials" = "저장된 인증 정보를 삭제하지 못했어요. 앱 전용 인증 파일의 권한을 확인하세요.";
 "workshop.error.import" = "프로젝트를 Mac 라이브러리로 가져오지 못했어요.";
+
+/* Wallpaper browser */
+"common.close" = "닫기";
+"workshop.browser.explore" = "탐색";
+"workshop.browser.account" = "Steam 계정";
+"workshop.browser.connect" = "Steam에 연결";
+"workshop.browser.connected" = "연결됨";
+"workshop.browser.signInRequired" = "로그인하고 둘러보세요";
+"workshop.browser.signInDescription" = "Steam 계정으로 Wallpaper Engine 창작마당을 둘러보세요. 다운로드하면 보관과 적용까지 한 번에 이어져요.";
+"workshop.browser.welcome" = "새 배경화면을 찾아보세요";
+"workshop.browser.noResults" = "배경화면을 찾지 못했어요";
+"workshop.browser.trySearch" = "다른 검색어를 입력하거나 필터를 바꿔 보세요.";
+"workshop.browser.downloadsDescription" = "받은 프로젝트는 내 배경화면에 자동 보관돼요. 지원되는 항목을 선택하면 바로 적용돼요.";
+"workshop.browser.thumbnailSize" = "썸네일 크기 변경";
+"workshop.browser.kindFilter" = "형식";
+"workshop.browser.genreFilter" = "장르";
+"workshop.browser.sort" = "정렬";
+"workshop.browser.previewCaption" = "미리보기 이미지 · 실제 재생 확인과 달라요";
+"workshop.browser.expandPreview" = "미리보기 크게 보기";
+"workshop.browser.selectTitle" = "배경화면을 골라보세요";
+"workshop.browser.selectDescription" = "썸네일을 선택하면 미리보기와 상세 정보가 표시돼요.";
+"workshop.browser.apply" = "배경화면 적용";
+"workshop.browser.downloadAndApply" = "다운로드 후 적용";
+"workshop.browser.openSteam" = "Steam에서 보기";
+"workshop.browser.creatorItems" = "제작자의 창작마당 보기";
+"workshop.browser.automaticallySaved" = "지원되는 다운로드는 자동 보관한 뒤 적용해요. 기존 라이브러리 사본은 그대로 유지돼요.";
+"workshop.kind.all" = "전체 형식";
+"workshop.kind.video" = "영상";
+"workshop.kind.web" = "웹";
+"workshop.kind.scene" = "씬";
+"workshop.kind.application" = "앱";
+"workshop.kind.image" = "이미지";
+"workshop.kind.unknown" = "알 수 없음";
+"workshop.sort.popular" = "이번 주 인기순";
+"workshop.sort.recent" = "최신순";
+"workshop.sort.rated" = "평가순";
+"workshop.genre.all" = "전체 장르";
+"workshop.genre.abstract" = "추상";
+"workshop.genre.animal" = "동물";
+"workshop.genre.anime" = "애니메이션";
+"workshop.genre.fantasy" = "판타지";
+"workshop.genre.game" = "게임";
+"workshop.genre.landscape" = "풍경";
+"workshop.genre.music" = "음악";
+"workshop.genre.nature" = "자연";
+"workshop.genre.scifi" = "공상과학";
+"workshop.genre.technology" = "기술";
+"workshop.error.busy" = "다른 라이브러리 작업이 진행 중이에요. 끝난 뒤 항목을 다시 선택하세요.";
+"workshop.error.play" = "배경화면을 불러오지 못했어요. 이전 배경화면은 유지했어요.";
+"workshop.play.unsupported" = "내 배경화면에 보관했지만 바로 재생할 수 없는 프로젝트예요. 지원 판정을 확인하세요.";
+"workshop.play.ready" = "데스크톱에 배경화면을 불러왔어요. 씬은 미리보기나 렌더링 영상으로 대체될 수 있어요.";
+"library.details" = "상세";
+"library.import.local" = "로컬 파일 가져오기";
+"library.import.local.help" = "복사해 둔 창작마당 폴더를 선택하세요. 선택한 프로젝트는 Mac 라이브러리에 복사되며 원본 파일은 수정하지 않아요.";
+"library.selection.count" = "%d개 선택";
+"library.sort.dateAdded" = "추가한 날짜";
+"library.sort.name" = "이름";
+"library.empty.title" = "내 배경화면이 비어 있어요";
+"library.empty.message" = "탐색에서 배경화면을 받거나 로컬 파일을 추가하세요.";
+"library.preview.enlarge" = "미리보기 확대";
+"library.kind.video" = "영상";
+"library.kind.web" = "웹";
+"library.kind.image" = "이미지";
+"library.kind.scene" = "씬";
+"library.kind.unknown" = "알 수 없는 형식";
+"library.support.playable" = "재생 가능";
+"library.support.needsFirstRender" = "첫 재생 시 렌더링할 수 있음";
+"library.support.needsConversion" = "변환 필요";
+"library.support.previewOnly" = "미리보기만 지원";
+"library.support.unsupported" = "미지원";
 
 /* Library tab: source import */
 "library.source.title" = "가져오기";

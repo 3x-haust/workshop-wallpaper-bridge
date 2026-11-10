@@ -62,9 +62,9 @@ For locally copied Wallpaper Engine projects:
 
 2. Copy the `431960` folder to your Mac.
 3. Open **Workshop Wallpaper Bridge Settings** from the menu bar icon.
-4. Click **Browse**, choose the copied `431960` folder, then click **Scan**.
+4. Open **My Wallpapers → Import Local Files**, click **Browse**, choose the copied `431960` folder, then click **Scan**.
 5. Select a supported item and click **Import Selected**.
-6. Click **Play on Desktop**.
+6. Select the imported wallpaper in **My Wallpapers** to apply it. **Play on Desktop** remains available in its details.
 
 - The scan list sorts by **Date Added** newest first by default (folder Date Added, falling back to modification date).
 - Switch the sort to **Name** for an alphabetical list.
@@ -91,7 +91,7 @@ Playback notes:
 - Use **Set Still Wallpaper** only when you explicitly want to replace the macOS desktop and Lock Screen still image.
 - **Remove** asks for confirmation, then moves the imported Mac-library copy to the Trash (recoverable) only. It does not touch the original copied folder or video.
 
-The settings window keeps its **Library** tab (import, your Mac library, Display mode, **Play on Desktop** / **Remove**) and **Settings** tab (playback toggles, Audio, Scene Engine Assets, Screen Saver, and Language). The new **Workshop** tab is for Steam login, search, and downloads; it does not replace the existing library or playback controls. **Convert Video** and **Set Still Wallpaper** are reachable from the library list's right-click context menu and from the **More** ("⋯") menu next to **Play on Desktop**, not as always-visible buttons.
+The browser has **Explore**, **My Wallpapers**, **Downloads**, and **Settings** in its sidebar. Explore and the local library use thumbnail grids with a large selected-item preview and details. Smaller windows open details in a sheet. The existing local import, display mode, playback, rotation and removal controls remain available; **Convert Video** and **Set Still Wallpaper** are available from item details and the library's context menu. Settings retains playback, Audio, Scene Engine Assets, Screen Saver, and Language controls. See [the browser design guide](DESIGN.md).
 
 Use the **Language** picker in the Settings tab to switch the app's UI text between **System**, **한국어**, and **English**. The change applies immediately, without restarting the app; only static UI chrome (buttons, section titles, captions) is localized, so status messages generated while the app runs may still appear in English.
 
@@ -112,12 +112,12 @@ Imported files are stored in:
 
 Steam integration is in development; the packaged login-to-playback flow is not yet verified, and inclusion in the latest public release is not implied.
 
-1. Open the **Workshop** tab and sign in with a QR code or your Steam account and Steam Guard. Access is limited to what that account is authorized to retrieve for Wallpaper Engine (App ID `431960`).
-2. Search Workshop items and inspect an item's details before downloading.
-3. Start a download and follow its progress. You can cancel or retry; cancellation terminates the helper and disconnects its current login. Use the reconnect button to reconnect with saved authentication before retrying.
-4. Find the item in the received-items list after its completion marker has been written. Partial or cancelled downloads are not completed items.
-5. Add the item to the Mac library. If that item ID already exists, the app links/selects the existing library copy rather than automatically overwriting it.
-6. Use the apply-wallpaper button directly in the **Workshop** received-items list; switching to **Library** is not required. Use **Library** for additional conversion. The support limits below still apply.
+1. Open **Explore** and use the Steam account control to sign in with a QR code or your Steam account and Steam Guard. Access is limited to what that account is authorized to retrieve for Wallpaper Engine (App ID `431960`).
+2. Browse thumbnails, search, sort by popularity, date or rating, and filter by type and genre. Select an item for its preview image and details; a preview image is not the running project.
+3. Choose **Download & Apply** and follow its progress. You can cancel or retry; cancellation terminates the helper and disconnects its current login. Reconnect with saved authentication before retrying.
+4. The item enters **Downloads** only after explicit completion and storage validation. Partial or cancelled downloads are not completed items.
+5. The app automatically saves the completed project in **My Wallpapers** and requests playback if it is supported. No separate import button is needed. If that item ID already exists, the app links/selects the existing library copy rather than overwriting it.
+6. Selecting a supported installed item applies it directly. Unsupported items remain available for inspection; use **My Wallpapers** for additional conversion. Preparing a replacement preserves the previous wallpaper until the new content is ready. The support limits below still apply.
 
 **Download success is not playback success.** Unsupported formats, scene features, or missing engine assets can still prevent playback or leave a preview visible. This integration does not promise official Wallpaper Engine compatibility or expand the scene support boundary.
 

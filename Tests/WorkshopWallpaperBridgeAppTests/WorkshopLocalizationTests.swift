@@ -14,9 +14,10 @@ final class WorkshopLocalizationTests: XCTestCase {
 
     @MainActor
     func testEveryWorkshopViewAndModelKeyResolvesInBothLanguages() throws {
-        var requiredKeys: Set<String> = ["tab.workshop"]
-        let literalKey = try NSRegularExpression(pattern: #""(workshop\.[A-Za-z0-9.]+)""#)
-        for file in ["WorkshopTabView.swift", "WorkshopViewModel.swift"] {
+        var requiredKeys: Set<String> = ["tab.workshop", "tab.library", "tab.settings", "common.close"]
+        let literalKey = try NSRegularExpression(pattern: #""((?:workshop|library|tab|common)\.[A-Za-z0-9.]+)""#)
+        for file in ["ContentView.swift", "WorkshopTabView.swift", "WorkshopAuthenticationView.swift", "WorkshopViewModel.swift",
+                     "LibraryTabView.swift", "LibraryBrowserDetailView.swift", "LibraryImportSheet.swift", "SettingsTabView.swift"] {
             let source = try String(contentsOf: appDirectory.appending(path: file), encoding: .utf8)
             let range = NSRange(source.startIndex..., in: source)
             for match in literalKey.matches(in: source, range: range) {
@@ -28,6 +29,10 @@ final class WorkshopLocalizationTests: XCTestCase {
         requiredKeys.formUnion(["login", "search", "details", "download"].map { "workshop.working.\($0)" })
         requiredKeys.formUnion(["emailCode", "twoFactor", "mobileApproval"].map { "workshop.auth.\($0)" })
         requiredKeys.formUnion(SupportStatus.allCases.map { "workshop.support.\($0.rawValue)" })
+        requiredKeys.formUnion(SupportStatus.allCases.map { "library.support.\($0.rawValue)" })
+        requiredKeys.formUnion(["all", "video", "web", "scene", "application", "image", "unknown"].map { "workshop.kind.\($0)" })
+        requiredKeys.formUnion(["video", "web", "scene", "image", "unknown"].map { "library.kind.\($0)" })
+        requiredKeys.formUnion(["all", "abstract", "animal", "anime", "fantasy", "game", "landscape", "music", "nature", "scifi", "technology"].map { "workshop.genre.\($0)" })
         XCTAssertGreaterThan(requiredKeys.count, 70, "The Workshop source key scan must not silently stop matching.")
 
         for (code, language) in [("en", AppLanguage.english), ("ko", AppLanguage.korean)] {
@@ -43,9 +48,9 @@ final class WorkshopLocalizationTests: XCTestCase {
     func testEnglishAndKoreanWorkshopTablesHaveIdenticalKeysAndFormatArguments() throws {
         let english = try localizedTable("en")
         let korean = try localizedTable("ko")
-        let keys = Set(english.keys.filter { $0.hasPrefix("workshop.") || $0 == "tab.workshop" })
-        XCTAssertEqual(keys, Set(korean.keys.filter { $0.hasPrefix("workshop.") || $0 == "tab.workshop" }))
-        let formatArgument = try NSRegularExpression(pattern: #"%(?:\d+\$)?(?:ld|@)"#)
+        let keys = Set(english.keys)
+        XCTAssertEqual(keys, Set(korean.keys))
+        let formatArgument = try NSRegularExpression(pattern: #"%(?:\d+\$)?(?:ld|d|@)"#)
         func arguments(in text: String) -> [String] {
             formatArgument.matches(in: text, range: NSRange(text.startIndex..., in: text)).map {
                 String(text[Range($0.range, in: text)!])

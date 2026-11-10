@@ -5,7 +5,8 @@ import SwiftUI
 final class SettingsWindowCoordinator {
     static let shared = SettingsWindowCoordinator()
 
-    private let defaultWindowSize = CGSize(width: 640, height: 560)
+    private let defaultWindowSize = CGSize(width: 1180, height: 760)
+    private let minimumWindowSize = CGSize(width: 640, height: 560)
     private var window: NSWindow?
 
     func show(model: AppViewModel) {
@@ -31,7 +32,8 @@ final class SettingsWindowCoordinator {
             backing: .buffered,
             defer: false
         )
-        window.title = "Workshop Wallpaper Bridge Settings"
+        window.title = model.L("app.title")
+        window.contentMinSize = minimumWindowSize
         window.contentViewController = controller
         window.isReleasedWhenClosed = false
         window.animationBehavior = .none
@@ -47,7 +49,7 @@ final class SettingsWindowCoordinator {
         )
         let frame = SettingsWindowPlacement.centeredFrame(
             windowSize: window.frame.size,
-            minimumWindowSize: defaultWindowSize,
+            minimumWindowSize: minimumWindowSize,
             screenFrame: screenFrame
         )
         window.setFrame(frame, display: true, animate: false)

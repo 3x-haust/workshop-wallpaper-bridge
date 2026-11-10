@@ -718,8 +718,8 @@ final class AppViewModelTests: XCTestCase {
         let korean = model.L("tab.library")
 
         // Then
-        XCTAssertEqual(english, "Library")
-        XCTAssertEqual(korean, "라이브러리")
+        XCTAssertEqual(english, "My Wallpapers")
+        XCTAssertEqual(korean, "내 배경화면")
         XCTAssertNotEqual(english, korean)
     }
 

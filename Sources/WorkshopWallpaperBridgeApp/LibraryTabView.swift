@@ -1,198 +1,232 @@
+import AppKit
 import SwiftUI
 import WorkshopWallpaperCore
 
-/// The main "Library" tab: importing a copied Workshop folder, browsing the
-/// Mac-local library, and playing/managing wallpapers. The imported-library
-/// list is given the most vertical space; scanned-but-not-yet-imported
-/// projects only take a small strip above it, and only while there are any.
 struct LibraryTabView: View {
     @ObservedObject var model: AppViewModel
+    @State private var showsImport = false
+    @State private var showsDetails = false
+    @State private var selectionAnchor: String?
+    @State private var sortOrder: ScannedAssetSortOrder = .dateAdded
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            importRow
-            if !model.scannedAssets.isEmpty {
-                scannedSection
-            }
-            toolbarRow
-            libraryList
-            AssetPreview(
-                asset: model.selectedLibraryAsset,
-                placeholderTitle: model.L("library.preview.placeholder"),
-                placeholderDescription: model.L("library.preview.empty")
-            )
-            rotationRow
-            actionRow
-        }
-        .padding()
-        .confirmationDialog(
-            removeConfirmationTitle,
-            isPresented: Binding(
-                get: { model.pendingLibraryRemoval != nil },
-                set: { isPresented in
-                    if !isPresented {
-                        model.cancelPendingLibraryRemoval()
-                    }
+        GeometryReader { geometry in
+            let hasDetailColumn = geometry.size.width >= 840
+            HStack(spacing: 0) {
+                VStack(alignment: .leading, spacing: 0) {
+                    toolbar(hasDetailColumn: hasDetailColumn)
+                    Divider().overlay(BrowserPalette.border)
+                    libraryGrid
+                    Divider().overlay(BrowserPalette.border)
+                    rotationControls
                 }
-            ),
-            titleVisibility: .visible,
-            presenting: model.pendingLibraryRemoval
-        ) { _ in
-            Button(model.L("library.remove.confirm.button"), role: .destructive) {
-                model.removeSelectedLibraryAssets()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                if hasDetailColumn {
+                    Divider().overlay(BrowserPalette.border)
+                    LibraryBrowserDetailView(model: model)
+                        .frame(width: 300)
+                }
             }
-            Button(model.L("common.cancel"), role: .cancel) {
-                model.cancelPendingLibraryRemoval()
+        }
+        .foregroundStyle(BrowserPalette.text)
+        .background(BrowserPalette.background)
+        .tint(BrowserPalette.accent)
+        .modifier(LibraryRemovalConfirmation(model: model, isActive: !showsDetails))
+        .sheet(isPresented: $showsImport) {
+            LibraryImportSheet(model: model)
+        }
+        .sheet(isPresented: $showsDetails) {
+            VStack(spacing: 0) {
+                HStack {
+                    Text(model.L("library.details")).font(.headline)
+                    Spacer()
+                    Button(model.L("common.close")) { showsDetails = false }
+                        .keyboardShortcut(.cancelAction)
+                }
+                .padding()
+                Divider()
+                LibraryBrowserDetailView(model: model)
             }
-        } message: { _ in
-            Text(model.L("library.remove.confirm.message"))
+            .frame(width: 400, height: 460)
+            .background(BrowserPalette.sidebar)
+            .foregroundStyle(BrowserPalette.text)
+            .tint(BrowserPalette.accent)
+            .modifier(LibraryRemovalConfirmation(model: model))
         }
     }
 
-    private var removeConfirmationTitle: String {
-        guard let pending = model.pendingLibraryRemoval else {
-            return model.L("library.remove.confirm.title.fallback")
+    private var sortedAssets: [WallpaperAsset] {
+        model.libraryAssets.sorted { lhs, rhs in
+            if sortOrder == .dateAdded, lhs.dateAdded != rhs.dateAdded {
+                return (lhs.dateAdded ?? .distantPast) > (rhs.dateAdded ?? .distantPast)
+            }
+            let comparison = lhs.title.localizedStandardCompare(rhs.title)
+            return comparison == .orderedSame ? lhs.id < rhs.id : comparison == .orderedAscending
         }
-        return String(format: model.L("library.remove.confirm.title"), pending.title)
     }
 
-    private var importRow: some View {
-        VStack(alignment: .leading, spacing: 4) {
+    private func toolbar(hasDetailColumn: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(model.L("tab.library")).font(.title2.weight(.semibold))
+                Text("\(model.libraryAssets.count)")
+                    .font(.callout.monospacedDigit()).foregroundStyle(BrowserPalette.secondary)
+                Spacer(minLength: 8)
+                HelpPopoverButton(title: model.L("library.help.title"), message: model.L("library.help.body"))
+            }
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    importButton
+                    videoButton
+                    Spacer(minLength: 8)
+                    sortPicker
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) { importButton; videoButton }
+                    sortPicker
+                }
+            }
             HStack(spacing: 8) {
-                Text(model.L("library.source.title"))
-                    .font(.subheadline.weight(.semibold))
-                HelpPopoverButton(
-                    title: model.L("library.import.help.title"),
-                    message: model.L("library.import.help.body")
-                )
-                Spacer()
-            }
-            HStack(spacing: 8) {
-                TextField(model.L("library.source.placeholder"), text: $model.sourcePath)
-                Button(model.L("library.browse")) {
-                    model.chooseFolder()
+                if !model.selectedLibraryAssetIds.isEmpty {
+                    Text(String(format: model.L("library.selection.count"), model.selectedLibraryAssetCount))
+                        .font(.caption).foregroundStyle(BrowserPalette.secondary)
+                    Spacer(minLength: 4)
+                    Button(model.L("library.remove.selected")) { model.requestRemoveSelectedLibraryAssets() }
+                        .keyboardShortcut(.delete, modifiers: [])
+                        .disabled(model.isWorking)
+                } else {
+                    Spacer(minLength: 4)
                 }
-                Button(model.L("library.scan")) {
-                    model.scanSource()
-                }
-            }
-        }
-    }
-
-    private var scannedSection: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text("\(model.L("library.scanned.empty")) (\(model.scannedAssets.count))")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Picker(model.L("library.sort.title"), selection: $model.scannedSortOrder) {
-                    ForEach(ScannedAssetSortOrder.allCases) { order in
-                        Text(order.title).tag(order)
+                if !hasDetailColumn {
+                    Button { showsDetails = true } label: {
+                        Label(model.L("library.details"), systemImage: "sidebar.right")
                     }
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 200)
-                Button(importButtonTitle) {
-                    model.importSelected()
-                }
-                .disabled(model.selectedScannedAssetIds.isEmpty)
-            }
-            List(
-                selection: Binding(
-                    get: { model.selectedScannedAssetIds },
-                    set: { model.selectScannedAssets($0) }
-                )
-            ) {
-                ForEach(model.scannedAssets) { asset in
-                    AssetRow(
-                        asset: asset,
-                        sceneVideoRenderRevision: model.sceneVideoRenderRevision,
-                        isNew: model.isNewScannedAsset(asset),
-                        newBadgeText: model.L("library.new.badge")
-                    )
-                    .tag(asset.id)
+                    .disabled(model.selectedLibraryAsset == nil)
                 }
             }
-            .frame(height: 110)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            AssetPreview(
-                asset: model.selectedScannedAsset,
-                placeholderTitle: model.L("library.preview.placeholder"),
-                placeholderDescription: model.L("library.preview.empty")
-            )
+            .controlSize(.small)
+        }
+        .padding(20)
+    }
+
+    private var importButton: some View {
+        Button { showsImport = true } label: {
+            Label(model.L("library.import.local"), systemImage: "folder.badge.plus")
         }
     }
 
-    private var toolbarRow: some View {
-        HStack(spacing: 12) {
-            Text(model.L("library.imported.empty"))
-                .font(.headline)
-            Spacer()
-            Picker(model.L("library.display"), selection: $model.displayMode) {
-                ForEach(WallpaperDisplayMode.allCases) { mode in
-                    Text(mode.title).tag(mode)
-                }
-            }
-            .pickerStyle(.segmented)
-            .frame(width: 220)
-            Button(model.L("library.addVideo")) {
-                model.chooseVideoFile()
-            }
-        }
+    private var videoButton: some View {
+        Button(model.L("library.addVideo")) { model.chooseVideoFile() }
+            .disabled(model.isWorking)
     }
 
-    private var libraryList: some View {
-        List(
-            selection: Binding(
-                get: { model.selectedLibraryAssetIds },
-                set: { model.selectLibraryAssets($0) }
-            )
-        ) {
-            ForEach(model.libraryAssets) { asset in
-                AssetRow(asset: asset, sceneVideoRenderRevision: model.sceneVideoRenderRevision)
-                    .tag(asset.id)
-                    .contextMenu {
-                        contextMenuItems(for: asset)
+    private var sortPicker: some View {
+        Picker(model.L("library.sort.title"), selection: $sortOrder) {
+            ForEach(ScannedAssetSortOrder.allCases) { order in
+                Text(model.L("library.sort.\(order.rawValue)")).tag(order)
+            }
+        }
+        .frame(maxWidth: 190)
+    }
+
+    private var libraryGrid: some View {
+        ScrollView {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 170, maximum: 260), spacing: 14)], spacing: 16) {
+                ForEach(sortedAssets) { asset in
+                    Button { select(asset.id) } label: {
+                        LibraryBrowserCard(
+                            model: model,
+                            asset: asset,
+                            isSelected: model.selectedLibraryAssetIds.contains(asset.id),
+                            sceneVideoRenderRevision: model.sceneVideoRenderRevision
+                        )
                     }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(asset.title)
+                    .accessibilityAddTraits(model.selectedLibraryAssetIds.contains(asset.id) ? .isSelected : [])
+                    .contextMenu { contextMenuItems(for: asset) }
+                }
             }
+            .padding(20)
         }
         .overlay {
             if model.libraryAssets.isEmpty {
-                Text(model.L("library.imported.empty"))
-                    .foregroundStyle(.tertiary)
+                BrowserEmptyState(
+                    symbol: "photo.on.rectangle.angled",
+                    title: model.L("library.empty.title"),
+                    message: model.L("library.empty.message")
+                )
             }
         }
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .frame(maxHeight: .infinity)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private var rotationRow: some View {
-        HStack(spacing: 12) {
+    private func select(_ id: String) {
+        let modifiers = NSEvent.modifierFlags
+        if modifiers.contains(.shift),
+           let anchor = selectionAnchor ?? model.selectedLibraryAssetId,
+           let first = sortedAssets.firstIndex(where: { $0.id == anchor }),
+           let last = sortedAssets.firstIndex(where: { $0.id == id }) {
+            let range = Set(sortedAssets[min(first, last)...max(first, last)].map(\.id))
+            model.selectLibraryAssets(modifiers.contains(.command) ? model.selectedLibraryAssetIds.union(range) : range)
+        } else if modifiers.contains(.command) || modifiers.contains(.shift) {
+            var selection = model.selectedLibraryAssetIds
+            if selection.contains(id) { selection.remove(id) } else { selection.insert(id) }
+            model.selectLibraryAssets(selection)
+            selectionAnchor = id
+        } else {
+            selectionAnchor = id
+            model.selectAndApplyLibraryAsset(id)
+        }
+    }
+
+    private var rotationControls: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 16) {
+                rotationToggles
+                Spacer(minLength: 4)
+                rotationTiming
+            }
+            VStack(alignment: .leading, spacing: 12) {
+                rotationToggles
+                rotationTiming
+            }
+        }
+        .controlSize(.small)
+        .padding(16)
+        .background(BrowserPalette.sidebar)
+    }
+
+    private var rotationToggles: some View {
+        HStack(spacing: 16) {
             Toggle(model.L("library.rotate"), isOn: $model.rotationEnabled)
-                .toggleStyle(.switch)
-                .lineLimit(1)
-                .fixedSize()
             Toggle(model.L("library.rotate.shuffle"), isOn: $model.rotationShuffle)
-                .toggleStyle(.switch)
-                .lineLimit(1)
-                .fixedSize()
+        }
+        .toggleStyle(.switch)
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private var rotationTiming: some View {
+        HStack(spacing: 10) {
             Picker(model.L("library.rotate.every"), selection: $model.rotationInterval) {
                 ForEach(AppViewModel.rotationIntervalOptions, id: \.seconds) { option in
                     Text(option.label).tag(option.seconds)
                 }
             }
-            .fixedSize()
-            Button(model.L("library.rotate.next")) {
-                model.nextWallpaper()
-            }
-            .disabled(!model.rotationEnabled)
-            Spacer()
+            .frame(maxWidth: 190)
+            Button(model.L("library.rotate.next")) { model.nextWallpaper() }
+                .disabled(!model.rotationEnabled)
         }
     }
 
     @ViewBuilder
     private func contextMenuItems(for asset: WallpaperAsset) -> some View {
+        Button(model.L("library.details")) {
+            model.selectLibraryAssets([asset.id])
+            showsDetails = true
+        }
+        Button(model.L("library.play")) { model.selectAndApplyLibraryAsset(asset.id) }
+            .disabled(asset.supportStatus != .playable)
         Button(model.L("library.convert")) {
             model.selectLibraryAssets([asset.id])
             model.convertSelected()
@@ -203,63 +237,75 @@ struct LibraryTabView: View {
             model.setStillWallpaper()
         }
         Divider()
-        Button(model.L("library.remove")) {
-            model.selectLibraryAssets([asset.id])
+        Button(model.L("library.remove"), role: .destructive) {
+            if !model.selectedLibraryAssetIds.contains(asset.id) { model.selectLibraryAssets([asset.id]) }
             model.requestRemoveSelectedLibraryAssets()
         }
+        .disabled(model.isWorking)
     }
+}
 
-    private var actionRow: some View {
-        HStack(spacing: 8) {
-            Button(model.L("library.play")) {
-                model.playSelected()
-            }
-            .buttonStyle(.borderedProminent)
-            .keyboardShortcut(.defaultAction)
-            .disabled(model.selectedLibraryAsset == nil)
-            if model.selectedLibraryAsset?.kind == .web || model.selectedLibraryAsset?.kind == .scene {
-                Button(model.L("library.playInteractive")) {
-                    model.playSelectedInteractively()
+private struct LibraryBrowserCard: View {
+    @ObservedObject var model: AppViewModel
+    let asset: WallpaperAsset
+    let isSelected: Bool
+    let sceneVideoRenderRevision: Int
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Color.clear
+                .aspectRatio(16 / 10, contentMode: .fit)
+                .overlay { BrowserThumbnail(url: libraryThumbnailURL(for: asset)) }
+                .clipped()
+                .overlay(alignment: .topTrailing) {
+                    if isSelected {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(BrowserPalette.accent, BrowserPalette.sidebar)
+                            .font(.title3).padding(8)
+                    }
                 }
-                .help(model.L("settings.interaction.help"))
-                .disabled(model.selectedLibraryAsset?.supportStatus != .playable)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(asset.title)
+                    .font(.callout.weight(.medium))
+                    .foregroundStyle(BrowserPalette.text)
+                    .lineLimit(2)
+                    .frame(height: 34, alignment: .topLeading)
+                Text(model.L("library.kind.\(asset.kind.rawValue)"))
+                    .font(.caption).foregroundStyle(BrowserPalette.secondary)
+                LibrarySupportBadge(model: model, asset: asset, sceneVideoRenderRevision: sceneVideoRenderRevision)
             }
-            Button(removeButtonTitle) {
-                model.requestRemoveSelectedLibraryAssets()
-            }
-            .disabled(model.selectedLibraryAssetIds.isEmpty)
-            .keyboardShortcut(.delete, modifiers: [])
-            Menu(model.L("library.more")) {
-                Button(model.L("library.convert")) {
-                    model.convertSelected()
-                }
-                .disabled(model.selectedLibraryAsset?.supportStatus != .needsConversion || model.isWorking)
-                Button(model.L("library.setStillWallpaper")) {
-                    model.setStillWallpaper()
-                }
-                .disabled(model.selectedLibraryAsset == nil)
-                Button(model.L("library.screenSaverSettings")) {
-                    model.openScreenSaverSettings()
-                }
-            }
-            .fixedSize()
-            Spacer()
-            HelpPopoverButton(
-                title: model.L("library.help.title"),
-                message: model.L("library.help.body")
-            )
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .background(isSelected ? BrowserPalette.selection : BrowserPalette.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(isSelected ? BrowserPalette.accent : BrowserPalette.border, lineWidth: isSelected ? 2 : 1)
+        }
+        .contentShape(RoundedRectangle(cornerRadius: 10))
     }
+}
 
-    private var importButtonTitle: String {
-        model.selectedScannedAssetCount > 1
-            ? "\(model.L("library.import")) (\(model.selectedScannedAssetCount))"
-            : model.L("library.import")
-    }
+struct LibraryRemovalConfirmation: ViewModifier {
+    @ObservedObject var model: AppViewModel
+    var isActive = true
 
-    private var removeButtonTitle: String {
-        model.selectedLibraryAssetCount > 1
-            ? model.L("library.remove.selected")
-            : model.L("library.remove")
+    func body(content: Content) -> some View {
+        content.confirmationDialog(
+            model.pendingLibraryRemoval.map { String(format: model.L("library.remove.confirm.title"), $0.title) }
+                ?? model.L("library.remove.confirm.title.fallback"),
+            isPresented: Binding(
+                get: { isActive && model.pendingLibraryRemoval != nil },
+                set: { if !$0 && isActive { model.cancelPendingLibraryRemoval() } }
+            ),
+            titleVisibility: .visible,
+            presenting: model.pendingLibraryRemoval
+        ) { _ in
+            Button(model.L("library.remove.confirm.button"), role: .destructive) { model.removeSelectedLibraryAssets() }
+            Button(model.L("common.cancel"), role: .cancel) { model.cancelPendingLibraryRemoval() }
+        } message: { _ in
+            Text(model.L("library.remove.confirm.message"))
+        }
     }
 }

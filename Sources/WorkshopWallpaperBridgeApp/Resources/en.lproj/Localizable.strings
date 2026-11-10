@@ -4,7 +4,7 @@
 "app.stop" = "Stop";
 
 /* Tabs */
-"tab.library" = "Library";
+"tab.library" = "My Wallpapers";
 "tab.settings" = "Settings";
 "tab.workshop" = "Workshop";
 
@@ -43,7 +43,7 @@
 "workshop.detail.kind" = "Type";
 "workshop.detail.size" = "Size";
 "workshop.detail.unknown" = "Not provided";
-"workshop.downloads.title" = "Downloaded";
+"workshop.downloads.title" = "Downloads";
 "workshop.downloads.empty" = "Completed downloads appear here.";
 "workshop.download.badge" = "Downloaded";
 "workshop.download.button" = "Download";
@@ -61,7 +61,7 @@
 "workshop.support.needsConversion" = "Conversion required";
 "workshop.support.previewOnly" = "Preview only";
 "workshop.support.unsupported" = "Unsupported";
-"workshop.convert.help" = "Import the project, then convert it in the Library tab before playback.";
+"workshop.convert.help" = "Open My Wallpapers to convert the saved project before playback.";
 "workshop.compatibility.help" = "A completed download does not guarantee playback. Scenes are not fully compatible with Wallpaper Engine: live playback, rendered video and preview fallback are different outcomes. Check the support assessment and issues; the bottom status bar reports the player's actual state.";
 "workshop.cancel.help" = "Cancel stops the entire helper and disconnects Steam. Reconnect with saved authentication before continuing.";
 
@@ -100,6 +100,76 @@
 "workshop.error.cleanup" = "The helper stopped, but incomplete download files could not be removed.";
 "workshop.error.credentials" = "Saved authentication could not be deleted. Check the app-specific credential file permissions.";
 "workshop.error.import" = "The project could not be imported into the Mac library.";
+
+/* Wallpaper browser */
+"common.close" = "Close";
+"workshop.browser.explore" = "Explore";
+"workshop.browser.account" = "Steam Account";
+"workshop.browser.connect" = "Connect to Steam";
+"workshop.browser.connected" = "Connected";
+"workshop.browser.signInRequired" = "Sign in to explore";
+"workshop.browser.signInDescription" = "Browse Wallpaper Engine Workshop with your Steam account. Download a wallpaper to save and apply it in one step.";
+"workshop.browser.welcome" = "Find your next wallpaper";
+"workshop.browser.noResults" = "No wallpapers found";
+"workshop.browser.trySearch" = "Try another search or change the filters.";
+"workshop.browser.downloadsDescription" = "Completed projects are saved to My Wallpapers automatically. Select a supported item to apply it.";
+"workshop.browser.thumbnailSize" = "Change thumbnail size";
+"workshop.browser.kindFilter" = "Type";
+"workshop.browser.genreFilter" = "Genre";
+"workshop.browser.sort" = "Sort";
+"workshop.browser.previewCaption" = "Preview image · not a playback confirmation";
+"workshop.browser.expandPreview" = "Enlarge preview";
+"workshop.browser.selectTitle" = "Choose a wallpaper";
+"workshop.browser.selectDescription" = "Select a thumbnail to see its preview and details.";
+"workshop.browser.apply" = "Apply Wallpaper";
+"workshop.browser.downloadAndApply" = "Download & Apply";
+"workshop.browser.openSteam" = "View on Steam";
+"workshop.browser.creatorItems" = "View Creator's Workshop";
+"workshop.browser.automaticallySaved" = "Supported downloads are saved and applied automatically. Existing library copies are preserved.";
+"workshop.kind.all" = "All Types";
+"workshop.kind.video" = "Video";
+"workshop.kind.web" = "Web";
+"workshop.kind.scene" = "Scene";
+"workshop.kind.application" = "Application";
+"workshop.kind.image" = "Image";
+"workshop.kind.unknown" = "Unknown";
+"workshop.sort.popular" = "Popular This Week";
+"workshop.sort.recent" = "Most Recent";
+"workshop.sort.rated" = "Top Rated";
+"workshop.genre.all" = "All Genres";
+"workshop.genre.abstract" = "Abstract";
+"workshop.genre.animal" = "Animals";
+"workshop.genre.anime" = "Anime";
+"workshop.genre.fantasy" = "Fantasy";
+"workshop.genre.game" = "Games";
+"workshop.genre.landscape" = "Landscape";
+"workshop.genre.music" = "Music";
+"workshop.genre.nature" = "Nature";
+"workshop.genre.scifi" = "Sci-Fi";
+"workshop.genre.technology" = "Technology";
+"workshop.error.busy" = "Another library operation is in progress. Wait for it to finish and select the item again.";
+"workshop.error.play" = "The wallpaper could not be loaded. The previous wallpaper has been kept.";
+"workshop.play.unsupported" = "Saved to My Wallpapers, but this project cannot be played directly. Check its support assessment.";
+"workshop.play.ready" = "Wallpaper content loaded on the desktop. Scene playback may use a preview or rendered-video fallback.";
+"library.details" = "Details";
+"library.import.local" = "Import Local Files";
+"library.import.local.help" = "Choose a copied Workshop folder. Selected projects are copied into your Mac library; original files are never modified.";
+"library.selection.count" = "%d selected";
+"library.sort.dateAdded" = "Date Added";
+"library.sort.name" = "Name";
+"library.empty.title" = "Your library is empty";
+"library.empty.message" = "Download a wallpaper from Explore or add local files to start your collection.";
+"library.preview.enlarge" = "Enlarge Preview";
+"library.kind.video" = "Video";
+"library.kind.web" = "Web";
+"library.kind.image" = "Image";
+"library.kind.scene" = "Scene";
+"library.kind.unknown" = "Unknown Format";
+"library.support.playable" = "Playable";
+"library.support.needsFirstRender" = "May render on first play";
+"library.support.needsConversion" = "Conversion required";
+"library.support.previewOnly" = "Preview only";
+"library.support.unsupported" = "Unsupported";
 
 /* Library tab: source import */
 "library.source.title" = "Source";
