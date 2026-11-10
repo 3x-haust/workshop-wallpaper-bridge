@@ -5,9 +5,9 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Downloads](https://img.shields.io/github/downloads/3x-haust/workshop-wallpaper-bridge/total.svg)](https://github.com/3x-haust/workshop-wallpaper-bridge/releases)
 
-Use local Wallpaper Engine Workshop files on macOS.
+Use supported Wallpaper Engine Workshop content on macOS.
 
-Workshop Wallpaper Bridge imports a copied Wallpaper Engine Workshop folder into a private Mac library and plays supported wallpapers on the desktop layer. It is built for files you already have locally. It does not talk to Steam, download Workshop items, or modify the copied Workshop folder.
+Workshop Wallpaper Bridge imports Wallpaper Engine Workshop projects into a private Mac library and plays supported wallpapers on the desktop layer. Copied-folder imports and local playback remain available. Steam integration covers searching and downloading App ID `431960` Workshop items through normal Steam authentication within your account's permissions. It does not modify the original copied Workshop folder.
 
 [Website](https://3x-haust.github.io/workshop-wallpaper-bridge/) · [한국어](README.ko.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Releases](https://github.com/3x-haust/workshop-wallpaper-bridge/releases) · [Support](https://www.patreon.com/c/3xhaust)
 
@@ -15,6 +15,7 @@ Workshop Wallpaper Bridge imports a copied Wallpaper Engine Workshop folder into
 
 - [Download](#download): install the latest DMG.
 - [Use It](#use-it): import a copied Workshop folder or add local videos.
+- [Steam Workshop](#steam-workshop-in-development): authenticated search/download, storage, and current verification status.
 - [What Works](#what-works): check supported wallpaper types.
 - [Build From Source](#build-from-source): run the app locally or package a DMG.
 - [Maintainers And Contributors](#maintainers-and-contributors): project maintainers and contributors.
@@ -51,7 +52,7 @@ The app checks GitHub Releases for updates automatically when **Auto-check Updat
 
 ## Use It
 
-For Wallpaper Engine projects:
+For locally copied Wallpaper Engine projects:
 
 1. On Windows, locate the Workshop folder:
 
@@ -90,7 +91,7 @@ Playback notes:
 - Use **Set Still Wallpaper** only when you explicitly want to replace the macOS desktop and Lock Screen still image.
 - **Remove** asks for confirmation, then moves the imported Mac-library copy to the Trash (recoverable) only. It does not touch the original copied folder or video.
 
-The settings window has a **Library** tab (import, your Mac library, Display mode, **Play on Desktop** / **Remove**) and a **Settings** tab (playback toggles, Audio, Scene Engine Assets, Screen Saver, and Language). **Convert Video** and **Set Still Wallpaper** are reachable from the library list's right-click context menu and from the **More** ("⋯") menu next to **Play on Desktop**, not as always-visible buttons.
+The settings window keeps its **Library** tab (import, your Mac library, Display mode, **Play on Desktop** / **Remove**) and **Settings** tab (playback toggles, Audio, Scene Engine Assets, Screen Saver, and Language). The new **Workshop** tab is for Steam login, search, and downloads; it does not replace the existing library or playback controls. **Convert Video** and **Set Still Wallpaper** are reachable from the library list's right-click context menu and from the **More** ("⋯") menu next to **Play on Desktop**, not as always-visible buttons.
 
 Use the **Language** picker in the Settings tab to switch the app's UI text between **System**, **한국어**, and **English**. The change applies immediately, without restarting the app; only static UI chrome (buttons, section titles, captions) is localized, so status messages generated while the app runs may still appear in English.
 
@@ -106,6 +107,40 @@ Imported files are stored in:
 ```text
 ~/Library/Application Support/WorkshopWallpaperBridge
 ```
+
+### Steam Workshop (In Development)
+
+Steam integration is in development; the packaged login-to-playback flow is not yet verified, and inclusion in the latest public release is not implied.
+
+1. Open the **Workshop** tab and sign in with a QR code or your Steam account and Steam Guard. Access is limited to what that account is authorized to retrieve for Wallpaper Engine (App ID `431960`).
+2. Search Workshop items and inspect an item's details before downloading.
+3. Start a download and follow its progress. You can cancel or retry; cancellation terminates the helper and disconnects its current login. Use the reconnect button to reconnect with saved authentication before retrying.
+4. Find the item in the received-items list after its completion marker has been written. Partial or cancelled downloads are not completed items.
+5. Add the item to the Mac library. If that item ID already exists, the app links/selects the existing library copy rather than automatically overwriting it.
+6. Use the apply-wallpaper button directly in the **Workshop** received-items list; switching to **Library** is not required. Use **Library** for additional conversion. The support limits below still apply.
+
+**Download success is not playback success.** Unsupported formats, scene features, or missing engine assets can still prevent playback or leave a preview visible. This integration does not promise official Wallpaper Engine compatibility or expand the scene support boundary.
+
+Downloads are stored separately from imported library copies:
+
+```text
+~/Library/Application Support/WorkshopWallpaperBridge/WorkshopDownloads
+```
+
+#### Saved Authentication And Logout
+
+Authentication persists across app launches in an app-specific file:
+
+```text
+~/Library/Application Support/WorkshopWallpaperBridge/Steam/credentials.json
+```
+
+- The `Steam` directory uses mode `0700`; the credential file uses `0600`. This is persistent file storage, **not Keychain**. Treat the file and backups as secrets; permissions do not protect it from other processes running as your user.
+- **Logout** ends the helper session but keeps saved authentication so you can reconnect.
+- **Delete saved authentication** removes only `credentials.json` and its interrupted atomic-save temporary file `credentials.json.tmp` from this app's `Steam` directory. It does not affect authentication or sessions in the Steam app or other Steam clients, or revoke tokens on Steam's servers.
+- Do not include credentials, QR login payloads, tokens, or Steam Guard codes in reports or logs. See [Security](SECURITY.md).
+
+The Steam helper is a separate GPL component based on [SteamRE/DepotDownloader 3.4.0](https://github.com/SteamRE/DepotDownloader/tree/DepotDownloader_3.4.0), using SteamKit as a normal authenticated client. Steam-enabled app packages are intended to bundle a self-contained macOS arm64 helper; users do not need to install .NET or run CLI commands for this integration.
 
 ## What Works
 
@@ -143,7 +178,7 @@ The render-to-video path requires the bundled renderer subprocess, its Homebrew 
 - For CLI/dev launches, `WWB_SCENE_ENGINE_ASSETS_DIR=/path/to/assets` overrides the app setting; otherwise the app checks `~/Library/Application Support/WorkshopWallpaperBridge/wallpaper-engine-assets`.
 - If rendering components are unavailable, the app uses a compatible cached video, a complete basic native scene, or the project preview, in that order.
 - Cached scene videos live under `~/Library/Application Support/WorkshopWallpaperBridge/SceneVideoCache/` and are rebuilt automatically when the source `scene.pkg` changes.
-- This project does not download Steam Workshop items, redistribute creator assets, or bundle Steam content; a renderer binary is a separate component with its own GPL source notice.
+- Authenticated Workshop downloads do not supply Wallpaper Engine runtime assets. This project does not redistribute creator assets or bundle Steam content; a renderer binary is a separate component with its own GPL source notice.
 
 ### Native fallback renderer
 
@@ -190,6 +225,7 @@ Requirements:
 - macOS 14 or newer
 - Xcode command line tools
 - Swift 6 toolchain
+- .NET 9 SDK to build the separate Steam helper (`net9.0`)
 - Optional: `ffmpeg` for WebM, MKV, and AVI conversion
 
 ```bash
@@ -210,6 +246,15 @@ The script writes:
 ```text
 dist/WorkshopWallpaperBridge-macOS-arm64.dmg
 ```
+
+For the Steam-enabled package, build the separate helper before packaging:
+
+```bash
+bash Scripts/build-steam-helper.sh
+bash Scripts/package-app.sh
+```
+
+`Scripts/build-steam-helper.sh` targets a self-contained macOS arm64 helper based on SteamRE/DepotDownloader 3.4.0; `Scripts/package-app.sh` integrates it into the app bundle. Distribute its GPL license and corresponding-source notices with the helper. .NET is a developer build prerequisite, not a consumer runtime installation requirement.
 
 To include the optional external GPL scene renderer in a local package:
 
@@ -286,15 +331,15 @@ The screen saver preview is black:
 
 ## Project Boundaries
 
-Workshop Wallpaper Bridge is local-only.
+Workshop Wallpaper Bridge keeps wallpaper playback and the imported library local, with optional authenticated Steam Workshop access.
 
-- It does not download Steam Workshop items.
-- It does not bypass Steam authentication.
-- It does not bypass DRM.
-- It does not emulate Steam protocols.
-- It does not claim full `scene.pkg` runtime compatibility.
+- Search/download is restricted to Wallpaper Engine (App ID `431960`) and the signed-in account's permissions.
+- It does not bypass Steam authentication, account entitlements, or DRM.
+- It does not emulate or impersonate Steam protocols. Normal authenticated SteamKit client use in the separate helper is permitted and is distinct from prohibited protocol emulation.
+- It does not claim full `scene.pkg` runtime or official Wallpaper Engine compatibility. Downloading an item does not prove it can play.
 - It does not upload, share, or redistribute creator assets.
 - It does not modify the original copied Workshop folder.
+- It does not download or bundle Wallpaper Engine runtime `assets`; users supply their own as described above.
 
 Workshop Wallpaper Bridge is not affiliated with Valve, Steam, or Wallpaper Engine. Wallpaper Engine is a trademark of its respective owner.
 
@@ -318,4 +363,4 @@ This section is generated from GitHub user profiles.
 
 ## License
 
-MIT
+The main application is MIT licensed. The separate Steam helper is based on [SteamRE/DepotDownloader 3.4.0](https://github.com/SteamRE/DepotDownloader/tree/DepotDownloader_3.4.0) and carries its [GPL license](https://github.com/SteamRE/DepotDownloader/blob/DepotDownloader_3.4.0/LICENSE), not the application's MIT license. The optional external scene renderer also has its own GPL license/source notices. Distributions must retain the applicable licenses and provide corresponding source for the GPL components, including modifications.

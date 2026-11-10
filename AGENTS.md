@@ -4,18 +4,30 @@ Guidance for AI coding assistants working in this repository.
 
 ## Project Boundary
 
-Workshop Wallpaper Bridge is a local-only macOS utility. It scans a user-copied Wallpaper Engine Workshop folder, imports supported projects into a private Mac library, and plays supported wallpaper content locally.
+Workshop Wallpaper Bridge is a macOS utility for importing Wallpaper Engine Workshop projects into a private Mac library and playing supported content locally. It preserves copied-folder imports and permits Workshop search and downloads for Wallpaper Engine (App ID `431960`) through normal Steam authentication, only within the signed-in account's permissions.
 
 Do not implement:
 
-- Steam Workshop downloading
-- Steam authentication bypass
+- Steam authentication or account-entitlement bypass
 - DRM bypass
-- Steam protocol emulation
+- Steam protocol emulation or impersonation; normal authenticated SteamKit client use in the separate helper is permitted and is not this prohibited behavior
 - Uploading, sharing, or redistributing creator assets
 - Silent modification of the original copied Workshop folder
+- Downloads or bundling of Wallpaper Engine runtime `assets`
 
-Why this exists: the project is intentionally framed as a local bridge for assets the user already has access to, not as a replacement for Wallpaper Engine or Steam.
+The existing SwiftUI library and playback paths remain in place. The Workshop tab covers QR or account/Steam Guard login, search/details, download progress/cancel/retry, completed downloads, library import, and direct wallpaper application from received items without requiring a switch to Library. Additional conversion remains in Library. A successful download is not evidence of successful playback or official engine compatibility; preserve the existing conservative scene support limits.
+
+Steam integration contracts:
+
+- Use a separate GPL helper based on SteamRE/DepotDownloader 3.4.0. `Scripts/build-steam-helper.sh` builds the self-contained macOS arm64 helper for integration by `Scripts/package-app.sh`; consumers must not need .NET installation or CLI setup. Developers need the .NET 9 SDK to build the helper (`net9.0`).
+- Persist app-specific authentication in `~/Library/Application Support/WorkshopWallpaperBridge/Steam/credentials.json`, with directory mode `0700` and file mode `0600`. This is file-based persistent storage, not Keychain storage. Never log credentials, tokens, or Guard codes.
+- Logout ends the helper session but retains saved authentication. Deleting saved authentication removes only `credentials.json` and its interrupted atomic-save temporary file `credentials.json.tmp` in the app-specific Steam directory. It does not affect authentication or sessions in the Steam app or other Steam clients, or revoke tokens on Steam's servers.
+- Download to `~/Library/Application Support/WorkshopWallpaperBridge/WorkshopDownloads`. Only items with a completion marker enter the completed-download list.
+- If an item ID already exists in the Mac library, link/select the existing copy; never silently overwrite it.
+- Cancelling a download terminates the helper and disconnects its current login. Offer reconnection using saved authentication.
+- Do not describe the new end-to-end app flow as verified without actual app evidence.
+
+Why this exists: the project is a bridge for content the user is entitled to access, not a replacement for Wallpaper Engine or Steam.
 
 ## Development Commands
 
@@ -59,7 +71,9 @@ Before proposing or committing changes, check:
 
 - Does `swift test` pass?
 - Are new async operations protected from overlapping writes or stale UI updates?
-- Are paths normalized and constrained before reading or writing?
+- Are paths normalized and constrained before reading or writing, including helper output, downloads, and credentials?
+- Are persistent credentials private, completion markers trustworthy, and logout/delete/cancel semantics accurately reflected in the UI?
+- Are separate GPL helper source/license notices included when distributing it?
 - Are large package, texture, and decompression limits preserved?
 - Are unsupported Wallpaper Engine runtime features still described honestly?
 - Did README changes update both English and Korean docs when user-facing behavior changed?

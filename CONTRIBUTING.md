@@ -2,7 +2,7 @@
 
 Thanks for helping improve Workshop Wallpaper Bridge.
 
-This project is a local-only macOS utility for playing personally copied Wallpaper Engine Workshop projects. Contributions should keep that boundary clear: do not add Steam authentication bypasses, Workshop downloading, DRM bypasses, asset redistribution, or network collection of user assets.
+This project is a macOS utility for locally playing supported Wallpaper Engine Workshop projects. It supports personally copied files and permits Workshop search/download for App ID `431960` through normal Steam authentication within the user's account permissions. Keep the existing SwiftUI library and playback paths. Do not add authentication or entitlement bypasses, DRM bypasses, Steam protocol emulation, asset redistribution, network collection of user assets, or silent changes to original folders. Normal SteamKit client use in the separate helper is permitted; downloading an item does not establish playback support or full engine compatibility. Wallpaper Engine runtime `assets` must still be supplied from the user's own installation, never downloaded or bundled by this project.
 
 ## Before You Start
 
@@ -18,6 +18,7 @@ Requirements:
 - macOS 14 or newer
 - Xcode command line tools
 - Swift 6 toolchain
+- .NET 9 SDK when building the separate Steam helper (`net9.0`)
 - Optional: `ffmpeg` for WebM, MKV, and AVI conversion paths
 
 Run the app:
@@ -37,6 +38,21 @@ Build a local app bundle:
 ```bash
 bash Scripts/package-app.sh
 ```
+
+### Steam Helper
+
+The Steam integration uses a separate GPL helper based on [SteamRE/DepotDownloader 3.4.0](https://github.com/SteamRE/DepotDownloader/tree/DepotDownloader_3.4.0), using SteamKit for normal authenticated access. Build it with:
+
+```bash
+bash Scripts/build-steam-helper.sh
+bash Scripts/package-app.sh
+```
+
+The packaging target is a self-contained macOS arm64 helper bundled with the app, including its license and corresponding-source notices. Consumers should not install .NET or configure a CLI. Do not present build output alone as proof of working authentication, downloads, or playback.
+
+Authentication persists in `~/Library/Application Support/WorkshopWallpaperBridge/Steam/credentials.json` (directory `0700`, file `0600`), not Keychain. Logout terminates the helper session but keeps the file. Deleting saved authentication removes only `credentials.json` and its interrupted atomic-save temporary file `credentials.json.tmp` in that directory. It does not affect authentication or sessions in the Steam app or other Steam clients and is not server-side token revocation. Cancelling a download terminates the helper/login; the UI offers reconnection with saved authentication.
+
+Downloads stay under `~/Library/Application Support/WorkshopWallpaperBridge/WorkshopDownloads`; only completion-marked items appear as received. Importing an already-present item ID selects/links the existing library copy rather than overwriting it. The received-items list offers direct wallpaper application without requiring a switch to Library; additional conversion remains in Library.
 
 ## Commit Convention
 
@@ -76,7 +92,10 @@ Before requesting review:
 - [ ] `swift test` passes locally.
 - [ ] User-facing behavior is documented in `README.md` and `README.ko.md` when needed.
 - [ ] New or changed behavior has tests.
-- [ ] File system writes stay inside the Mac library unless the user explicitly chose a source file/folder.
+- [ ] Library, Steam credential, and download writes stay within their designated app-owned directories; other writes require an explicit user-selected destination.
+- [ ] Steam operations respect account permissions; credentials, tokens, and Guard codes never appear in logs or test fixtures.
+- [ ] Credential permissions, logout/delete/cancel/reconnect, completion markers, and duplicate imports have focused checks.
+- [ ] Packaged helper license/source notices are present; actual app-flow evidence and remaining unverified cases are reported separately from build/test success.
 - [ ] Web wallpapers remain local and restricted.
 - [ ] Scene support remains conservative; unsupported Wallpaper Engine runtime features are not presented as fully supported.
 - [ ] No generated assets, screenshots, or local output files are committed unless they are intentionally part of the project.
@@ -112,7 +131,8 @@ Please do not open a public issue for a suspected security vulnerability. See [S
 
 Examples of security-sensitive issues:
 
-- Deleting or modifying files outside the app library
+- Deleting or modifying files outside the designated app-owned library, Steam credential, and download directories
+- Leaking persistent Steam authentication or affecting unrelated Steam sessions
 - Loading remote content from a local web wallpaper
 - Path traversal from Workshop metadata or scene package entries
 - Executing untrusted scripts outside the restricted WebView boundary
