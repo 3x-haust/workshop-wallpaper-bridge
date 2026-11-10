@@ -506,12 +506,23 @@ public struct SceneRenderPlanBuilder: Sendable {
         try build(url: url, decodeTextures: false)
     }
 
-    private func build(url: URL, decodeTextures: Bool) throws -> SceneRenderPlan {
+    /// Reads the authored canvas even when the composition cannot be played natively.
+    public func canvasSize(url: URL) throws -> SceneSize {
         let package = try ScenePackageReader().read(url: url)
+        return Self.canvasSize(from: try Self.sceneJSON(in: package))
+    }
+
+    private static func sceneJSON(in package: ScenePackage) throws -> [String: Any] {
         guard let sceneData = package.data(forPath: "scene.json"),
               let scene = try JSONSerialization.jsonObject(with: sceneData) as? [String: Any] else {
             throw SceneRenderPlanError.missingSceneJSON
         }
+        return scene
+    }
+
+    private func build(url: URL, decodeTextures: Bool) throws -> SceneRenderPlan {
+        let package = try ScenePackageReader().read(url: url)
+        let scene = try Self.sceneJSON(in: package)
         let objects = scene["objects"] as? [[String: Any]] ?? []
         let canvasSize = Self.canvasSize(from: scene)
         let requiresLivePlayback = Self.containsLiveInput(scene)

@@ -14,6 +14,7 @@ struct LibraryTabView: View {
             if !model.scannedAssets.isEmpty {
                 scannedSection
             }
+            displayRow
             toolbarRow
             libraryList
             AssetPreview(
@@ -124,14 +125,39 @@ struct LibraryTabView: View {
         }
     }
 
+    private var displayRow: some View {
+        HStack {
+            Picker(model.L("displays.target"), selection: $model.selectedDisplayID) {
+                Text(model.L("displays.all")).tag("")
+                ForEach(Array(model.connectedDisplays.enumerated()), id: \.element.id) { index, display in
+                    Text("\(index + 1) · \(display.name) · \(display.pixelSizeLabel)"
+                         + (display.isPrimary ? " · \(model.L("displays.primary"))" : ""))
+                        .tag(display.id)
+                }
+                if !model.selectedDisplayID.isEmpty,
+                   !model.connectedDisplays.contains(where: { $0.id == model.selectedDisplayID }) {
+                    Text(model.L("displays.disconnected")).tag(model.selectedDisplayID)
+                }
+            }
+            Button(model.L("displays.identify")) { model.identifyDisplays() }
+            Button(model.L("displays.stop")) { model.stopSelectedPlayback() }
+        }
+    }
+
     private var toolbarRow: some View {
         HStack(spacing: 12) {
             Text(model.L("library.imported.empty"))
                 .font(.headline)
             Spacer()
-            Picker(model.L("library.display"), selection: $model.displayMode) {
+            Picker(model.L("library.display"), selection: Binding(
+                get: { model.selectedDisplayMode },
+                set: { model.applySelectedDisplayMode($0) }
+            )) {
+                if model.selectedDisplayMode == nil {
+                    Text(model.L("displays.mixed")).tag(nil as WallpaperDisplayMode?)
+                }
                 ForEach(WallpaperDisplayMode.allCases) { mode in
-                    Text(mode.title).tag(mode)
+                    Text(mode.title).tag(Optional(mode))
                 }
             }
             .pickerStyle(.segmented)

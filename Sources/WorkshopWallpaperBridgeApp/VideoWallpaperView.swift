@@ -74,6 +74,16 @@ final class VideoWallpaperView: NSView,
         layoutLayers()
     }
 
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        layoutLayers()
+    }
+
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        layoutLayers()
+    }
+
     func setPlaybackSuspended(_ suspended: Bool) {
         if suspended {
             player.pause()
@@ -106,7 +116,7 @@ final class VideoWallpaperView: NSView,
     private func configureFallbackLayer(fallbackImageURL: URL?, displayMode: WallpaperDisplayMode) {
         fallbackLayer.backgroundColor = NSColor.black.cgColor
         fallbackLayer.contentsGravity = WallpaperContentLayout.imageContentsGravity(for: displayMode)
-        fallbackLayer.contentsScale = NSScreen.main?.backingScaleFactor ?? 2
+        fallbackLayer.contentsScale = window?.backingScaleFactor ?? 1
         fallbackLayer.minificationFilter = .linear
         fallbackLayer.magnificationFilter = .linear
         guard let fallbackImageURL,
@@ -118,8 +128,22 @@ final class VideoWallpaperView: NSView,
     }
 
     private func layoutLayers() {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
         layer?.frame = bounds
         fallbackLayer.frame = bounds
         playerLayer.frame = bounds
+        WallpaperLayerScale.update(layer, scale: window?.backingScaleFactor ?? 1)
+        CATransaction.commit()
+    }
+}
+
+@MainActor
+enum WallpaperLayerScale {
+    static func update(_ layer: CALayer?, scale: CGFloat) {
+        guard let layer else { return }
+        layer.contentsScale = scale
+        update(layer.mask, scale: scale)
+        for child in layer.sublayers ?? [] { update(child, scale: scale) }
     }
 }

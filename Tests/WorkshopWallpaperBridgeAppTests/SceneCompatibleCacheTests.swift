@@ -17,7 +17,7 @@ final class SceneCompatibleCacheTests: XCTestCase {
         XCTAssertTrue(SceneVideoRenderer.readRendererHelp(script).contains("--record-raw"))
     }
 
-    func testOnlyFreshVisuallyCompatiblePreviousCacheIsReused() throws {
+    func testPreviousDisplayRatioCachesAreNotReused() throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "wwb-cache-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }
         let old = SceneVideoCache.overrideCacheDirectoryURL
@@ -32,7 +32,8 @@ final class SceneCompatibleCacheTests: XCTestCase {
         XCTAssertNil(SceneVideoCache.previousCompatibleCachedVideoURL(assetId: "scene", sourceURL: source))
         let compatible = root.appending(path: "v6/scene.mp4")
         try Data([3]).write(to: compatible)
-        XCTAssertEqual(SceneVideoCache.previousCompatibleCachedVideoURL(assetId: "scene", sourceURL: source), compatible)
+        XCTAssertNil(SceneVideoCache.previousCompatibleCachedVideoURL(assetId: "scene", sourceURL: source),
+                     "Fresh v6 video still has the previous display-dependent aspect ratio.")
         try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(10)], ofItemAtPath: source.path)
         XCTAssertNil(SceneVideoCache.previousCompatibleCachedVideoURL(assetId: "scene", sourceURL: source))
         SceneVideoCache.overrideCacheDirectoryURL = root.appending(path: "v8")

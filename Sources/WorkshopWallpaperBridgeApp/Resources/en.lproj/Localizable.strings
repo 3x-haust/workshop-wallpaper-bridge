@@ -95,5 +95,12 @@
 "playback.interaction.on" = "Mouse and keyboard interaction is on. Turn it off in the menu bar to access desktop icons.";
 "playback.interaction.off" = "Interaction is off. Use Play & Interact to click or drag this wallpaper.";
 "web.openExternal" = "Open %@ in browser";
+"displays.target" = "Display";
+"displays.all" = "All connected displays";
+"displays.primary" = "Primary";
+"displays.disconnected" = "Disconnected display";
+"displays.identify" = "Identify";
+"displays.stop" = "Stop selected";
+"displays.mixed" = "Mixed";
 "settings.media.toggle" = "Show music information";
 "settings.media.help" = "Read track, artwork and playback time from Music or Spotify. macOS requests Automation permission. Spotify artwork loads from its image service.";

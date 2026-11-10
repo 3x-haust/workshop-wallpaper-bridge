@@ -50,13 +50,10 @@ struct SceneVideoRenderConfiguration: Sendable {
     }
 }
 
-/// Computes a sensible offscreen record size for a scene render, derived
-/// from the display's logical (point) size rather than its physical
-/// (backing/retina) pixel size. Recording at full physical resolution on a
-/// retina display (e.g. 3024x1964, doubled again by an over-eager renderer
-/// to 6048x3928) produces multi-hundred-megabyte clips that take minutes to
-/// encode; clamping the long edge keeps the cached wallpaper video small and
-/// fast to render while remaining crisp.
+/// Computes a bounded offscreen record size from the authored scene canvas,
+/// independent of any display's aspect ratio or backing scale. Clamping the
+/// long edge keeps the shared cached video small and fast to render; each
+/// playback view fits the same recording to its own display.
 enum SceneVideoRecordSize {
     /// Wallpapers are viewed from a normal desktop distance, so ~1920px on
     /// the long edge is plenty crisp while keeping render time and cache
@@ -135,7 +132,11 @@ enum SceneVideoCache {
     /// per wallpaper loop instead of being cut off mid-phrase at the video's
     /// own short, arbitrary loop point. Shorter authored layers (ambience
     /// etc.) keep looping underneath it.
-    static let cacheVersion = 7
+    ///
+    /// v8: recordings preserve the authored canvas aspect ratio instead of
+    /// the first playback display's ratio. v7/v6 cannot be used even as a
+    /// temporary fallback: their baked crop would be wrong on other displays.
+    static let cacheVersion = 8
 
     nonisolated(unsafe) static var overrideCacheDirectoryURL: URL?
 
@@ -179,14 +180,10 @@ enum SceneVideoCache {
         return isFresh(cacheURL: url, sourceURL: sourceURL) ? url : nil
     }
 
-    /// v7 changed audio duration only. Its v6 pictures are still usable while
-    /// rebuilding, including when the renderer is temporarily unavailable.
-    /// Do not search older versions whose visual pipeline was different.
+    /// No earlier version preserves the authored canvas ratio. Keep the
+    /// preview while rebuilding v8, including when the renderer is unavailable.
     static func previousCompatibleCachedVideoURL(assetId: String, sourceURL: URL) -> URL? {
-        let current = cacheDirectoryURL()
-        guard current.lastPathComponent == "v7", cacheVersion == 7 else { return nil }
-        let previous = current.deletingLastPathComponent().appending(path: "v6/\(assetId).mp4")
-        return isFresh(cacheURL: previous, sourceURL: sourceURL) ? previous : nil
+        nil
     }
 }
 

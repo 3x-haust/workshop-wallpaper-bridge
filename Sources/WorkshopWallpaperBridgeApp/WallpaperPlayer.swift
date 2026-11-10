@@ -5,17 +5,22 @@ import WorkshopWallpaperCore
 final class WallpaperPlayer {
     static let shared = WallpaperPlayer()
 
-    private var windows: [WallpaperWindow] = []
-    private var activeAsset: WallpaperAsset?
+    private lazy var sessions = DisplayPlaybackSessions { asset, display, mode in
+        guard let entrypoint = asset.entrypoint else { throw PlaybackError.missingEntrypoint }
+        return try WallpaperWindow(asset: asset, url: URL(filePath: entrypoint),
+                                   frame: display.frame, displayMode: mode)
+    }
+    private var windows: [any DisplayWallpaperWindow] { Array(sessions.windows.values) }
+    var errorHandler: ((String) -> Void)?
     private var autoPauseWhenCovered = true
-    private var displayMode: WallpaperDisplayMode = .fit
     private var interactionEnabled = false
     private var audioEnabled = false
     private var audioVolume: Double = 0.5
     private var visibilityTimer: Timer?
     private var workspaceObservers: [NSObjectProtocol] = []
-    private var isSuspended = false
-    private var lastScreenFrames: [CGRect] = []
+    private var coveredSince: [String: Date] = [:]
+    private var systemSleeping = false
+    private var screensSleeping = false
     private var pendingAutoSuspension: DispatchWorkItem?
     private let visibilityMonitor = DesktopVisibilityMonitor()
 
@@ -26,37 +31,28 @@ final class WallpaperPlayer {
         audioEnabled: Bool? = nil,
         audioVolume: Double? = nil
     ) throws {
-        closeWindows()
-        activeAsset = asset
+        try play(asset: asset, on: Set(WallpaperDisplay.connected().map(\.id)),
+                 autoPauseWhenCovered: autoPauseWhenCovered, displayMode: displayMode,
+                 audioEnabled: audioEnabled, audioVolume: audioVolume)
+    }
+
+    func play(
+        asset: WallpaperAsset, on displayIDs: Set<String>,
+        autoPauseWhenCovered: Bool, displayMode: WallpaperDisplayMode,
+        audioEnabled: Bool?, audioVolume: Double?
+    ) throws {
+        report(sessions.reconcile(WallpaperDisplay.connected()))
         self.autoPauseWhenCovered = autoPauseWhenCovered
-        self.displayMode = displayMode
         if let audioEnabled {
             self.audioEnabled = audioEnabled
         }
         if let audioVolume {
             self.audioVolume = audioVolume
         }
-        guard asset.supportStatus == .playable else {
-            throw PlaybackError.notPlayable(asset.supportStatus.rawValue)
-        }
-        guard let entrypoint = asset.entrypoint else {
-            throw PlaybackError.missingEntrypoint
-        }
-        let url = URL(filePath: entrypoint)
-        let screens = NSScreen.screens
-        let screenFrames = WallpaperScreenFrames.wallpaperFrames(for: screens)
-        windows = try screenFrames.map { frame in
-            try WallpaperWindow(
-                asset: asset,
-                url: url,
-                frame: frame,
-                displayMode: displayMode,
-                audioEnabled: self.audioEnabled,
-                audioVolume: self.audioVolume
-            )
-        }
-        lastScreenFrames = screenFrames
-        windows.forEach { $0.setInteractionEnabled(interactionEnabled); $0.show() }
+        sessions.interactionEnabled = interactionEnabled
+        sessions.audioEnabled = self.audioEnabled
+        sessions.audioVolume = self.audioVolume
+        try sessions.play(asset: asset, on: displayIDs, mode: displayMode)
         startLifecycleObservers()
         startVisibilityTimer()
         updateVisibilityState()
@@ -65,21 +61,25 @@ final class WallpaperPlayer {
     /// Updates mouse handling on current and future wallpaper windows.
     func setInteractionEnabled(_ enabled: Bool) {
         interactionEnabled = enabled
-        windows.forEach { $0.setInteractionEnabled(enabled) }
+        sessions.interactionEnabled = enabled
+        sessions.applySettings()
     }
 
     /// Applies mute/volume without recreating windows or restarting playback.
     func setAudioSettings(enabled: Bool, volume: Double) {
         audioEnabled = enabled
         audioVolume = volume
-        windows.forEach { $0.setAudio(enabled: enabled, volume: volume) }
+        sessions.audioEnabled = enabled
+        sessions.audioVolume = volume
+        sessions.applySettings()
     }
 
     func setDisplayMode(_ displayMode: WallpaperDisplayMode) {
-        self.displayMode = displayMode
-        windows.forEach {
-            $0.setDisplayMode(displayMode)
-        }
+        setDisplayMode(displayMode, on: Set(sessions.assignments.keys))
+    }
+
+    func setDisplayMode(_ mode: WallpaperDisplayMode, on displayIDs: Set<String>) {
+        sessions.setMode(mode, on: displayIDs)
     }
 
     func setAutoPauseWhenCovered(_ enabled: Bool) {
@@ -93,56 +93,41 @@ final class WallpaperPlayer {
 
     /// Called once a scene->video render finishes so the newly cached video
     /// swaps in for the still-live native scene fallback.
+    func isPlaying(assetID: String) -> Bool {
+        sessions.assignments.values.contains { $0.asset.id == assetID }
+    }
+
     func refreshIfNeeded(afterSceneVideoRenderFor assetId: String) {
-        guard let activeAsset, activeAsset.id == assetId, activeAsset.kind == .scene else {
-            return
-        }
-        try? reopen(asset: activeAsset)
+        report(sessions.refreshScene(assetID: assetId))
     }
 
     func restoreVisibleWindowsAfterAppWindowChange() {
         updateVisibilityState()
-        guard !isSuspended else {
+        guard !sessions.sleeping else {
             return
         }
         reassertWallpaperWindowOrder()
     }
 
     func stop() {
-        activeAsset = nil
-        lastScreenFrames = []
+        sessions.stop(on: Set(sessions.assignments.keys))
+        coveredSince = [:]
+        systemSleeping = false
+        screensSleeping = false
+        sessions.setSleeping(false)
         cancelPendingAutoSuspension()
         stopVisibilityTimer()
         stopLifecycleObservers()
-        closeWindows()
     }
 
-    private func closeWindows() {
-        windows.forEach { $0.close() }
-        windows = []
+    func stop(on displayIDs: Set<String>) {
+        sessions.stop(on: displayIDs)
+        for id in displayIDs { coveredSince.removeValue(forKey: id) }
+        if sessions.assignments.isEmpty { stop() }
     }
 
-    private func reopen(asset: WallpaperAsset) throws {
-        guard let entrypoint = asset.entrypoint else {
-            throw PlaybackError.missingEntrypoint
-        }
-        closeWindows()
-        let url = URL(filePath: entrypoint)
-        let screens = NSScreen.screens
-        let screenFrames = WallpaperScreenFrames.wallpaperFrames(for: screens)
-        windows = try screenFrames.map { frame in
-            try WallpaperWindow(
-                asset: asset,
-                url: url,
-                frame: frame,
-                displayMode: displayMode,
-                audioEnabled: audioEnabled,
-                audioVolume: audioVolume
-            )
-        }
-        lastScreenFrames = screenFrames
-        windows.forEach { $0.setInteractionEnabled(interactionEnabled); $0.show() }
-        updateVisibilityState()
+    private func report(_ errors: [String]) {
+        if !errors.isEmpty { errorHandler?(errors.joined(separator: "\n")) }
     }
 
     private func startVisibilityTimer() {
@@ -163,34 +148,36 @@ final class WallpaperPlayer {
     }
 
     private func updateVisibilityState() {
-        let shouldSuspend = autoPauseWhenCovered && !visibilityMonitor.isDesktopVisible()
-        if shouldSuspend {
-            scheduleAutoSuspension()
-        } else {
+        guard !sessions.sleeping else { return }
+        guard autoPauseWhenCovered else {
             cancelPendingAutoSuspension()
             setSuspended(false)
+            return
         }
+        let covered = visibilityMonitor.coveredDisplayIDs(sessions.displays)
+        let now = Date()
+        coveredSince = coveredSince.filter { covered.contains($0.key) }
+        for id in covered where coveredSince[id] == nil { coveredSince[id] = now }
+        sessions.setCovered(Set(coveredSince.compactMap { id, since in
+            now.timeIntervalSince(since) >= 1.5 ? id : nil
+        }))
+        if covered != sessions.coveredIDs { scheduleAutoSuspension() }
     }
 
     private func setSuspended(_ suspended: Bool) {
-        guard isSuspended != suspended else {
-            return
-        }
-        isSuspended = suspended
-        windows.forEach { $0.setSuspended(suspended) }
+        if !suspended { coveredSince = [:] }
+        sessions.setCovered(suspended ? Set(sessions.windows.keys) : [])
     }
 
     private func scheduleAutoSuspension() {
-        guard pendingAutoSuspension == nil, !isSuspended else {
+        guard pendingAutoSuspension == nil else {
             return
         }
         let workItem = DispatchWorkItem { [weak self] in
             Task { @MainActor in
-                guard let self, self.autoPauseWhenCovered, !self.visibilityMonitor.isDesktopVisible() else {
-                    return
-                }
+                guard let self else { return }
                 self.pendingAutoSuspension = nil
-                self.setSuspended(true)
+                self.updateVisibilityState()
             }
         }
         pendingAutoSuspension = workItem
@@ -209,10 +196,30 @@ final class WallpaperPlayer {
         let center = NSWorkspace.shared.notificationCenter
         workspaceObservers = [
             center.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
-                Task { @MainActor in self?.setSuspended(true) }
+                Task { @MainActor in
+                    self?.systemSleeping = true
+                    self?.cancelPendingAutoSuspension()
+                    self?.sessions.setSleeping(true)
+                }
             },
             center.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
-                Task { @MainActor in self?.reopenAfterWake() }
+                Task { @MainActor in
+                    self?.systemSleeping = false
+                    self?.reopenAfterWake()
+                }
+            },
+            center.addObserver(forName: NSWorkspace.screensDidSleepNotification, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in
+                    self?.screensSleeping = true
+                    self?.cancelPendingAutoSuspension()
+                    self?.sessions.setSleeping(true)
+                }
+            },
+            center.addObserver(forName: NSWorkspace.screensDidWakeNotification, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in
+                    self?.screensSleeping = false
+                    self?.reopenAfterWake()
+                }
             },
             center.addObserver(
                 forName: NSWorkspace.didActivateApplicationNotification,
@@ -248,29 +255,16 @@ final class WallpaperPlayer {
     }
 
     private func reopenAfterWake() {
-        guard let activeAsset else {
-            return
-        }
-        do {
-            try play(asset: activeAsset, autoPauseWhenCovered: autoPauseWhenCovered, displayMode: displayMode)
-        } catch {
-            closeWindows()
-        }
+        report(sessions.reconcile(WallpaperDisplay.connected()))
+        sessions.setSleeping(systemSleeping || screensSleeping)
+        updateVisibilityState()
+        reassertWallpaperWindowOrder()
     }
 
     private func reopenAfterScreenFrameChange() {
-        guard activeAsset != nil else {
-            return
-        }
-        let currentScreenFrames = WallpaperScreenFrames.wallpaperFrames(for: NSScreen.screens)
-        guard WallpaperScreenFrames.shouldReopenWindows(
-            previous: lastScreenFrames,
-            current: currentScreenFrames
-        ) else {
-            reassertWallpaperWindowOrder()
-            return
-        }
-        reopenAfterWake()
+        report(sessions.reconcile(WallpaperDisplay.connected()))
+        updateVisibilityState()
+        reassertWallpaperWindowOrder()
     }
 
     private func reassertWallpaperWindowOrder() {
@@ -295,35 +289,6 @@ final class WallpaperPlayer {
         cancelPendingAutoSuspension()
         setSuspended(false)
         updateVisibilityState()
-    }
-}
-
-enum WallpaperScreenFrames {
-    static func wallpaperFrames(for screens: [NSScreen]) -> [CGRect] {
-        screens.map { wallpaperFrame(screenFrame: $0.frame, visibleFrame: $0.visibleFrame) }
-    }
-
-    static func wallpaperFrame(screenFrame: CGRect, visibleFrame _: CGRect) -> CGRect {
-        screenFrame
-    }
-
-    static func shouldReopenWindows(previous: [CGRect], current: [CGRect]) -> Bool {
-        normalized(previous) != normalized(current)
-    }
-
-    private static func normalized(_ frames: [CGRect]) -> [CGRect] {
-        frames.sorted { lhs, rhs in
-            if lhs.minX != rhs.minX {
-                return lhs.minX < rhs.minX
-            }
-            if lhs.minY != rhs.minY {
-                return lhs.minY < rhs.minY
-            }
-            if lhs.width != rhs.width {
-                return lhs.width < rhs.width
-            }
-            return lhs.height < rhs.height
-        }
     }
 }
 
@@ -353,9 +318,10 @@ enum WallpaperInteraction {
 }
 
 @MainActor
-private final class WallpaperWindow {
+private final class WallpaperWindow: DisplayWallpaperWindow {
     private let window: DesktopWallpaperWindow
     private let content: NSView
+    private let isSceneVideo: Bool
 
     init(asset: WallpaperAsset,
         url: URL,
@@ -372,6 +338,7 @@ private final class WallpaperWindow {
             audioEnabled: audioEnabled,
             audioVolume: audioVolume
         )
+        isSceneVideo = asset.kind == .scene && content is VideoWallpaperView
         window = DesktopWallpaperWindow(
             contentRect: frame,
             styleMask: [.borderless],
@@ -388,6 +355,13 @@ private final class WallpaperWindow {
         window.isOpaque = false
         window.backgroundColor = .clear
         window.contentView = content
+    }
+
+    func updateDisplay(_ display: WallpaperDisplay) {
+        window.setFrame(display.frame, display: true)
+        content.frame = WallpaperContentLayout.contentFrame(for: display.frame)
+        content.needsLayout = true
+        content.layoutSubtreeIfNeeded()
     }
 
     func show() {
@@ -412,7 +386,7 @@ private final class WallpaperWindow {
     }
 
     func setDisplayMode(_ displayMode: WallpaperDisplayMode) {
-        (content as? DisplayModeUpdatableContent)?.setDisplayMode(displayMode)
+        (content as? DisplayModeUpdatableContent)?.setDisplayMode(isSceneVideo ? .fill : displayMode)
     }
 
     func setInteractionEnabled(_ enabled: Bool) {
@@ -577,13 +551,15 @@ enum SceneWallpaperContentFactory {
             }
             return try interimContent()
         }
+        let recordingCanvas = layout?.canvasSize ?? (try? SceneRenderPlanBuilder().canvasSize(url: url))
         scheduleSceneVideoRender(
             asset: asset,
             sceneURL: url,
             rendererURL: rendererURL,
             assetsDirectory: assetsDirectory,
             ffmpegPath: ffmpegPath,
-            frame: frame
+            frame: frame,
+            recordingCanvas: recordingCanvas.map { CGSize(width: $0.width, height: $0.height) }
         )
         lastDiagnostic = "scene video rendering in progress"
         statusHandler?("Rendering scene to video… 0%")
@@ -619,15 +595,11 @@ enum SceneWallpaperContentFactory {
             return
         }
         pendingRenderAssetIDs.insert(asset.id)
-        // Record at a clamped size derived from the display's logical
-        // (point) size, not its physical/backing pixel size: recording at
-        // full retina resolution produces multi-hundred-megabyte clips that
-        // take minutes to render for no visible benefit on a wallpaper
-        // viewed from normal desktop distance.
-        // Live overlays use authored canvas coordinates. Record their backdrop
-        // in that same aspect ratio; a desktop-sized recording can stretch the
-        // renderer output, moving baked geometry away from live text/images.
-        let recordSize = SceneVideoRecordSize.clampedRecordSize(forLogicalSize: recordingCanvas ?? frame.size)
+        // The shared video cache must not depend on which display started first.
+        // Native overlays and rendered scenes use the authored canvas ratio.
+        let recordSize = SceneVideoRecordSize.clampedRecordSize(
+            forLogicalSize: recordingCanvas ?? CGSize(width: 1920, height: 1080)
+        )
         let configuration = SceneVideoRenderConfiguration(
             assetId: cacheAssetID ?? asset.id,
             projectDirectory: URL(filePath: asset.projectDirectory).standardizedFileURL,
@@ -646,7 +618,8 @@ enum SceneWallpaperContentFactory {
                     progressHandler: { progress in
                         let percent = Int((progress * 100).rounded())
                         Task { @MainActor in
-                            guard pendingRenderAssetIDs.contains(assetId) else {
+                            guard pendingRenderAssetIDs.contains(assetId),
+                                  WallpaperPlayer.shared.isPlaying(assetID: assetId) else {
                                 return
                             }
                             statusHandler?("Rendering scene to video… \(percent)%")
@@ -655,7 +628,7 @@ enum SceneWallpaperContentFactory {
                 )
                 await MainActor.run {
                     pendingRenderAssetIDs.remove(assetId)
-                    statusHandler?("Playing")
+                    if WallpaperPlayer.shared.isPlaying(assetID: assetId) { statusHandler?("Playing") }
                     WallpaperPlayer.shared.refreshIfNeeded(afterSceneVideoRenderFor: assetId)
                     sceneVideoRenderCompletionHandler?(assetId)
                 }
@@ -663,7 +636,9 @@ enum SceneWallpaperContentFactory {
                 await MainActor.run {
                     pendingRenderAssetIDs.remove(assetId)
                     lastDiagnostic = "scene video render failed: \(error.localizedDescription)"
-                    statusHandler?("Scene video render failed: \(error.localizedDescription)")
+                    if WallpaperPlayer.shared.isPlaying(assetID: assetId) {
+                        statusHandler?("Scene video render failed: \(error.localizedDescription)")
+                    }
                 }
             }
         }
@@ -829,7 +804,7 @@ private final class ImageWallpaperView: NSView, DisplayModeUpdatableContent {
     }
 }
 
-private enum PlaybackError: Error, LocalizedError {
+enum PlaybackError: Error, LocalizedError {
     case missingEntrypoint
     case invalidImage
     case notPlayable(String)

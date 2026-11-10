@@ -5,22 +5,11 @@ import WorkshopWallpaperCore
 @testable import WorkshopWallpaperBridgeApp
 
 final class WallpaperPlayerSuspensionTests: XCTestCase {
-    func testNoopScreenParameterNotificationDoesNotNeedWindowReopen() {
-        // Given
-        let frames = [
-            CGRect(x: 0, y: 0, width: 1470, height: 956),
-            CGRect(x: -1440, y: 0, width: 1440, height: 900)
-        ]
-
-        // Then
-        XCTAssertFalse(WallpaperScreenFrames.shouldReopenWindows(previous: frames, current: frames))
-    }
-
     func testNoopScreenParameterNotificationReassertsDesktopWindowOrder() throws {
         // Given
         let source = try String(contentsOfFile: "Sources/WorkshopWallpaperBridgeApp/WallpaperPlayer.swift")
         let start = try XCTUnwrap(source.range(of: "private func reopenAfterScreenFrameChange()"))
-        let end = try XCTUnwrap(source.range(of: "enum WallpaperScreenFrames", range: start.lowerBound..<source.endIndex))
+        let end = try XCTUnwrap(source.range(of: "/// Borderless wallpapers", range: start.lowerBound..<source.endIndex))
         let body = String(source[start.lowerBound..<end.lowerBound])
 
         // Then
@@ -68,7 +57,7 @@ final class WallpaperPlayerSuspensionTests: XCTestCase {
         // Given
         let source = try String(contentsOfFile: "Sources/WorkshopWallpaperBridgeApp/WallpaperPlayer.swift")
         let start = try XCTUnwrap(source.range(of: "private func scheduleWallpaperWindowOrderReassertion()"))
-        let end = try XCTUnwrap(source.range(of: "enum WallpaperScreenFrames", range: start.lowerBound..<source.endIndex))
+        let end = try XCTUnwrap(source.range(of: "/// Borderless wallpapers", range: start.lowerBound..<source.endIndex))
         let body = String(source[start.lowerBound..<end.lowerBound])
 
         // Then
@@ -80,7 +69,7 @@ final class WallpaperPlayerSuspensionTests: XCTestCase {
         // Given
         let source = try String(contentsOfFile: "Sources/WorkshopWallpaperBridgeApp/WallpaperPlayer.swift")
         let start = try XCTUnwrap(source.range(of: "private func wakeWallpaperForAppTransition()"))
-        let end = try XCTUnwrap(source.range(of: "enum WallpaperScreenFrames", range: start.lowerBound..<source.endIndex))
+        let end = try XCTUnwrap(source.range(of: "/// Borderless wallpapers", range: start.lowerBound..<source.endIndex))
         let body = String(source[start.lowerBound..<end.lowerBound])
 
         // Then
@@ -96,57 +85,6 @@ final class WallpaperPlayerSuspensionTests: XCTestCase {
         // Then
         XCTAssertTrue(source.contains(".canJoinAllSpaces"))
         XCTAssertTrue(source.contains(".fullScreenAuxiliary"))
-    }
-
-    func testRealScreenFrameChangeStillReopensWallpaperWindows() {
-        // Given
-        let previous = [
-            CGRect(x: 0, y: 0, width: 1470, height: 956)
-        ]
-        let current = [
-            CGRect(x: 0, y: 0, width: 1728, height: 1117)
-        ]
-
-        // Then
-        XCTAssertTrue(WallpaperScreenFrames.shouldReopenWindows(previous: previous, current: current))
-    }
-
-    func testReorderedScreenFramesDoNotReopenWallpaperWindows() {
-        // Given
-        let previous = [
-            CGRect(x: 0, y: 0, width: 1470, height: 956),
-            CGRect(x: -1440, y: 0, width: 1440, height: 900)
-        ]
-        let current = Array(previous.reversed())
-
-        // Then
-        XCTAssertFalse(WallpaperScreenFrames.shouldReopenWindows(previous: previous, current: current))
-    }
-
-    func testScreenCountChangeReopensWallpaperWindows() {
-        // Given
-        let previous = [
-            CGRect(x: 0, y: 0, width: 1470, height: 956),
-            CGRect(x: -1440, y: 0, width: 1440, height: 900)
-        ]
-        let current = [
-            CGRect(x: 0, y: 0, width: 1470, height: 956)
-        ]
-
-        // Then
-        XCTAssertTrue(WallpaperScreenFrames.shouldReopenWindows(previous: previous, current: current))
-    }
-
-    func testWallpaperWindowFrameExtendsBehindMenuBarAndDockForContinuousBackdrop() {
-        // Given
-        let screenFrame = CGRect(x: 0, y: 0, width: 1470, height: 956)
-        let visibleFrame = CGRect(x: 0, y: 80, width: 1470, height: 846)
-
-        // When
-        let frame = WallpaperScreenFrames.wallpaperFrame(screenFrame: screenFrame, visibleFrame: visibleFrame)
-
-        // Then
-        XCTAssertEqual(frame, screenFrame)
     }
 
     func testWallpaperWindowDoesNotInjectSyntheticBackgroundColorIntoMenuBarBackdrop() throws {

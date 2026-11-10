@@ -74,7 +74,7 @@ final class MediaSceneWallpaperView: NSView, WallpaperContentLifecycle, Pausable
                 if let mask = makeMask(item.masks, size: item.model.size) { target.mask = mask }
             }
             target.name = item.model.name
-            target.contentsScale = NSScreen.main?.backingScaleFactor ?? 2
+            target.contentsScale = window?.backingScaleFactor ?? 1
             target.masksToBounds = true
             overlay.addSublayer(target)
             rendered[item.model.id] = target
@@ -126,11 +126,14 @@ final class MediaSceneWallpaperView: NSView, WallpaperContentLifecycle, Pausable
         }
     }
     override func layout() { super.layout(); layoutOverlay() }
+    override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); layoutOverlay() }
+    override func viewDidChangeBackingProperties() { super.viewDidChangeBackingProperties(); layoutOverlay() }
 
     private func layoutOverlay() {
         background.frame = bounds
         let frame = WallpaperContentLayout.scaledContentFrame(for: plan.canvas, in: bounds, displayMode: .fill)
         CATransaction.begin(); CATransaction.setDisableActions(true)
+        WallpaperLayerScale.update(layer, scale: window?.backingScaleFactor ?? 1)
         overlay.bounds = CGRect(origin: .zero, size: plan.canvas)
         overlay.position = CGPoint(x:frame.midX,y:frame.midY)
         overlay.setAffineTransform(CGAffineTransform(scaleX:frame.width/plan.canvas.width,y:frame.height/plan.canvas.height))

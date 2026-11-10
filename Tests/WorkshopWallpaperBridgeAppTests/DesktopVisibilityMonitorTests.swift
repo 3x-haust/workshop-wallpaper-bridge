@@ -3,6 +3,18 @@ import XCTest
 @testable import WorkshopWallpaperBridgeApp
 
 final class DesktopVisibilityMonitorTests: XCTestCase {
+    func testWindowOnAnotherMonitorDoesNotPauseThisMonitor() {
+        let windows = [DesktopVisibilityMonitor.WindowSnapshot(
+            ownerName: "Code", processId: 100, layer: 0, alpha: 1,
+            bounds: CGRect(x: 1600, y: 100, width: 900, height: 700)
+        )]
+
+        XCTAssertTrue(DesktopVisibilityMonitor.isDesktopVisible(
+            windows: windows, currentProcessId: 200,
+            screenFrames: [CGRect(x: 0, y: 0, width: 1470, height: 956)]
+        ), "A window on the right display must not pause the unobstructed left display.")
+    }
+
     func testFinderDesktopHostDoesNotPausePlayback() {
         // Given
         let windows = [

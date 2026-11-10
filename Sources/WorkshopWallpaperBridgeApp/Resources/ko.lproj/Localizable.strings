@@ -95,5 +95,12 @@
 "playback.interaction.on" = "마우스·키보드 조작이 켜져 있습니다. 바탕화면 아이콘을 사용하려면 메뉴바에서 조작을 끄세요.";
 "playback.interaction.off" = "조작이 꺼져 있습니다. 클릭하거나 드래그하려면 ‘재생 및 조작’을 누르세요.";
 "web.openExternal" = "%@ 브라우저에서 열기";
+"displays.target" = "화면";
+"displays.all" = "연결된 모든 화면";
+"displays.primary" = "주 화면";
+"displays.disconnected" = "연결 해제된 화면";
+"displays.identify" = "화면 식별";
+"displays.stop" = "선택 화면 정지";
+"displays.mixed" = "서로 다름";
 "settings.media.toggle" = "음악 정보 표시";
 "settings.media.help" = "Music·Spotify의 곡명, 앨범 표지와 재생 시간을 표시합니다. macOS 자동화 권한이 필요하며, Spotify 표지는 이미지 서비스에서 불러옵니다.";

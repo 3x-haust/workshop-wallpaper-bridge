@@ -287,6 +287,7 @@ final class SceneWallpaperView: NSView,
         self.displayMode = displayMode
         self.sceneTickSource = sceneTickSource
         super.init(frame: frame)
+        self.sceneTickSource.attach(to: self)
         self.sceneTickSource.onTick = { [weak self] tick in
             self?.refreshSceneTickDrivenLayers(tick)
         }
@@ -312,8 +313,20 @@ final class SceneWallpaperView: NSView,
         layoutScene()
     }
 
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        layoutScene()
+        sceneTickSource.stop()
+        if window != nil { startSceneTickSourceIfNeeded() }
+    }
+
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        layoutScene()
+    }
+
     func setPlaybackSuspended(_ suspended: Bool) {
-        guard suspended != isSuspended else {
+        guard !isClosed, suspended != isSuspended else {
             return
         }
         isSuspended = suspended
@@ -382,7 +395,7 @@ final class SceneWallpaperView: NSView,
     private func configurePreviewLayer(previewURL: URL?) {
         previewLayer.backgroundColor = NSColor.black.cgColor
         previewLayer.contentsGravity = WallpaperContentLayout.imageContentsGravity(for: displayMode)
-        previewLayer.contentsScale = NSScreen.main?.backingScaleFactor ?? 2
+        previewLayer.contentsScale = window?.backingScaleFactor ?? 1
         previewLayer.minificationFilter = .linear
         previewLayer.magnificationFilter = .linear
         guard let previewURL,
@@ -478,7 +491,7 @@ final class SceneWallpaperView: NSView,
                 textLayer.alignmentMode = Self.textAlignmentMode(for: text.horizontalAlignment)
                 textLayer.isWrapped = true
                 textLayer.truncationMode = .none
-                textLayer.contentsScale = NSScreen.main?.backingScaleFactor ?? 2
+                textLayer.contentsScale = window?.backingScaleFactor ?? 1
                 if (text.dynamicText != nil || text.script != nil) && (scriptSession == nil || text.script == nil) {
                     dynamicTextLayers.append(DynamicTextLayer(
                         layer: textLayer,
@@ -498,7 +511,7 @@ final class SceneWallpaperView: NSView,
                 let imageLayer = CALayer()
                 imageLayer.contents = image
                 imageLayer.contentsGravity = .resize
-                imageLayer.contentsScale = NSScreen.main?.backingScaleFactor ?? 2
+                imageLayer.contentsScale = window?.backingScaleFactor ?? 1
                 imageLayer.minificationFilter = .linear
                 imageLayer.magnificationFilter = .linear
                 var puppetRenderer: ScenePuppetMeshRenderer?
@@ -759,7 +772,7 @@ final class SceneWallpaperView: NSView,
         let effectLayer = CALayer()
         effectLayer.contents = image
         effectLayer.contentsGravity = .resize
-        effectLayer.contentsScale = NSScreen.main?.backingScaleFactor ?? 2
+        effectLayer.contentsScale = window?.backingScaleFactor ?? 1
         effectLayer.minificationFilter = .linear
         effectLayer.magnificationFilter = .linear
         registerShaderEffects(for: effectLayer, image: image, effects: effects)
@@ -1867,7 +1880,7 @@ final class SceneWallpaperView: NSView,
         layer?.frame = bounds
         previewLayer.frame = bounds
         previewLayer.contentsGravity = WallpaperContentLayout.imageContentsGravity(for: displayMode)
-        previewLayer.contentsScale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
+        WallpaperLayerScale.update(layer, scale: window?.backingScaleFactor ?? 1)
         let sceneFrame = WallpaperContentLayout.scaledContentFrame(
             for: CGSize(width: plan.canvasSize.width, height: plan.canvasSize.height),
             in: bounds,
@@ -1881,9 +1894,6 @@ final class SceneWallpaperView: NSView,
             height: plan.canvasSize.height
         )
         sceneLayer.setAffineTransform(transform(for: sceneFrame))
-        contentLayers.forEach {
-            $0.contentsScale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
-        }
         CATransaction.commit()
     }
 
