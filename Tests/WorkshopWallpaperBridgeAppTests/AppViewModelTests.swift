@@ -725,7 +725,7 @@ final class AppViewModelTests: XCTestCase {
         // Then
         XCTAssertEqual(english, "My Wallpapers")
         XCTAssertEqual(korean, "내 배경화면")
-        XCTAssertEqual(chinese, "资料库")
+        XCTAssertEqual(chinese, "我的壁纸")
         XCTAssertNotEqual(english, korean)
         XCTAssertNotEqual(english, chinese)
 

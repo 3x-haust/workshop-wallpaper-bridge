@@ -100,11 +100,11 @@ final class LocalizationTests: XCTestCase {
 
     @MainActor
     func testModuleResourceBundleResolvesSimplifiedChineseTable() {
-        XCTAssertEqual(Localization.string("tab.library", language: .simplifiedChinese), "资料库")
+        XCTAssertEqual(Localization.string("tab.library", language: .simplifiedChinese), "我的壁纸")
         XCTAssertEqual(Localization.string("menu.openSettings", language: .simplifiedChinese), "打开设置")
         XCTAssertEqual(Localization.string("menu.quit", language: .simplifiedChinese), "退出")
         XCTAssertEqual(Localization.string("menu.stopPlayback", language: .simplifiedChinese), "停止播放")
-        XCTAssertNotEqual(Localization.string("tab.library", language: .english), "资料库")
+        XCTAssertNotEqual(Localization.string("tab.library", language: .english), "我的壁纸")
     }
 
     @MainActor

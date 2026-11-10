@@ -157,7 +157,7 @@
 "workshop.support.unsupported" = "지원하지 않음";
 "workshop.convert.help" = "내 배경화면에서 보관된 프로젝트를 변환한 뒤 재생하세요.";
 "workshop.compatibility.help" = "다운로드 완료가 재생 성공을 보장하지는 않아요. 장면은 Wallpaper Engine과 완전히 호환되지 않으며, 실시간 재생·렌더링 영상·대체 미리보기는 서로 달라요. 지원 판정과 문제 목록을 확인하세요. 실제 재생 상태는 창 아래 상태 표시줄에 나와요.";
-"workshop.cancel.help" = "Steam 작업을 취소하면 연결이 끊겨요. 저장된 인증으로 다시 연결할 수 있어요.";
+"workshop.cancel.help" = "Steam 작업을 취소하면 연결이 끊겨요. 로그인된 상태였고 저장된 인증이 있으면 자동으로 다시 연결해요. 로그인 자체를 취소하면 다시 연결하지 않아요.";
 
 /* Workshop operation and authentication status */
 "workshop.ready" = "Steam 연결 대기";
@@ -184,6 +184,7 @@
 "workshop.loggedOut" = "로그아웃됨";
 "workshop.disconnected" = "Steam 연결이 끊겼어요. 저장된 인증이 있으면 다시 연결하세요.";
 "workshop.error.helper" = "Steam 보조 프로그램을 시작하지 못했어요. 앱에 보조 프로그램이 포함되어 있는지 확인한 뒤 다시 연결하세요.";
+"workshop.error.request" = "요청을 완료하지 못했어요. 다시 시도해 주세요.";
 "workshop.error.connection" = "Steam 연결에 실패했어요. 저장된 인증으로 다시 연결한 뒤 재시도하세요.";
 "workshop.error.protocol" = "보조 프로그램에서 잘못된 응답을 받았어요. 다시 연결한 뒤 재시도하세요.";
 "workshop.error.authentication" = "Steam 인증에 실패했거나 인증이 만료됐어요. 다시 로그인하세요.";

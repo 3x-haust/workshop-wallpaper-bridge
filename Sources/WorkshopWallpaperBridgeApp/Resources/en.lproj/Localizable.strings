@@ -157,7 +157,7 @@
 "workshop.support.unsupported" = "Unsupported";
 "workshop.convert.help" = "Open My Wallpapers to convert the saved project before playback.";
 "workshop.compatibility.help" = "A completed download does not guarantee playback. Scenes are not fully compatible with Wallpaper Engine: live playback, rendered video and preview fallback are different outcomes. Check the support assessment and issues; the bottom status bar reports the player's actual state.";
-"workshop.cancel.help" = "Cancelling a Steam operation disconnects Steam. You can reconnect with saved authentication.";
+"workshop.cancel.help" = "Cancelling a Steam operation disconnects Steam. If already signed in with saved authentication, the app reconnects automatically. Cancelling sign-in does not reconnect.";
 
 /* Workshop operation and authentication status */
 "workshop.ready" = "Waiting for Steam connection";
@@ -184,6 +184,7 @@
 "workshop.loggedOut" = "Logged out";
 "workshop.disconnected" = "Steam disconnected. Reconnect with saved authentication if available.";
 "workshop.error.helper" = "The Steam helper could not start. Check that the app includes the helper, then reconnect.";
+"workshop.error.request" = "The request could not be completed. Please try again.";
 "workshop.error.connection" = "The Steam connection failed. Reconnect with saved authentication, then retry.";
 "workshop.error.protocol" = "The helper returned an invalid response. Reconnect and retry.";
 "workshop.error.authentication" = "Steam authentication failed or expired. Sign in again.";
