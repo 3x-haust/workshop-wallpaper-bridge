@@ -109,7 +109,12 @@ bundle_scene_renderer_if_available() {
       exit 1
     fi
   else
-    printf '%s\n' "warning: no external GPL scene renderer bundled; set SCENE_RENDERER_BINARY or place one at $SCENE_RENDERER_CONVENTIONAL_PATH." >&2
+    bash "$ROOT/Scripts/build-scene-renderer.sh"
+    source_path="$SCENE_RENDERER_CONVENTIONAL_PATH"
+    if [ ! -f "$source_path" ] || [ ! -x "$source_path" ]; then
+      printf '%s\n' "scene renderer build did not produce an executable: $source_path" >&2
+      exit 1
+    fi
   fi
 
   mkdir -p "$RENDERER_NOTICE_DIR"
