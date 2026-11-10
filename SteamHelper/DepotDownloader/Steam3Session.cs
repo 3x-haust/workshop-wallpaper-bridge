@@ -346,7 +346,7 @@ namespace DepotDownloader
 
         public async Task<PublishedFileDetails> GetPublishedFileDetails(uint appId, PublishedFileID pubFile)
         {
-            var pubFileRequest = new CPublishedFile_GetDetails_Request { appid = appId };
+            var pubFileRequest = new CPublishedFile_GetDetails_Request { appid = appId, includetags = true };
             pubFileRequest.publishedfileids.Add(pubFile);
 
             var details = await steamPublishedFile.GetDetails(pubFileRequest);
@@ -362,14 +362,8 @@ namespace DepotDownloader
 
         internal const uint SearchPageSize = 30;
 
-        public async Task<CPublishedFile_QueryFiles_Response> Search(string query, uint page)
+        public async Task<CPublishedFile_QueryFiles_Response> Search(CPublishedFile_QueryFiles_Request request)
         {
-            var request = new CPublishedFile_QueryFiles_Request
-            {
-                appid = 431960, page = page, numperpage = SearchPageSize,
-                search_text = query, return_previews = true, return_short_description = true,
-                query_type = (uint)SteamKit2.EPublishedFileQueryType.RankedByTextSearch,
-            };
             var response = await steamPublishedFile.QueryFiles(request);
             if (response.Result != EResult.OK) throw new HelperFailure("unavailable");
             return response.Body;

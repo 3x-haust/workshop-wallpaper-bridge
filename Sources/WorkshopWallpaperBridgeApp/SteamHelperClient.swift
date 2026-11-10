@@ -8,6 +8,8 @@ struct WorkshopItem: Codable, Equatable, Identifiable, Sendable {
     let previewURL: String?
     let kind: String?
     let size: UInt64?
+    var creatorID: String?
+    var tags: [String]?
 }
 
 struct SteamCommand: Encodable, Sendable {
@@ -18,6 +20,9 @@ struct SteamCommand: Encodable, Sendable {
     var code: String?
     var query: String?
     var page: Int?
+    var sort: String?
+    var kind: String?
+    var genre: String?
     var itemID: String?
     var directory: String?
 }

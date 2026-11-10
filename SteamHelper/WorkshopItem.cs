@@ -3,7 +3,7 @@ using SteamKit2.Internal;
 
 namespace WorkshopBridge;
 
-internal sealed record WorkshopItem(string id, string title, string description, string previewURL, string kind, ulong? size)
+internal sealed record WorkshopItem(string id, string title, string description, string previewURL, string kind, ulong? size, string creatorID, string[] tags)
 {
     public static void Validate(PublishedFileDetails details)
     {
@@ -17,6 +17,7 @@ internal sealed record WorkshopItem(string id, string title, string description,
         Validate(details);
         var kind = details.tags.Select(t => t.tag.ToLowerInvariant()).FirstOrDefault(t => t is "scene" or "video" or "web" or "application");
         var preview = Uri.TryCreate(details.preview_url, UriKind.Absolute, out var uri) && uri.Scheme == "https" ? details.preview_url : null;
-        return new(details.publishedfileid.ToString(), details.title ?? "", details.file_description ?? details.short_description ?? "", preview, kind, details.file_size);
+        var creatorID = details.ShouldSerializecreator() && details.creator != 0 ? details.creator.ToString() : null;
+        return new(details.publishedfileid.ToString(), details.title ?? "", details.file_description ?? details.short_description ?? "", preview, kind, details.file_size, creatorID, details.tags.Select(tag => tag.tag).ToArray());
     }
 }

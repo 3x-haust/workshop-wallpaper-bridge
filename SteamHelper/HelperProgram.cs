@@ -62,6 +62,9 @@ internal static class HelperProgram
         return value.GetString();
     }
 
+    private static string OptionalText(JsonElement request, string key, string fallback) =>
+        request.TryGetProperty(key, out _) ? Text(request, key) : fallback;
+
     private static async Task Run(string id, string command, JsonElement request)
     {
         try
@@ -89,11 +92,10 @@ internal static class HelperProgram
                     break;
                 case "search":
                     RequireLogin();
-                    var query = Text(request, "query");
-                    if (query.Length > 512 || !request.TryGetProperty("page", out var pageValue) || !pageValue.TryGetInt32(out var page) || page < 1) throw new HelperFailure("invalidRequest");
-                    var results = await ContentDownloader.Session.Search(query, (uint)page);
+                    var searchRequest = BuildSearchRequest(request);
+                    var results = await ContentDownloader.Session.Search(searchRequest);
                     RequireLogin();
-                    EmitSearchResults(id, results, page);
+                    EmitSearchResults(id, results, (int)searchRequest.page);
                     break;
                 case "details":
                 case "download":
@@ -129,6 +131,41 @@ internal static class HelperProgram
         catch (HelperFailure error) { Error(id, error.Code); }
         catch (ContentDownloaderException) { Error(id, "downloadFailed"); }
         catch { Error(id, "requestFailed"); }
+    }
+
+    internal static SteamKit2.Internal.CPublishedFile_QueryFiles_Request BuildSearchRequest(JsonElement request)
+    {
+        var query = Text(request, "query");
+        if (query.Length > 512 || !request.TryGetProperty("page", out var pageValue) || pageValue.ValueKind != JsonValueKind.Number || !pageValue.TryGetInt32(out var page) || page < 1) throw new HelperFailure("invalidRequest");
+        var queryType = OptionalText(request, "sort", "popular") switch
+        {
+            "popular" => EPublishedFileQueryType.RankedByTrend,
+            "recent" => EPublishedFileQueryType.RankedByPublicationDate,
+            "rated" => EPublishedFileQueryType.RankedByVote,
+            _ => throw new HelperFailure("invalidRequest"),
+        };
+        var kindTag = OptionalText(request, "kind", "all") switch
+        {
+            "all" => null,
+            "video" => "Video",
+            "web" => "Web",
+            "scene" => "Scene",
+            "application" => "Application",
+            _ => throw new HelperFailure("invalidRequest"),
+        };
+        var genre = OptionalText(request, "genre", "");
+        if (genre is not ("" or "Abstract" or "Animal" or "Anime" or "Fantasy" or "Game" or "Landscape" or "Music" or "Nature" or "Sci-Fi" or "Technology"))
+            throw new HelperFailure("invalidRequest");
+        var search = new SteamKit2.Internal.CPublishedFile_QueryFiles_Request
+        {
+            appid = 431960, page = (uint)page, numperpage = Steam3Session.SearchPageSize,
+            search_text = query, return_previews = true, return_short_description = true,
+            query_type = (uint)queryType, match_all_tags = true, return_tags = true,
+        };
+        if (queryType == EPublishedFileQueryType.RankedByTrend) search.days = 7;
+        if (kindTag != null) search.requiredtags.Add(kindTag);
+        if (genre.Length != 0) search.requiredtags.Add(genre);
+        return search;
     }
 
     internal static void EmitSearchResults(string id, SteamKit2.Internal.CPublishedFile_QueryFiles_Response results, int page)

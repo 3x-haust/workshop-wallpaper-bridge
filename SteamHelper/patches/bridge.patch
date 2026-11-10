@@ -581,7 +581,10 @@
 +            }
 +
 +            await completion.Task;
-@@ -346,3 +359,18 @@
+@@ -336 +349 @@
+-            var pubFileRequest = new CPublishedFile_GetDetails_Request { appid = appId };
++            var pubFileRequest = new CPublishedFile_GetDetails_Request { appid = appId, includetags = true };
+@@ -346,3 +359,12 @@
 -            throw new Exception($"EResult {(int)details.Result} ({details.Result}) while retrieving file details for pubfile {pubFile}.");
 -        }
 -
@@ -591,19 +594,13 @@
 +
 +        internal const uint SearchPageSize = 30;
 +
-+        public async Task<CPublishedFile_QueryFiles_Response> Search(string query, uint page)
++        public async Task<CPublishedFile_QueryFiles_Response> Search(CPublishedFile_QueryFiles_Request request)
 +        {
-+            var request = new CPublishedFile_QueryFiles_Request
-+            {
-+                appid = 431960, page = page, numperpage = SearchPageSize,
-+                search_text = query, return_previews = true, return_short_description = true,
-+                query_type = (uint)SteamKit2.EPublishedFileQueryType.RankedByTextSearch,
-+            };
 +            var response = await steamPublishedFile.QueryFiles(request);
 +            if (response.Result != EResult.OK) throw new HelperFailure("unavailable");
 +            return response.Body;
 +        }
-@@ -366,7 +393,0 @@
+@@ -366,7 +387,0 @@
 -        private void ResetConnectionFlags()
 -        {
 -            bExpectingDisconnectRemote = false;
@@ -611,27 +608,27 @@
 -            bIsConnectionRecovery = false;
 -        }
 -
-@@ -376,2 +396,0 @@
+@@ -376,2 +390,0 @@
 -            bConnecting = true;
 -            connectionBackoff = 0;
-@@ -379,2 +397,0 @@
+@@ -379,2 +391,0 @@
 -
 -            ResetConnectionFlags();
-@@ -391,5 +408 @@
+@@ -391,5 +402 @@
 -            if (sendLogOff)
 -            {
 -                steamUser.LogOff();
 -            }
 -
 +            IsLoggedOn = false;
-@@ -397,2 +410,2 @@
+@@ -397,2 +404,2 @@
 -            bConnecting = false;
 -            bIsConnectionRecovery = false;
 +            authentication.Cancel();
 +            BridgeContext.CancelGuard();
-@@ -399,0 +413 @@
+@@ -399,0 +407 @@
 +            if (sendLogOff) steamUser.LogOff();
-@@ -401,14 +414,0 @@
+@@ -401,14 +408,0 @@
 -
 -            Ansi.Progress(Ansi.ProgressState.Hidden);
 -
@@ -646,7 +643,7 @@
 -        {
 -            bIsConnectionRecovery = true;
 -            steamClient.Disconnect();
-@@ -419,22 +419,21 @@
+@@ -419,22 +413,21 @@
 -            Console.WriteLine(" Done!");
 -            bConnecting = false;
 -
@@ -690,7 +687,7 @@
 +                if (ContentDownloader.Config.UseQrCode)
 +                {
 +                    var qr = await steamClient.Authentication.BeginAuthSessionViaQRAsync(new AuthSessionDetails
-@@ -442,65 +441,11 @@
+@@ -442,65 +435,11 @@
 -                        try
 -                        {
 -                            _ = AccountSettingsStore.Instance.GuardData.TryGetValue(logonDetails.Username, out var guarddata);
@@ -767,7 +764,7 @@
 +                else
 +                {
 +                    AccountSettingsStore.Instance.GuardData.TryGetValue(logonDetails.Username, out var guardData);
-@@ -509,7 +454 @@
+@@ -509,7 +448 @@
 -                        var result = await authSession.PollingWaitForResultAsync();
 -
 -                        logonDetails.Username = result.AccountName;
@@ -776,7 +773,7 @@
 -
 -                        if (result.NewGuardData != null)
 +                        authSession = await steamClient.Authentication.BeginAuthSessionViaCredentialsAsync(new AuthSessionDetails
-@@ -517,14 +456,7 @@
+@@ -517,14 +450,7 @@
 -                            AccountSettingsStore.Instance.GuardData[result.AccountName] = result.NewGuardData;
 -
 -                            if (ContentDownloader.Config.UseQrCode)
@@ -798,7 +795,7 @@
 +                            GuardData = guardData,
 +                            Authenticator = new ConsoleAuthenticator(authentication.Token),
 +                        });
-@@ -532,16 +464,21 @@
+@@ -532,16 +458,21 @@
 -                    catch (TaskCanceledException)
 -                    {
 -                        return;
@@ -836,7 +833,7 @@
 +
 +            authentication.Token.ThrowIfCancellationRequested();
 +            if (!bAborted) steamUser.LogOn(logonDetails);
-@@ -552,15 +489,16 @@
+@@ -552,15 +483,16 @@
 -            bDidDisconnect = true;
 -
 -            DebugLog.WriteLine(nameof(Steam3Session), $"Disconnected: bIsConnectionRecovery = {bIsConnectionRecovery}, UserInitiated = {disconnected.UserInitiated}, bExpectingDisconnectRemote = {bExpectingDisconnectRemote}");
@@ -868,7 +865,7 @@
 +            if (loggedOn.Result != EResult.OK)
 +            {
 +                BridgeContext.AuthenticationError = new HelperFailure("authenticationFailed");
-@@ -568,102 +506,2 @@
+@@ -568,102 +500,2 @@
 -            }
 -            else if (!bAborted)
 -            {
@@ -973,7 +970,7 @@
 -            Console.WriteLine(" Done!");
 +                return;
 +            }
-@@ -703,14 +541,4 @@
+@@ -703,14 +535,4 @@
 -        private static void DisplayQrCode(string challengeUrl)
 -        {
 -            // Encode the link as a QR code

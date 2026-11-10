@@ -42,6 +42,29 @@ final class SteamHelperClientTests: XCTestCase {
         await client.stop()
     }
 
+    func testSearchFiltersEncodeAsOptionalServerFields() throws {
+        let command = SteamCommand(id: "search", command: "search", query: "sky", page: 1,
+                                   sort: "rated", kind: "video", genre: "Sci-Fi")
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(command)) as? [String: Any])
+        XCTAssertEqual(json["sort"] as? String, "rated")
+        XCTAssertEqual(json["kind"] as? String, "video")
+        XCTAssertEqual(json["genre"] as? String, "Sci-Fi")
+        let legacy = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(SteamCommand(id: "old", command: "search"))) as? [String: Any])
+        XCTAssertNil(legacy["sort"])
+        XCTAssertNil(legacy["kind"])
+        XCTAssertNil(legacy["genre"])
+    }
+
+    func testCreatorAndTagsDecodeWithoutBreakingOlderMetadata() throws {
+        let current = Data(#"{"id":"1","title":"Fixture","description":"","creatorID":"76561198000000000","tags":["Nature","Video"]}"#.utf8)
+        let item = try JSONDecoder().decode(WorkshopItem.self, from: current)
+        XCTAssertEqual(item.creatorID, "76561198000000000")
+        XCTAssertEqual(item.tags, ["Nature", "Video"])
+        let legacy = try JSONDecoder().decode(WorkshopItem.self, from: Data(#"{"id":"1","title":"Fixture","description":""}"#.utf8))
+        XCTAssertNil(legacy.creatorID)
+        XCTAssertNil(legacy.tags)
+    }
+
     func testMissingHelperIsARecoverableErrorNotAClaimedLogin() throws {
         let root = try temporaryDirectory()
         let client = SteamHelperClient(executable: root.appending(path: "absent"), authenticationDirectory: root)

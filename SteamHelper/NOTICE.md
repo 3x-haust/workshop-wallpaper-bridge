@@ -82,12 +82,20 @@ Launch: `wwb-steam-helper --data-directory <absolute app auth directory>`.
 Credentials must never be provided through arguments or environment variables.
 Input: one JSON object per line with UUID `id` and `command`. Commands are
 `loginQR`, `loginPassword` (`username`, `password`), `guard` (`code`, same login
-ID), `resume`, `search` (`query`, one-based `page`), `details` (`itemID`) and
-`download` (`itemID`, an existing empty `directory`). One request at a time;
+ID), `resume`, `search` (`query`, one-based `page`, optional `sort`, `kind` and
+`genre`), `details` (`itemID`) and `download` (`itemID`, an existing empty `directory`). One request at a time;
 guard is the only additional request during authentication. Logout/cancel means
 terminating the helper and clearing app state. Logout retains saved credentials;
 only the separate delete-saved-authentication action removes `credentials.json`
 and `credentials.json.tmp`.
+
+Search sorts are `popular` (the default, the past seven days), `recent` and
+`rated`. Kinds are `all` (the default), `video`, `web`, `scene` and `application`.
+Genres are empty (all), `Abstract`, `Animal`, `Anime`, `Fantasy`, `Game`,
+`Landscape`, `Music`, `Nature`, `Sci-Fi` and `Technology`. Kind and genre tags
+are combined with AND on the server; invalid option values fail the request.
+Item metadata includes the available `creatorID` and `tags` without inventing
+creator names or declaring an item playable.
 
 Output: one JSON object per line, repeating `id`; `type` is `qr`, `authPrompt`,
 `authenticated`, `items`, `detail`, `progress`, `completed`, `disconnected`, or

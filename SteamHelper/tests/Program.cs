@@ -15,6 +15,11 @@ internal static class Tests
 
     public static async Task<int> Main(string[] args)
     {
+        if (args.SequenceEqual(new[] { "--explorer" }))
+        {
+            try { ExplorerTests.Run(Report); return 0; }
+            catch (Exception error) { Report.WriteLine("FAIL " + error); return 1; }
+        }
         if (args.SequenceEqual(new[] { "--cdn-auth" }))
         {
             var report = Report;
@@ -43,6 +48,7 @@ internal static class Tests
             await Test("private credential JSON is atomic, reloadable and contains only allowed fields", Credentials);
             await Test("credential symlinks and failed saves produce typed storage errors", CredentialFailure);
             await Test("search events preserve the server page size after filtering and on short pages", SearchPagination);
+            await Test("explorer requests and metadata preserve the Workshop contract", () => { ExplorerTests.Run(Report); return Task.CompletedTask; });
             await Test("overlapping authentication callbacks cannot poll twice or restart after disconnect", Authentication);
             await Test("guard IPC carries only fixed prompts and handles cancellation", Guard);
             await Test("CDN authentication completes every caller on success, rejection and cancellation", () => CDNAuthTests.Run(Report));
