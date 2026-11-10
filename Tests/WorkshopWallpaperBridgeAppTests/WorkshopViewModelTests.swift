@@ -7,6 +7,83 @@ import WorkshopWallpaperCore
 
 @MainActor
 final class WorkshopViewModelTests: XCTestCase {
+    func testSavedAuthenticationReconnectsWhenModelStarts() throws {
+        let fixture = try makeFixture()
+        let credential = fixture.root.appending(path: "Steam/credentials.json")
+        try FileManager.default.createDirectory(at: credential.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("synthetic-credentials".utf8).write(to: credential)
+        let client = FakeSteamClient()
+
+        let model = WorkshopViewModel(library: fixture.library, root: fixture.root, client: client, userDefaults: fixture.defaults)
+
+        XCTAssertEqual(client.commands.map(\.command), ["resume"])
+        XCTAssertEqual(model.operation, "login")
+        XCTAssertNil(model.account, "A saved file is not proof that Steam accepted the session")
+    }
+
+    func testExplicitLogoutStaysLoggedOutAcrossLaunchesUntilReconnect() async throws {
+        let fixture = try makeFixture()
+        let credential = fixture.root.appending(path: "Steam/credentials.json")
+        try FileManager.default.createDirectory(at: credential.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("synthetic-credentials".utf8).write(to: credential)
+        authenticate(fixture)
+        fixture.model.logout()
+        await waitUntil { !fixture.model.isBusy }
+        let client = FakeSteamClient()
+        let model = WorkshopViewModel(library: fixture.library, root: fixture.root, client: client, userDefaults: fixture.defaults)
+        XCTAssertTrue(model.hasSavedSession)
+        XCTAssertTrue(client.commands.isEmpty)
+
+        model.resume()
+        XCTAssertEqual(client.commands.map(\.command), ["resume"])
+        client.emit(SteamEvent(id: client.commands[0].id, type: "authenticated", account: "test-account"))
+        let relaunchedClient = FakeSteamClient()
+        let relaunched = WorkshopViewModel(library: fixture.library, root: fixture.root, client: relaunchedClient, userDefaults: fixture.defaults)
+        XCTAssertEqual(relaunchedClient.commands.map(\.command), ["resume"])
+        XCTAssertEqual(relaunched.operation, "login")
+    }
+
+    func testExpiredSavedAuthenticationStopsWithoutDeletingOrRetrying() async throws {
+        let fixture = try makeFixture()
+        let credential = fixture.root.appending(path: "Steam/credentials.json")
+        try FileManager.default.createDirectory(at: credential.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("synthetic-credentials".utf8).write(to: credential)
+        let client = FakeSteamClient()
+        let model = WorkshopViewModel(library: fixture.library, root: fixture.root, client: client, userDefaults: fixture.defaults)
+        let command = try XCTUnwrap(client.commands.first)
+
+        client.emit(SteamEvent(id: command.id, type: "error", code: "expired"))
+        await waitUntil { !model.isBusy }
+
+        XCTAssertNil(model.account)
+        XCTAssertEqual(model.statusKey, "workshop.error.authentication")
+        XCTAssertEqual(client.commands.count, 1)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: credential.path))
+    }
+
+    func testEveryoneFilterIsDefaultAndSettingsPersistAcrossLaunchesAndPages() throws {
+        let fixture = try makeFixture()
+        authenticate(fixture)
+        fixture.model.search()
+        var command = try XCTUnwrap(fixture.client.commands.last)
+        XCTAssertEqual(command.tagGroups, [["Everyone"]])
+        XCTAssertEqual(command.excludedTags, ["Mature", "Questionable"])
+        fixture.client.emit(SteamEvent(id: command.id, type: "items", items: [], total: 0, page: 1, pageSize: 30))
+        var filters = WorkshopSearchFilters()
+        filters.includedTags.formUnion(["Scene", "Video", "Nature", "Landscape", "1920 x 1080", "Approved"])
+        filters.excludedTags.insert("Anime")
+        fixture.model.updateFilters(filters)
+        command = try XCTUnwrap(fixture.client.commands.last)
+        XCTAssertEqual(command.page, 1)
+        XCTAssertEqual(command.tagGroups, filters.tagGroups)
+        XCTAssertEqual(command.excludedTags, filters.excludedTags.sorted())
+        fixture.client.emit(SteamEvent(id: command.id, type: "items", items: [], total: 0, page: 1, pageSize: 30))
+        fixture.model.search(page: 2)
+        XCTAssertEqual(fixture.client.commands.last?.tagGroups, filters.tagGroups)
+        let relaunched = WorkshopViewModel(library: fixture.library, root: fixture.root, client: FakeSteamClient(), userDefaults: fixture.defaults)
+        XCTAssertEqual(relaunched.filters, filters)
+    }
+
     func testLoginNeedsAuthenticatedEventAndIgnoresOldRequest() async throws {
         let fixture = try makeFixture()
         fixture.model.loginQR()
@@ -89,6 +166,89 @@ final class WorkshopViewModelTests: XCTestCase {
         XCTAssertEqual(fixture.model.statusKey, "workshop.error.connection")
     }
 
+    func testDownloadWaitsForPreparationAndReportsProgressBeforeApplying() async throws {
+        var preparation: CheckedContinuation<Void, Error>?
+        let fixture = try makeFixture(scenePreparer: { _, progress in
+            progress(0.4)
+            try await withCheckedThrowingContinuation { preparation = $0 }
+        })
+        try startCompletedDownload(fixture)
+        await waitUntil { preparation != nil }
+
+        XCTAssertEqual(fixture.model.operation, "preparing")
+        XCTAssertEqual(fixture.model.statusKey, "workshop.working.preparing")
+        XCTAssertEqual(fixture.model.preparationProgress, 0.4)
+        XCTAssertEqual(fixture.library.libraryAssets.count, 1)
+        XCTAssertNil(fixture.player.playedID)
+        XCTAssertTrue(fixture.model.canCancel)
+        fixture.library.removeSelectedLibraryAssets()
+        XCTAssertEqual(fixture.library.libraryAssets.count, 1, "Deletion must wait for preparation writes")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: try XCTUnwrap(fixture.model.selectedDownload?.directory)))
+
+        preparation?.resume()
+        await waitUntil { !fixture.model.isBusy }
+        XCTAssertEqual(fixture.player.playedID, item().id)
+        XCTAssertEqual(fixture.model.statusKey, "workshop.play.requested")
+        XCTAssertNil(fixture.model.preparationProgress)
+        XCTAssertEqual(fixture.client.commands.map(\.command), ["loginQR", "download"])
+    }
+
+    func testPreparationFailureRetainsLibraryAndCanRetryWithoutDownloadingAgain() async throws {
+        var attempts = 0
+        let fixture = try makeFixture(scenePreparer: { _, _ in
+            attempts += 1
+            if attempts == 1 { throw SteamBridgeError.unavailable }
+        })
+        let download = try await completeDownload(fixture)
+        XCTAssertEqual(fixture.model.statusKey, "workshop.error.prepare")
+        XCTAssertNil(fixture.player.playedID)
+        XCTAssertEqual(fixture.library.libraryAssets.count, 1)
+        XCTAssertTrue(fixture.model.isAuthenticated)
+
+        fixture.model.selectDownload(download.id)
+        await waitUntil { !fixture.model.isBusy }
+        XCTAssertEqual(attempts, 2)
+        XCTAssertEqual(fixture.player.playedID, download.id)
+        XCTAssertEqual(fixture.client.commands.map(\.command), ["loginQR", "download"])
+    }
+
+    func testCancelledPreparationCannotApplyOrDisconnectSteam() async throws {
+        var preparation: CheckedContinuation<Void, Error>?
+        let fixture = try makeFixture(scenePreparer: { _, _ in
+            try await withCheckedThrowingContinuation { preparation = $0 }
+        })
+        try startCompletedDownload(fixture)
+        await waitUntil { preparation != nil }
+
+        fixture.model.cancel()
+        preparation?.resume()
+        await waitUntil { !fixture.model.isBusy }
+
+        XCTAssertEqual(fixture.model.statusKey, "workshop.cancelled")
+        XCTAssertTrue(fixture.model.isAuthenticated)
+        XCTAssertEqual(fixture.library.libraryAssets.count, 1)
+        XCTAssertEqual(fixture.model.downloads.count, 1)
+        XCTAssertNil(fixture.player.playedID)
+        XCTAssertEqual(fixture.player.stopCount, 0)
+    }
+
+    func testNewLibrarySelectionDuringPreparationPreventsLateApplication() async throws {
+        var preparation: CheckedContinuation<Void, Error>?
+        let fixture = try makeFixture(scenePreparer: { _, _ in
+            try await withCheckedThrowingContinuation { preparation = $0 }
+        })
+        try startCompletedDownload(fixture)
+        await waitUntil { preparation != nil }
+
+        fixture.library.selectLibraryAssets([])
+        preparation?.resume()
+        await waitUntil { !fixture.model.isBusy }
+
+        XCTAssertNil(fixture.player.playedID)
+        XCTAssertTrue(fixture.library.selectedLibraryAssetIds.isEmpty)
+        XCTAssertEqual(fixture.player.stopCount, 0)
+    }
+
     func testCompletedDownloadAutomaticallyImportsAndRequestsPlayback() async throws {
         let fixture = try makeFixture()
         let download = try await completeDownload(fixture)
@@ -109,6 +269,23 @@ final class WorkshopViewModelTests: XCTestCase {
         await waitUntil { !fixture.model.isBusy }
         XCTAssertEqual(fixture.player.playedID, download.id)
         XCTAssertEqual(fixture.library.libraryAssets.count, 1)
+    }
+
+    func testLibraryRemovalAlsoRefreshesDownloadedStateAndStopsDeletedWallpaper() async throws {
+        let fixture = try makeFixture()
+        let download = try await completeDownload(fixture)
+        fixture.player.finishPendingPlayback()
+        XCTAssertEqual(fixture.library.activeWallpaperAssetID, download.id)
+
+        fixture.library.removeSelectedLibraryAssets()
+
+        XCTAssertTrue(fixture.library.libraryAssets.isEmpty)
+        XCTAssertTrue(fixture.model.downloads.isEmpty)
+        XCTAssertNil(fixture.model.selectedDownloadID)
+        XCTAssertNil(fixture.library.activeWallpaperAssetID)
+        XCTAssertNil(fixture.defaults.string(forKey: "lastPlayedAssetId"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: download.directory))
+        XCTAssertTrue(fixture.model.isAuthenticated)
     }
 
     func testPlaybackErrorIsNotReportedAsRequestedPlayback() async throws {
@@ -597,15 +774,17 @@ final class WorkshopViewModelTests: XCTestCase {
         let defaults: UserDefaults
     }
 
-    private func makeFixture() throws -> Fixture {
+    private func makeFixture(
+        scenePreparer: (@MainActor (WallpaperAsset, @escaping @MainActor (Double) -> Void) async throws -> Void)? = nil
+    ) throws -> Fixture {
         let root = try temporaryDirectory()
         let suite = "WorkshopViewModelTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         addTeardownBlock { defaults.removePersistentDomain(forName: suite) }
         let player = WorkshopTestPlayer()
-        let library = AppViewModel(store: LibraryStore(root: root), loginItemController: WorkshopLoginItems(), wallpaperPlayer: player, userDefaults: defaults)
+        let library = AppViewModel(store: LibraryStore(root: root), loginItemController: WorkshopLoginItems(), wallpaperPlayer: player, userDefaults: defaults, scenePreparer: scenePreparer)
         let client = FakeSteamClient()
-        return Fixture(root: root, library: library, model: WorkshopViewModel(library: library, root: root, client: client), client: client, player: player, defaults: defaults)
+        return Fixture(root: root, library: library, model: WorkshopViewModel(library: library, root: root, client: client, userDefaults: defaults), client: client, player: player, defaults: defaults)
     }
 
     private func temporaryDirectory() throws -> URL {

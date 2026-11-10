@@ -113,7 +113,7 @@ final class ScreenSaverFeatureTests: XCTestCase {
         let viewModel = try String(contentsOfFile: "Sources/WorkshopWallpaperBridgeApp/AppViewModel.swift")
 
         XCTAssertTrue(wallpaperPlayer.contains("static var sceneVideoRenderCompletionHandler: ((String) -> Void)?"))
-        XCTAssertTrue(wallpaperPlayer.contains("sceneVideoRenderCompletionHandler?(assetId)"))
+        XCTAssertTrue(wallpaperPlayer.contains("sceneVideoRenderCompletionHandler?(assetID)"))
         XCTAssertTrue(viewModel.contains("SceneWallpaperContentFactory.sceneVideoRenderCompletionHandler = { [weak self] assetId in"))
         XCTAssertTrue(viewModel.contains("refreshLockScreenAnimationConfigurationAfterSceneVideoRender(assetId: assetId)"))
     }

@@ -22,6 +22,8 @@ final class WorkshopViewModel: ObservableObject {
     @Published private(set) var selectedDownloadID: String?
     @Published private(set) var selectedAsset: WallpaperAsset?
     @Published private(set) var retryItem: WorkshopItem?
+    @Published private(set) var preparationProgress: Double?
+    @Published var filters: WorkshopSearchFilters
     @Published var query = ""
     @Published var sort = "popular"
     @Published var kindFilter = "all"
@@ -32,6 +34,9 @@ final class WorkshopViewModel: ObservableObject {
     private let client: SteamHelperTransport
     private let storage: WorkshopDownloads
     private let authentication: SteamAuthenticationStorage
+    private let userDefaults: UserDefaults
+    private static let filtersKey = "steamWorkshopSearchFilters"
+    private static let automaticLoginKey = "steamWorkshopAutomaticLogin"
     private var requestID: String?
     private var downloading: WorkshopItem?
     private var staging: URL?
@@ -43,14 +48,18 @@ final class WorkshopViewModel: ObservableObject {
     private var requestedPlaybackID: String?
     private var playbackObservation: AnyCancellable?
 
-    init(library: AppViewModel, root: URL, client: SteamHelperTransport? = nil) {
+    init(library: AppViewModel, root: URL, client: SteamHelperTransport? = nil, userDefaults: UserDefaults = .standard) {
         self.library = library
+        self.userDefaults = userDefaults
+        filters = userDefaults.data(forKey: Self.filtersKey)
+            .flatMap { try? JSONDecoder().decode(WorkshopSearchFilters.self, from: $0) } ?? WorkshopSearchFilters()
         storage = WorkshopDownloads(root: root.appending(path: "WorkshopDownloads"))
         authentication = SteamAuthenticationStorage(directory: root.appending(path: "Steam"))
         self.client = client ?? SteamHelperClient(authenticationDirectory: authentication.directory)
         self.client.onEvent = { [weak self] event in self?.receive(event) }
         self.client.onExit = { [weak self] in self?.helperExited() }
         hasSavedSession = authentication.hasSavedSession
+        library.activeWorkshop = self
         refreshDownloads()
         playbackObservation = library.$playbackEvent.sink { [weak self] event in
             guard let self, let event, let id = requestedPlaybackID, selectedDownloadID == id else { return }
@@ -61,6 +70,9 @@ final class WorkshopViewModel: ObservableObject {
                 statusKey = "workshop.error.play"
             default: break
             }
+        }
+        if hasSavedSession, userDefaults.object(forKey: Self.automaticLoginKey) == nil || userDefaults.bool(forKey: Self.automaticLoginKey) {
+            begin(SteamCommand(id: UUID().uuidString, command: "resume"), operation: "login")
         }
     }
 
@@ -73,6 +85,9 @@ final class WorkshopViewModel: ObservableObject {
 
     var isBusy: Bool { operation != nil }
     var isAuthenticated: Bool { account != nil }
+    var isChangingLibraryFiles: Bool {
+        ["download", "finalizing", "inspecting", "importing", "preparing"].contains(operation)
+    }
     var hasStoredAuthentication: Bool { authentication.hasStoredAuthentication }
     var canCancel: Bool { (requestID != nil || applicationIntent != nil) && !stopping }
     var selectedDownload: WorkshopDownload? { downloads.first { $0.id == selectedDownloadID } }
@@ -81,14 +96,23 @@ final class WorkshopViewModel: ObservableObject {
         return library?.libraryAssets.first { $0.id == id }
     }
 
-    func loginQR() { begin(SteamCommand(id: UUID().uuidString, command: "loginQR"), operation: "login") }
+    func loginQR() {
+        guard !isBusy else { return }
+        userDefaults.set(true, forKey: Self.automaticLoginKey)
+        begin(SteamCommand(id: UUID().uuidString, command: "loginQR"), operation: "login")
+    }
 
     func login(username: String, password: String) {
-        guard !username.trimmingCharacters(in: .whitespaces).isEmpty, !password.isEmpty else { return }
+        guard !isBusy, !username.trimmingCharacters(in: .whitespaces).isEmpty, !password.isEmpty else { return }
+        userDefaults.set(true, forKey: Self.automaticLoginKey)
         begin(SteamCommand(id: UUID().uuidString, command: "loginPassword", username: username, password: password), operation: "login")
     }
 
-    func resume() { begin(SteamCommand(id: UUID().uuidString, command: "resume"), operation: "login") }
+    func resume() {
+        guard !isBusy else { return }
+        userDefaults.set(true, forKey: Self.automaticLoginKey)
+        begin(SteamCommand(id: UUID().uuidString, command: "resume"), operation: "login")
+    }
 
     func submitGuard(_ code: String) {
         guard let id = requestID, operation == "login", !code.isEmpty else { return }
@@ -102,7 +126,8 @@ final class WorkshopViewModel: ObservableObject {
     func search(page: Int = 1) {
         guard isAuthenticated, page > 0 else { return }
         let command = SteamCommand(id: UUID().uuidString, command: "search", query: query, page: page,
-                                   sort: sort, kind: kindFilter, genre: genreFilter)
+                                   sort: sort, kind: kindFilter, genre: genreFilter,
+                                   tagGroups: filters.tagGroups, excludedTags: filters.excludedTags.sorted())
         // Serialize helper requests, keeping only the latest requested page/filter combination.
         if operation == "search" {
             pendingSearch = command
@@ -112,6 +137,16 @@ final class WorkshopViewModel: ObservableObject {
     }
 
     func applyFilters() {
+        search(page: 1)
+    }
+
+    func updateFilters(_ filters: WorkshopSearchFilters) {
+        self.filters = filters.normalized()
+        if let data = try? JSONEncoder().encode(self.filters) {
+            userDefaults.set(data, forKey: Self.filtersKey)
+        }
+        kindFilter = "all"
+        genreFilter = ""
         search(page: 1)
     }
 
@@ -152,7 +187,8 @@ final class WorkshopViewModel: ObservableObject {
         applicationIntent = nil
         requestedPlaybackID = nil
         pendingSelectionID = nil
-        if ["finalizing", "inspecting", "importing"].contains(operation) {
+        if operation == "login" { userDefaults.set(false, forKey: Self.automaticLoginKey) }
+        if ["finalizing", "inspecting", "importing", "preparing"].contains(operation) {
             // Let the current file operation finish before releasing its write/delete gate.
             statusKey = "workshop.cancelled"
         } else {
@@ -162,11 +198,13 @@ final class WorkshopViewModel: ObservableObject {
 
     func logout() {
         guard !isBusy else { return }
+        userDefaults.set(false, forKey: Self.automaticLoginKey)
         stop(status: "workshop.loggedOut", deleteCredentials: false)
     }
 
     func deleteSavedAuthentication() {
         guard !isBusy else { return }
+        userDefaults.set(false, forKey: Self.automaticLoginKey)
         stop(status: "workshop.auth.deleted", deleteCredentials: true)
     }
 
@@ -380,7 +418,20 @@ final class WorkshopViewModel: ObservableObject {
                 statusKey = "workshop.play.unsupported"
                 return
             }
-            // Synchronous acceptance is not evidence that asynchronous rendering succeeded.
+            operation = "preparing"
+            statusKey = "workshop.working.preparing"
+            preparationProgress = nil
+            do {
+                try await library.prepareWorkshopAsset(retained, intent: intent) { [weak self] progress in
+                    guard let self, self.isCurrentIntent(intent) else { return }
+                    self.preparationProgress = min(1, max(0, progress))
+                }
+            } catch {
+                if isCurrentIntent(intent) { statusKey = "workshop.error.prepare" }
+                return
+            }
+            guard isCurrentIntent(intent) else { return }
+            // Content readiness is still separate from a completed render.
             requestPlayback(retained.id, library: library)
         } catch {
             if isCurrentIntent(intent) {
@@ -393,6 +444,7 @@ final class WorkshopViewModel: ObservableObject {
         let id = applicationIntent == library?.applicationIntentID ? pendingSelectionID : nil
         pendingSelectionID = nil
         operation = nil
+        preparationProgress = nil
         applicationIntent = nil
         if let id { selectDownload(id) }
     }
@@ -438,8 +490,15 @@ final class WorkshopViewModel: ObservableObject {
         } catch { statusKey = "workshop.error.storage" }
     }
 
-    private func refreshDownloads() {
-        do { downloads = try storage.load() }
+    func refreshDownloads() {
+        do {
+            downloads = try storage.load()
+            if let selectedDownloadID, !downloads.contains(where: { $0.id == selectedDownloadID }) {
+                self.selectedDownloadID = nil
+                selectedAsset = nil
+                requestedPlaybackID = nil
+            }
+        }
         catch { statusKey = "workshop.error.storage" }
     }
 

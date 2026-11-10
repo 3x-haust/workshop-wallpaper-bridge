@@ -4,9 +4,8 @@
 
 The app is a native macOS browser for a private wallpaper library and authenticated Steam Workshop content. SwiftUI, AppKit, the system font and SF Symbols remain the UI stack.
 
-- **Explore:** server-backed search, sorting and type/genre filters; thumbnail grid; selected-item preview and details.
+- **Explore:** server-backed search and sorting; a filter sheet for age, type, genre, resolution and features; thumbnail grid; selected-item preview and details. Tags have neutral/include/exclude states. Everyone-only is the initial and reset age setting; filter choices persist.
 - **My Wallpapers:** the local library, single-item application, multiple selection and existing conversion, display-mode and rotation controls.
-- **Downloads:** progress, cancellation, retry and completed downloaded copies.
 - **Settings:** existing playback, audio, integration, permissions, assets and language controls.
 - Steam account status and authentication are available at the bottom of the sidebar. Playback status and Stop remain in the bottom bar.
 
@@ -35,6 +34,10 @@ Keep accessible names on icon-only navigation and buttons. Preserve keyboard act
 ## Interaction
 
 Selecting a supported installed item requests immediate application. A new Workshop item uses **Download & Apply**: explicit download completion, storage validation, existing-copy linking or safe library import, support assessment, then playback. No extra Workshop import button is required. Local copied-folder imports retain their explicit selection and copy operation.
+
+There is no separate Downloads tab. Explore shows download and preparation progress; My Wallpapers owns completed-item management. Removing a library item also removes its completed download and playback caches, without touching source files or account data.
+
+Required scene rendering finishes before Download & Apply replaces the current wallpaper. Fresh render caches are reused. Shared renders may finish caching after cancellation, but cannot apply a cancelled selection.
 
 The selected image is a preview, not proof that the project can play. Download completion, playback request and content readiness are distinct. Unsupported content remains available for inspection or conversion without stopping the current wallpaper. Preparing replacement windows must not discard working windows before the replacement is ready.
 

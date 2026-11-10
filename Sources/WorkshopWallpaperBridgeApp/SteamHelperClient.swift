@@ -23,6 +23,8 @@ struct SteamCommand: Encodable, Sendable {
     var sort: String?
     var kind: String?
     var genre: String?
+    var tagGroups: [[String]]?
+    var excludedTags: [String]?
     var itemID: String?
     var directory: String?
 }

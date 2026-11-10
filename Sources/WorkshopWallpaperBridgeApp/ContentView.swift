@@ -1,13 +1,12 @@
 import SwiftUI
 
 private enum SettingsTab: CaseIterable, Hashable {
-    case workshop, library, downloads, settings
+    case workshop, library, settings
 
     var titleKey: String {
         switch self {
         case .workshop: "workshop.browser.explore"
         case .library: "tab.library"
-        case .downloads: "workshop.downloads.title"
         case .settings: "tab.settings"
         }
     }
@@ -16,7 +15,6 @@ private enum SettingsTab: CaseIterable, Hashable {
         switch self {
         case .workshop: "safari"
         case .library: "photo.on.rectangle"
-        case .downloads: "arrow.down.to.line"
         case .settings: "slider.horizontal.3"
         }
     }
@@ -60,9 +58,7 @@ struct ContentView: View {
     private var page: some View {
         switch selectedTab {
         case .workshop:
-            WorkshopTabView(model: model, workshop: workshop, showsDownloads: false, showsAccount: $showsAccount)
-        case .downloads:
-            WorkshopTabView(model: model, workshop: workshop, showsDownloads: true, showsAccount: $showsAccount)
+            WorkshopTabView(model: model, workshop: workshop, showsAccount: $showsAccount)
         case .library:
             LibraryTabView(model: model)
         case .settings:
@@ -122,7 +118,7 @@ struct ContentView: View {
                 if !compact {
                     Text(model.L(tab.titleKey)).font(.system(size: 12, weight: .medium))
                     Spacer(minLength: 0)
-                    if tab == .downloads, workshop.isBusy {
+                    if tab == .library, workshop.isBusy {
                         ProgressView().controlSize(.mini)
                     }
                 }
@@ -150,7 +146,13 @@ struct ContentView: View {
     private var statusBar: some View {
         HStack(spacing: 10) {
             Image(systemName: "display").foregroundStyle(BrowserPalette.secondary)
-            if let progress = model.importProgress {
+            if workshop.operation == "preparing" {
+                if let progress = workshop.preparationProgress {
+                    ProgressView(value: progress).controlSize(.small).frame(width: 100)
+                } else {
+                    ProgressView().controlSize(.small)
+                }
+            } else if let progress = model.importProgress {
                 ProgressView(value: progress.fraction)
                     .controlSize(.small)
                     .frame(width: 120)
@@ -158,9 +160,13 @@ struct ContentView: View {
                 ProgressView()
                     .controlSize(.small)
             }
-            Text(model.status)
+            let status = workshop.operation == "preparing" ? model.L(workshop.statusKey) : model.status
+            Text(status)
                 .font(.system(size: 11)).foregroundStyle(BrowserPalette.secondary)
-                .lineLimit(1).help(model.status)
+                .lineLimit(1).help(status)
+            if workshop.operation == "preparing", workshop.canCancel {
+                Button(model.L("common.cancel")) { workshop.cancel() }.buttonStyle(.plain)
+            }
             Spacer(minLength: 8)
             Button { model.stopPlayback() } label: {
                 Label(model.L("app.stop"), systemImage: "stop.fill")

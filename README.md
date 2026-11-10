@@ -89,9 +89,9 @@ Playback notes:
 - **Open at Login** restores the last played wallpaper after login.
 - **Play on Desktop** does not change the macOS desktop picture, so the translucent menu bar keeps using your current system wallpaper tint.
 - Use **Set Still Wallpaper** only when you explicitly want to replace the macOS desktop and Lock Screen still image.
-- **Remove** asks for confirmation, then moves the imported Mac-library copy to the Trash (recoverable) only. It does not touch the original copied folder or video.
+- **Remove** asks for confirmation, then removes the Mac-library copy, its completed Workshop download, and its playback caches together, preferring the Trash. Original folders, source videos, engine assets, and Steam authentication are not removed.
 
-The browser has **Explore**, **My Wallpapers**, **Downloads**, and **Settings** in its sidebar. Explore and the local library use thumbnail grids with a large selected-item preview and details. Smaller windows open details in a sheet. The existing local import, display mode, playback, rotation and removal controls remain available; **Convert Video** and **Set Still Wallpaper** are available from item details and the library's context menu. Settings retains playback, Audio, Scene Engine Assets, Screen Saver, and Language controls. See [the browser design guide](DESIGN.md).
+The browser has **Explore**, **My Wallpapers**, and **Settings** in its sidebar. Completed wallpapers are managed in **My Wallpapers**; there is no separate Downloads tab. Explore and the local library use thumbnail grids with a large selected-item preview and details. Smaller windows open details in a sheet. The existing local import, display mode, playback, rotation and removal controls remain available; **Convert Video** and **Set Still Wallpaper** are available from item details and the library's context menu. Settings retains playback, Audio, Scene Engine Assets, Screen Saver, and Language controls. See [the browser design guide](DESIGN.md).
 
 Use the **Language** picker in the Settings tab to switch the app's UI text between **System**, **한국어**, and **English**. The change applies immediately, without restarting the app; only static UI chrome (buttons, section titles, captions) is localized, so status messages generated while the app runs may still appear in English.
 
@@ -113,10 +113,10 @@ Imported files are stored in:
 Steam integration is in development; the packaged login-to-playback flow is not yet verified, and inclusion in the latest public release is not implied.
 
 1. Open **Explore** and use the Steam account control to sign in with a QR code or your Steam account and Steam Guard. Access is limited to what that account is authorized to retrieve for Wallpaper Engine (App ID `431960`).
-2. Browse thumbnails, search, sort by popularity, date or rating, and filter by type and genre. Use the numbered page buttons to jump between results; the current page is highlighted, and a successful page change returns the list to the top. Select an item for its preview and details. Compatibility notes are available in the preview help; support badges and issues remain visible.
+2. Browse thumbnails, search, and sort by popularity, date or rating. **Filters** includes age rating, type, genre, resolution, and features such as Approved and Audio responsive. Each tag can be included, excluded, or left unrestricted. The default requires Everyone and excludes Questionable and Mature; resetting restores this default. Settings are remembered across launches. Tags can be inaccurate; Steam Community content preferences remain separate. Use the numbered page buttons to jump between results; the current page is highlighted, and a successful page change returns the list to the top. Select an item for its preview and details. Compatibility notes are available in the preview help; support badges and issues remain visible.
 3. Choose **Download & Apply** and follow its progress. You can cancel or retry; cancelling a download disconnects Steam. Reconnect with saved authentication before retrying.
-4. The item enters **Downloads** only after explicit completion and storage validation. Partial or cancelled downloads are not completed items.
-5. The app automatically saves the completed project in **My Wallpapers** and requests playback if it is supported. No separate import button is needed. If that item ID already exists, the app links/selects the existing library copy rather than overwriting it.
+4. Explicit completion and storage validation are required before a project enters **My Wallpapers**. Partial or cancelled downloads are not completed items.
+5. **Download & Apply** includes library import and any required scene rendering before application. Fresh rendered caches are reused on subsequent applications. Preparation progress and retry remain in Explore. Cancelling preparation prevents application; an already-running shared renderer may finish caching, and deletion stays unavailable until it finishes. If that item ID already exists, the app links/selects the existing library copy rather than overwriting it.
 6. Selecting a supported installed item applies it directly. Unsupported items remain available for inspection; use **My Wallpapers** for additional conversion. Preparing a replacement preserves the previous wallpaper until the new content is ready. The support limits below still apply.
 
 **Download success is not playback success.** Unsupported formats, scene features, or missing engine assets can still prevent playback or leave a preview visible. This integration does not promise official Wallpaper Engine compatibility or expand the scene support boundary.
@@ -136,7 +136,8 @@ Authentication persists across app launches in an app-specific file:
 ```
 
 - The `Steam` directory uses mode `0700`; the credential file uses `0600`. This is persistent file storage, **not Keychain**. Treat the file and backups as secrets; permissions do not protect it from other processes running as your user.
-- **Logout** ends the helper session but keeps saved authentication so you can reconnect.
+- The app reconnects automatically using saved authentication on launch. Expired or revoked sessions require signing in again.
+- **Logout** ends the helper session and disables automatic reconnection, but keeps saved authentication. Choosing **Reconnect** or signing in enables automatic connection again.
 - **Delete saved authentication** removes only `credentials.json` and its interrupted atomic-save temporary file `credentials.json.tmp` from this app's `Steam` directory. It does not affect authentication or sessions in the Steam app or other Steam clients, or revoke tokens on Steam's servers.
 - Do not include credentials, QR login payloads, tokens, or Steam Guard codes in reports or logs. See [Security](SECURITY.md).
 
@@ -146,7 +147,7 @@ The Steam helper is a separate GPL component based on [SteamRE/DepotDownloader 3
 
 | Project type | Support |
 | --- | --- |
-| `.mp4`, `.mov`, `.m4v` video | Plays directly |
+| `.mp4`, `.mov`, `.m4v` video | Plays directly; HEVC `hev1` files are losslessly repackaged to a cached `hvc1` copy for macOS |
 | `.webm`, `.mkv`, `.avi` video | Converts locally with `ffmpeg`, then plays |
 | `index.html` web wallpaper | Local WebView with mouse interaction, WebGL, initial user settings and system-audio callbacks |
 | `.jpg`, `.png`, `.gif`, `.heic` image | Displays as a static desktop layer |

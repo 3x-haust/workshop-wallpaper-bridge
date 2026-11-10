@@ -5,24 +5,20 @@ import WorkshopWallpaperCore
 struct WorkshopTabView: View {
     @ObservedObject var model: AppViewModel
     @ObservedObject var workshop: WorkshopViewModel
-    let showsDownloads: Bool
     @Binding var showsAccount: Bool
     @State private var selectedItemID: String?
     @State private var showsDetail = false
     @State private var showsLargePreview = false
     @State private var largeThumbnails = false
-
-    private let genres = ["", "Abstract", "Animal", "Anime", "Fantasy", "Game", "Landscape", "Music", "Nature", "Sci-Fi", "Technology"]
-    private let kinds = ["all", "video", "web", "scene", "application"]
+    @State private var showsFilters = false
     private var mutationsDisabled: Bool { workshop.isBusy || model.isWorking }
 
     private var inspectedDownload: WorkshopDownload? {
         guard let download = workshop.selectedDownload else { return nil }
-        return showsDownloads || selectedItemID == download.id ? download : nil
+        return selectedItemID == download.id ? download : nil
     }
 
     private var inspectedItem: WorkshopItem? {
-        guard !showsDownloads else { return nil }
         if let detail = workshop.detail, selectedItemID == nil || detail.id == selectedItemID { return detail }
         return workshop.items.first { $0.id == selectedItemID }
     }
@@ -46,13 +42,9 @@ struct WorkshopTabView: View {
             HStack(spacing: 0) {
                 VStack(alignment: .leading, spacing: 0) {
                     heading
-                    if !showsDownloads { searchTools }
-                    if showsDownloads {
-                        downloadGrid(compact: !hasInspector)
-                    } else {
-                        searchGrid(compact: !hasInspector)
-                        pagination
-                    }
+                    searchTools
+                    searchGrid(compact: !hasInspector)
+                    pagination
                     operationStatus
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -75,6 +67,11 @@ struct WorkshopTabView: View {
             }
         }
         .background(BrowserPalette.background)
+        .sheet(isPresented: $showsFilters) {
+            WorkshopFiltersView(model: model, filters: workshop.filters) { filters in
+                workshop.updateFilters(filters)
+            }
+        }
         .sheet(isPresented: $showsLargePreview) {
             VStack(spacing: 14) {
                 HStack {
@@ -89,19 +86,8 @@ struct WorkshopTabView: View {
             .padding(20).frame(minWidth: 540, idealWidth: 800, minHeight: 380, idealHeight: 560)
             .background(BrowserPalette.background)
         }
-        .confirmationDialog(
-            model.L("workshop.download.remove.title"),
-            isPresented: Binding(get: { workshop.pendingRemoval != nil }, set: { if !$0 { workshop.pendingRemoval = nil } }),
-            titleVisibility: .visible, presenting: workshop.pendingRemoval
-        ) { download in
-            Button(model.L("workshop.download.remove"), role: .destructive) { workshop.removeDownloaded(download) }
-                .disabled(mutationsDisabled)
-            Button(model.L("common.cancel"), role: .cancel) { workshop.pendingRemoval = nil }
-        } message: { download in
-            Text(String(format: model.L("workshop.download.remove.message"), download.title))
-        }
         .task(id: workshop.isAuthenticated) {
-            if workshop.isAuthenticated, workshop.items.isEmpty, !workshop.isBusy, !showsDownloads { workshop.search() }
+            if workshop.isAuthenticated, workshop.items.isEmpty, !workshop.isBusy { workshop.search() }
         }
     }
 
@@ -110,13 +96,10 @@ struct WorkshopTabView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("STEAM WORKSHOP").font(.system(size: 10, weight: .semibold))
                     .tracking(1).foregroundStyle(BrowserPalette.secondary)
-                Text(model.L(showsDownloads ? "workshop.downloads.title" : "workshop.browser.explore"))
+                Text(model.L("workshop.browser.explore"))
                     .font(.system(size: 25, weight: .semibold))
             }
             Spacer()
-            if showsDownloads {
-                Text("\(workshop.downloads.count)").font(.callout.monospacedDigit()).foregroundStyle(BrowserPalette.secondary)
-            }
             Button { largeThumbnails.toggle() } label: {
                 Image(systemName: largeThumbnails ? "square.grid.3x3" : "square.grid.2x2")
             }
@@ -140,9 +123,12 @@ struct WorkshopTabView: View {
             .padding(10).background(BrowserPalette.surface, in: RoundedRectangle(cornerRadius: 7))
             .overlay(RoundedRectangle(cornerRadius: 7).stroke(BrowserPalette.border, lineWidth: 1))
             ViewThatFits(in: .horizontal) {
-                HStack(spacing: 10) { filterPickers }
-                VStack(alignment: .leading, spacing: 8) { filterPickers }
+                HStack(spacing: 10) { filterControls }
+                VStack(alignment: .leading, spacing: 8) { filterControls }
             }
+            Text(model.L(workshop.filters.ageSummaryKey))
+                .font(.caption).foregroundStyle(BrowserPalette.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
         .font(.system(size: 12))
         .padding(.horizontal, 22).padding(.bottom, 16)
@@ -150,21 +136,18 @@ struct WorkshopTabView: View {
     }
 
     @ViewBuilder
-    private var filterPickers: some View {
-        Picker(model.L("workshop.browser.kindFilter"), selection: $workshop.kindFilter) {
-            ForEach(kinds, id: \.self) { kind in Text(model.L("workshop.kind.\(kind)")).tag(kind) }
+    private var filterControls: some View {
+        Button { showsFilters = true } label: {
+            Label(String(format: model.L("workshop.filter.button"), workshop.filters.selectedCount), systemImage: "line.3.horizontal.decrease.circle")
         }
-        .onChange(of: workshop.kindFilter) { _, _ in workshop.applyFilters() }
-        Picker(model.L("workshop.browser.genreFilter"), selection: $workshop.genreFilter) {
-            ForEach(genres, id: \.self) { genre in Text(model.L(Self.genreKey(genre))).tag(genre) }
-        }
-        .onChange(of: workshop.genreFilter) { _, _ in workshop.applyFilters() }
+        .accessibilityLabel(model.L("workshop.filter.title"))
+        .accessibilityValue(String(format: model.L("workshop.filter.count"), workshop.filters.selectedCount))
         Picker(model.L("workshop.browser.sort"), selection: $workshop.sort) {
             Text(model.L("workshop.sort.popular")).tag("popular")
             Text(model.L("workshop.sort.recent")).tag("recent")
             Text(model.L("workshop.sort.rated")).tag("rated")
         }
-        .onChange(of: workshop.sort) { _, _ in workshop.applyFilters() }
+        .onChange(of: workshop.sort) { _, _ in workshop.search(page: 1) }
     }
 
     private func searchGrid(compact: Bool) -> some View {
@@ -212,31 +195,6 @@ struct WorkshopTabView: View {
         }
     }
 
-    private func downloadGrid(compact: Bool) -> some View {
-        Group {
-            if workshop.downloads.isEmpty {
-                BrowserEmptyState(symbol: "arrow.down.to.line", title: model.L("workshop.downloads.empty"), message: model.L("workshop.browser.downloadsDescription"))
-            } else {
-                ScrollView {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: largeThumbnails ? 210 : 155), spacing: 13)], spacing: 18) {
-                        ForEach(workshop.downloads) { download in
-                            let asset = model.libraryAssets.first { $0.id == download.id }
-                            thumbnailCard(title: download.title,
-                                          subtitle: asset.map { model.L("workshop.support.\($0.supportStatus.rawValue)") } ?? model.L("workshop.download.badge"),
-                                          url: asset?.thumbnail.map { URL(filePath: $0) },
-                                          selected: workshop.selectedDownloadID == download.id, downloaded: true) {
-                                workshop.selectDownload(download.id)
-                                if compact { showsDetail = true }
-                            }
-                            .disabled(mutationsDisabled)
-                        }
-                    }
-                    .padding(.horizontal, 22).padding(.bottom, 20)
-                }
-            }
-        }
-    }
-
     private func thumbnailCard(title: String, subtitle: String, url: URL?, selected: Bool, downloaded: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             VStack(alignment: .leading, spacing: 6) {
@@ -249,8 +207,9 @@ struct WorkshopTabView: View {
                 .overlay(RoundedRectangle(cornerRadius: 7).stroke(selected ? BrowserPalette.accent : .clear, lineWidth: 2))
                 .overlay(alignment: .topTrailing) {
                     if downloaded {
-                        Image(systemName: "checkmark.circle.fill").foregroundStyle(BrowserPalette.accent)
+                        Image(systemName: "arrow.down.circle.fill").foregroundStyle(BrowserPalette.accent)
                             .padding(7).shadow(color: .black.opacity(0.7), radius: 3)
+                            .help(model.L("workshop.download.badge"))
                     }
                 }
                 Text(title).font(.system(size: 12, weight: .medium)).lineLimit(1).padding(.top, 2)
@@ -402,9 +361,6 @@ struct WorkshopTabView: View {
             }
             .buttonStyle(.borderedProminent)
             .disabled(mutationsDisabled || workshop.libraryAsset?.supportStatus != .playable)
-            Divider()
-            Button(model.L("workshop.download.remove"), role: .destructive) { workshop.pendingRemoval = download }
-                .disabled(mutationsDisabled)
         }
     }
 
@@ -425,11 +381,27 @@ struct WorkshopTabView: View {
                 Spacer(minLength: 5)
                 if workshop.canCancel {
                     Button(model.L("common.cancel")) { workshop.cancel() }
-                        .help(model.L("workshop.cancel.help"))
+                        .help(model.L(workshop.operation == "preparing" ? "workshop.prepare.cancel.help" : "workshop.cancel.help"))
+                }
+                if workshop.statusKey == "workshop.error.prepare", let download = workshop.selectedDownload {
+                    Button(model.L("workshop.prepare.retry")) { workshop.selectDownload(download.id) }
+                        .disabled(mutationsDisabled)
                 }
                 if workshop.retryItem != nil {
                     Button(model.L("workshop.download.retry")) { workshop.retryDownload() }
                         .disabled(mutationsDisabled || !workshop.isAuthenticated)
+                }
+            }
+            if workshop.operation == "preparing" {
+                if let progress = workshop.preparationProgress, progress.isFinite {
+                    let fraction = min(max(progress, 0), 1)
+                    HStack {
+                        ProgressView(value: fraction)
+                        Text(fraction, format: .percent.precision(.fractionLength(0)))
+                            .font(.caption.monospacedDigit()).foregroundStyle(BrowserPalette.secondary)
+                    }
+                } else {
+                    ProgressView().progressViewStyle(.linear)
                 }
             }
             if workshop.operation == "download" {
@@ -450,10 +422,6 @@ struct WorkshopTabView: View {
         guard let value, let url = URL(string: value), url.scheme?.lowercased() == "https",
               url.host != nil, url.user == nil, url.password == nil else { return nil }
         return url
-    }
-
-    private static func genreKey(_ genre: String) -> String {
-        "workshop.genre.\(genre.isEmpty ? "all" : genre.lowercased().replacingOccurrences(of: "-", with: ""))"
     }
 
     private static func byteCount(_ bytes: UInt64) -> String {
