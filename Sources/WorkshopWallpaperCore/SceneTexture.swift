@@ -150,6 +150,38 @@ public struct SceneTextureDecoder: Sendable {
         return SceneTexture(width: primary.width, height: primary.height, storage: primary.storage)
     }
 
+    /// Recognizes the bounded MP4 container consumed by the external engine, not a native image.
+    func isEngineVideoTexture(data: Data) throws -> Bool {
+        var reader = SceneTextureBinaryReader(data: data)
+        guard try reader.readCString(maxLength: 32) == "TEXV0005",
+              try reader.readCString(maxLength: 32) == "TEXI0001",
+              try reader.readInt() == 0 else { return false }
+        let flags = try reader.readInt()
+        guard flags & 0x20 != 0, flags & ~0x23 == 0 else { return false }
+        let width = try reader.readInt()
+        let height = try reader.readInt()
+        let imageWidth = try reader.readInt()
+        let imageHeight = try reader.readInt()
+        _ = try reader.readUInt32()
+        try validateDimensions(textureWidth: width, textureHeight: height,
+                               imageWidth: imageWidth, imageHeight: imageHeight)
+        guard try Self.checkedProduct(width, height) <= maximumSoftwareDecodedPixels,
+              try reader.readCString(maxLength: 32) == "TEXB0003",
+              try reader.readInt() == 1,
+              try reader.readInt() == -1,
+              try reader.readInt() == 1,
+              try reader.readInt() == width,
+              try reader.readInt() == height,
+              try reader.readInt() == 0,
+              try reader.readInt() == 0 else { return false }
+        let byteCount = try reader.readInt()
+        guard byteCount >= 16, byteCount <= Self.maximumCompressedPayloadBytes,
+              data.count - reader.offset == byteCount else { return false }
+        let header = try reader.readData(count: 16)
+        let boxSize = header.prefix(4).reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
+        return header[4..<8] == Data("ftyp".utf8) && boxSize >= 16 && Int(boxSize) <= byteCount
+    }
+
     private struct DecodedSheet {
         let storage: SceneTextureStorage
         let width: Int

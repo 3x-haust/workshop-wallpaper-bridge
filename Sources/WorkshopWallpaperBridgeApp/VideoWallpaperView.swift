@@ -7,9 +7,14 @@ final class VideoWallpaperView: NSView,
     PausableWallpaperContent,
     DisplayModeUpdatableContent,
     WallpaperContentLifecycle,
+    WallpaperContentPreparing,
     AudioControllableWallpaperContent {
     private let player: AVQueuePlayer
-    private let looper: AVPlayerLooper
+    private var looper: AVPlayerLooper?
+    private var preparationTask: Task<Void, Never>?
+    private var isSuspended = false
+    private var firstFrameVerified = false
+    private var looperReadinessObservation: NSKeyValueObservation?
     private let fallbackLayer = CALayer()
     // Not private so tests can assert on the configured video gravity
     // (e.g. that scene-rendered wallpaper videos are forced to fill).
@@ -17,6 +22,12 @@ final class VideoWallpaperView: NSView,
     private weak var sampledItem: AVPlayerItem?
     private var frameOutput: AVPlayerItemVideoOutput?
     private var sampledFrame: CIImage?
+    private var readinessHandler: ((Result<Void, Error>) -> Void)?
+    private var readinessResult: Result<Void, Error>?
+    private var readinessObservations: [NSKeyValueObservation] = []
+    private var itemReadinessObservation: NSKeyValueObservation?
+    private weak var readinessItem: AVPlayerItem?
+    private var closed = false
 
     /// Attach lazily to the current looper item; AVPlayerLayer continues normal
     /// presentation. Compose effects sample that same item and playback time.
@@ -42,12 +53,10 @@ final class VideoWallpaperView: NSView,
         frame: CGRect,
         displayMode: WallpaperDisplayMode,
         audioEnabled: Bool = false,
-        audioVolume: Double = 0.5
+        audioVolume: Double = 0.5,
+        assetID: String? = nil
     ) {
-        let item = AVPlayerItem(url: url)
-        let queue = AVQueuePlayer()
-        player = queue
-        looper = AVPlayerLooper(player: queue, templateItem: item)
+        player = AVQueuePlayer()
         playerLayer = AVPlayerLayer(player: player)
         super.init(frame: frame)
         wantsLayer = true
@@ -61,7 +70,21 @@ final class VideoWallpaperView: NSView,
         player.actionAtItemEnd = .none
         player.isMuted = !audioEnabled
         player.volume = Float(audioVolume)
-        player.play()
+        preparationTask = Task { [weak self] in
+            do {
+                let preparedURL = try await VideoPlaybackPreparation.prepare(url: url, assetID: assetID)
+                try await VideoPlaybackPreparation.verifyFirstFrame(url: preparedURL)
+                guard let self, !self.closed, !Task.isCancelled else { return }
+                self.firstFrameVerified = true
+                self.looper = AVPlayerLooper(player: self.player, templateItem: AVPlayerItem(url: preparedURL))
+                self.observeLooperReadiness()
+                if !self.isSuspended { self.player.play() }
+                self.observeCurrentItemReadiness()
+            } catch {
+                guard let self, !self.closed, !Task.isCancelled else { return }
+                self.finishReadiness(.failure(error))
+            }
+        }
     }
 
     @available(*, unavailable)
@@ -85,6 +108,8 @@ final class VideoWallpaperView: NSView,
     }
 
     func setPlaybackSuspended(_ suspended: Bool) {
+        isSuspended = suspended
+        guard !closed else { return }
         if suspended {
             player.pause()
         } else {
@@ -105,7 +130,70 @@ final class VideoWallpaperView: NSView,
         player.volume = Float(volume)
     }
 
+    func whenReady(_ completion: @escaping (Result<Void, Error>) -> Void) {
+        guard !closed else { return }
+        if let readinessResult { completion(readinessResult); return }
+        readinessHandler = completion
+        guard readinessObservations.isEmpty else { return }
+        readinessObservations = [
+            player.observe(\.currentItem, options: [.initial, .new]) { [weak self] _, _ in
+                Task { @MainActor in self?.observeCurrentItemReadiness() }
+            },
+            player.observe(\.status, options: [.initial, .new]) { [weak self] _, _ in
+                Task { @MainActor in self?.checkReadiness() }
+            }
+        ]
+        observeLooperReadiness()
+    }
+
+    private func observeLooperReadiness() {
+        guard !closed, readinessResult == nil else { return }
+        looperReadinessObservation = looper?.observe(\.status, options: [.initial, .new]) { [weak self] _, _ in
+            Task { @MainActor in self?.checkReadiness() }
+        }
+    }
+
+    private func observeCurrentItemReadiness() {
+        guard !closed, readinessResult == nil else { return }
+        if readinessItem !== player.currentItem {
+            readinessItem = player.currentItem
+            itemReadinessObservation = player.currentItem?.observe(\.status, options: [.initial, .new]) { [weak self] _, _ in
+                Task { @MainActor in self?.checkReadiness() }
+            }
+        }
+        checkReadiness()
+    }
+
+    private func checkReadiness() {
+        guard !closed, readinessResult == nil else { return }
+        if looper?.status == .failed || player.status == .failed || player.currentItem?.status == .failed {
+            finishReadiness(.failure(looper?.error ?? player.error ?? player.currentItem?.error
+                ?? WallpaperPreparationError(message: "The selected video could not be loaded.")))
+        } else if firstFrameVerified, player.currentItem?.status == .readyToPlay {
+            finishReadiness(.success(()))
+        }
+    }
+
+    private func finishReadiness(_ result: Result<Void, Error>) {
+        readinessResult = result
+        looperReadinessObservation = nil
+        readinessObservations.removeAll()
+        itemReadinessObservation = nil
+        let handler = readinessHandler
+        readinessHandler = nil
+        handler?(result)
+    }
+
     func prepareForClose() {
+        closed = true
+        preparationTask?.cancel()
+        preparationTask = nil
+        looperReadinessObservation = nil
+        looper?.disableLooping()
+        looper = nil
+        readinessHandler = nil
+        readinessObservations.removeAll()
+        itemReadinessObservation = nil
         if let sampledItem, let frameOutput { sampledItem.remove(frameOutput) }
         frameOutput = nil; sampledItem = nil; sampledFrame = nil
         player.pause()

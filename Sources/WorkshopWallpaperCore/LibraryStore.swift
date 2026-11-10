@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 /// Seam over `FileManager`'s trash/remove operations so tests can verify the
@@ -208,13 +209,41 @@ public struct LibraryStore: Sendable {
         return updated
     }
 
+    /// The caller must stop imports, downloads, playback preparation, and rendering before removal.
     public func removeAsset(id: WallpaperAsset.ID) throws {
+        try validateRemovalAncestors(root)
+        let manifestURL = root.appending(path: "library.json")
+        if let type = try removalNodeType(manifestURL), type != mode_t(S_IFREG) {
+            throw LibraryStoreError.unsafeRemovalPath(manifestURL.path)
+        }
         let manifest = try load()
         guard let removed = manifest.assets.first(where: { $0.id == id }) else {
             return
         }
         let remaining = manifest.assets.filter { $0.id != id }
-        try removeLibraryDirectory(for: removed)
+        let directory = try validatedLibraryDirectory(for: removed)
+        if let directory, remaining.contains(where: {
+            URL(filePath: $0.projectDirectory).standardizedFileURL.path == directory.standardizedFileURL.path
+        }) {
+            throw LibraryStoreError.unsafeRemovalPath(directory.path)
+        }
+        let downloads = WorkshopDownloads(root: root.appending(path: "WorkshopDownloads"))
+        let download: WorkshopDownload?
+        do {
+            download = try removed.workshopId.flatMap { try downloads.completedItemIfPresent(itemID: $0) }
+        } catch WorkshopDownloadsError.invalidItemID {
+            // Copied local folders can have non-Workshop identifiers in legacy metadata.
+            download = nil
+        }
+        let caches = try validatedSceneVideoCaches(for: removed.id, retaining: remaining)
+            + validatedVideoPlaybackCaches(for: removed.id)
+            + validatedGeneratedStillImage(for: removed.id, retaining: remaining)
+
+        // Validate everything before the first move. Keep the manifest and library
+        // copy until the dependent copies are gone so failures remain retryable.
+        for cache in caches { try trashOrRemove(cache) }
+        if let download { try trashOrRemove(URL(filePath: download.directory)) }
+        if let directory { try trashOrRemove(directory) }
         try save(LibraryManifest(generatedAt: Date(), assets: remaining))
     }
 
@@ -238,22 +267,141 @@ public struct LibraryStore: Sendable {
         try data.write(to: root.appending(path: "library.json"), options: [.atomic])
     }
 
-    /// Moves the asset's imported library directory to the Trash rather than
-    /// deleting it outright, so a mistaken removal (or a removal of an asset
-    /// whose original Workshop copy is already gone) stays recoverable. Falls
-    /// back to a permanent delete only if the volume doesn't support Trash.
-    private func removeLibraryDirectory(for asset: WallpaperAsset) throws {
-        let directory = URL(filePath: asset.projectDirectory).standardizedFileURL
-        guard isInsideAssetsRoot(directory) else {
-            return
+    private func validatedLibraryDirectory(for asset: WallpaperAsset) throws -> URL? {
+        let directory = resolvingSystemVarAlias(URL(filePath: asset.projectDirectory))
+        let managedRoot = resolvingSystemVarAlias(assetsRoot)
+        // External copied-folder originals are never deletion targets.
+        guard directory.pathComponents.starts(with: managedRoot.pathComponents) else { return nil }
+        guard directory.deletingLastPathComponent().path == managedRoot.path,
+              directory.lastPathComponent == storageDirectoryName(for: asset.id)
+                || directory.lastPathComponent == asset.id else {
+            throw LibraryStoreError.unsafeRemovalPath(directory.path)
         }
-        guard FileManager.default.fileExists(atPath: directory.path) else {
-            return
+        try validateRemovalAncestors(directory)
+        guard try removalNodeType(directory) != nil else { return nil }
+        try validateRemovalTree(directory)
+        return directory
+    }
+
+    private func validatedSceneVideoCaches(for id: String, retaining assets: [WallpaperAsset]) throws -> [URL] {
+        let cacheRoot = root.appending(path: "SceneVideoCache")
+        try validateRemovalAncestors(cacheRoot)
+        guard try removalNodeType(cacheRoot) != nil else { return [] }
+        var targets: [URL] = []
+        for version in try FileManager.default.contentsOfDirectory(at: cacheRoot, includingPropertiesForKeys: nil)
+            where isCacheVersion(version.lastPathComponent) {
+            try validateRemovalAncestors(version)
+            for file in try FileManager.default.contentsOfDirectory(at: version, includingPropertiesForKeys: nil)
+                where isSceneCacheFile(file.lastPathComponent, assetID: id) {
+                guard try removalNodeType(file) == mode_t(S_IFREG),
+                      !assets.contains(where: { isSceneCacheFile(file.lastPathComponent, assetID: $0.id) }) else {
+                    throw LibraryStoreError.unsafeRemovalPath(file.path)
+                }
+                targets.append(file)
+            }
         }
+        return targets.sorted { $0.path < $1.path }
+    }
+
+    private func validatedVideoPlaybackCaches(for id: String) throws -> [URL] {
+        // Playback preparation only creates caches for ASCII-safe IDs.
+        guard !id.isEmpty, id.utf8.allSatisfy({
+            (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0)
+                || $0 == 45 || $0 == 95
+        }) else { return [] }
+        let directory = root.appending(path: "VideoPlaybackCache/v1")
+        try validateRemovalAncestors(directory)
+        var targets: [URL] = []
+        for ext in ["mp4", "json"] {
+            let file = directory.appending(path: "\(id).\(ext)")
+            guard let type = try removalNodeType(file) else { continue }
+            guard type == mode_t(S_IFREG) else {
+                throw LibraryStoreError.unsafeRemovalPath(file.path)
+            }
+            targets.append(file)
+        }
+        return targets
+    }
+
+    private func validatedGeneratedStillImage(for id: String, retaining assets: [WallpaperAsset]) throws -> [URL] {
+        func fileName(_ id: String) -> String {
+            id.components(separatedBy: CharacterSet.alphanumerics.inverted)
+                .filter { !$0.isEmpty }.joined(separator: "-") + "-still.png"
+        }
+        let directory = root.appending(path: "GeneratedStillWallpapers")
+        try validateRemovalAncestors(directory)
+        let file = directory.appending(path: fileName(id))
+        guard let type = try removalNodeType(file) else { return [] }
+        guard type == mode_t(S_IFREG),
+              !assets.contains(where: { fileName($0.id) == file.lastPathComponent }) else {
+            throw LibraryStoreError.unsafeRemovalPath(file.path)
+        }
+        return [file]
+    }
+
+    private func isCacheVersion(_ name: String) -> Bool {
+        name.hasPrefix("v") && !name.dropFirst().isEmpty
+            && name.dropFirst().utf8.allSatisfy { (48...57).contains($0) }
+    }
+
+    private func isSceneCacheFile(_ name: String, assetID: String) -> Bool {
+        if name == "\(assetID).mp4" { return true }
+        let prefix = "\(assetID)-media-"
+        guard name.hasPrefix(prefix), name.hasSuffix(".mp4") else { return false }
+        return isCacheVersion(String(name.dropFirst(prefix.count).dropLast(4)))
+    }
+
+    private func validateRemovalAncestors(_ directory: URL) throws {
+        guard directory.isFileURL, directory.path != "/", directory.path.hasPrefix("/") else {
+            throw LibraryStoreError.unsafeRemovalPath(directory.path)
+        }
+        var current = URL(filePath: "/", directoryHint: .isDirectory)
+        for component in resolvingSystemVarAlias(directory).pathComponents.dropFirst() {
+            guard component != ".", component != ".." else {
+                throw LibraryStoreError.unsafeRemovalPath(directory.path)
+            }
+            current.append(path: component)
+            if let type = try removalNodeType(current), type != mode_t(S_IFDIR) {
+                throw LibraryStoreError.unsafeRemovalPath(current.path)
+            }
+        }
+    }
+
+    private func validateRemovalTree(_ directory: URL) throws {
+        var pending = [directory]
+        while let parent = pending.popLast() {
+            for child in try FileManager.default.contentsOfDirectory(at: parent, includingPropertiesForKeys: nil) {
+                let type = try removalNodeType(child)
+                if type == mode_t(S_IFDIR) {
+                    pending.append(child)
+                } else if type != mode_t(S_IFREG) {
+                    throw LibraryStoreError.unsafeRemovalPath(child.path)
+                }
+            }
+        }
+    }
+
+    private func removalNodeType(_ url: URL) throws -> mode_t? {
+        var info = stat()
+        let result = url.withUnsafeFileSystemRepresentation { path in
+            path.map { lstat($0, &info) } ?? -1
+        }
+        guard result == 0 else {
+            if errno == ENOENT { return nil }
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        if (info.st_mode & S_IFMT) == S_IFREG, info.st_nlink > 1 {
+            throw LibraryStoreError.unsafeRemovalPath(url.path)
+        }
+        return info.st_mode & S_IFMT
+    }
+
+    /// Preserve the existing Trash-first behavior and permanent-delete fallback.
+    private func trashOrRemove(_ url: URL) throws {
         do {
-            try trasher.trashItem(at: directory)
+            try trasher.trashItem(at: url)
         } catch {
-            try trasher.removeItem(at: directory)
+            try trasher.removeItem(at: url)
         }
     }
 
@@ -381,7 +529,7 @@ public struct LibraryStore: Sendable {
         let hasRenderCache = SceneRenderCache.existingVideoURL(
             in: URL(filePath: asset.projectDirectory)
         ) != nil
-        let supportStatus: SupportStatus = SceneRenderPlanBuilder().canBuild(url: entrypointURL)
+        let supportStatus: SupportStatus = SceneRenderPlanBuilder().canPrepare(url: entrypointURL)
             ? .playable
             : .unsupported
         let preserved = asset.issues.filter { issue in
@@ -445,6 +593,7 @@ public enum LibraryStoreError: Error, LocalizedError, Equatable {
     case assetIsNotScene(String)
     case assetOutsideLibrary(String)
     case unsafeSceneRenderCacheDirectory(String)
+    case unsafeRemovalPath(String)
 
     public var errorDescription: String? {
         switch self {
@@ -462,6 +611,8 @@ public enum LibraryStoreError: Error, LocalizedError, Equatable {
             return "Asset \(id) is outside the managed library."
         case .unsafeSceneRenderCacheDirectory(let id):
             return "Scene render cache directory for asset \(id) is unsafe."
+        case .unsafeRemovalPath(let path):
+            return "Unsafe wallpaper removal path: \(path)"
         }
     }
 }

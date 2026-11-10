@@ -87,6 +87,48 @@ final class SceneRecordingCanvasTests: XCTestCase {
         XCTAssertNotNil(SceneVideoCache.freshCachedVideoURL(assetId: asset.id, sourceURL: sceneURL))
     }
 
+    func testExplicitPreparationKeepsAuthoredPortraitCanvasAcrossDifferentDisplayRatios() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let scene = try particleScenePackage(in: root)
+        let oldTools = SceneWallpaperContentFactory.renderingTools
+        let oldRender = SceneWallpaperContentFactory.renderVideo
+        let oldCache = SceneVideoCache.overrideCacheDirectoryURL
+        let oldPreference = SceneWallpaperContentFactory.prefersLivePlayback
+        defer {
+            SceneWallpaperContentFactory.renderingTools = oldTools
+            SceneWallpaperContentFactory.renderVideo = oldRender
+            SceneVideoCache.overrideCacheDirectoryURL = oldCache
+            SceneWallpaperContentFactory.prefersLivePlayback = oldPreference
+        }
+        SceneVideoCache.overrideCacheDirectoryURL = root.appending(path: "v8")
+        SceneWallpaperContentFactory.prefersLivePlayback = false
+        SceneWallpaperContentFactory.renderingTools = {
+            (root.appending(path: "renderer"), root.appending(path: "assets"), "/unused/ffmpeg")
+        }
+        var recordedSizes: [CGSize] = []
+        SceneWallpaperContentFactory.renderVideo = { configuration, _, _ in
+            recordedSizes.append(configuration.size)
+            let output = SceneVideoCache.cachedVideoURL(assetId: configuration.assetId)
+            try FileManager.default.createDirectory(at: output.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data([1]).write(to: output)
+            return output
+        }
+        let asset = WallpaperAsset(id: "prepared-portrait", title: "Portrait", kind: .scene,
+            supportStatus: .playable, source: .manualFolder, projectDirectory: root.path,
+            entrypoint: scene.path, thumbnail: nil, workshopId: nil,
+            redistributionAllowed: false, issues: [])
+
+        try await SceneWallpaperContentFactory.prepare(asset: asset,
+            frame: CGRect(x: 0, y: 0, width: 3440, height: 1440)) { _ in }
+        try await SceneWallpaperContentFactory.prepare(asset: asset,
+            frame: CGRect(x: -1200, y: 0, width: 1200, height: 1920)) { _ in }
+
+        XCTAssertEqual(recordedSizes, [CGSize(width: 1080, height: 1920)],
+                       "Preparation must record the authored canvas once, not cache the first display's ratio")
+        XCTAssertNotNil(SceneVideoCache.freshCachedVideoURL(assetId: asset.id, sourceURL: scene))
+    }
+
     private func temporaryDirectory() throws -> URL {
         let base = ProcessInfo.processInfo.environment["APP_SCRATCH_DIR"].map { URL(filePath: $0) }
             ?? FileManager.default.temporaryDirectory

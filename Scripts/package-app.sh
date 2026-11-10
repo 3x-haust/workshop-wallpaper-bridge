@@ -8,6 +8,8 @@ APP_DIR="$ROOT/dist/$APP_NAME.app"
 MACOS_DIR="$APP_DIR/Contents/MacOS"
 RESOURCES_DIR="$APP_DIR/Contents/Resources"
 RENDERERS_DIR="$RESOURCES_DIR/Renderers"
+STEAM_DIR="$RESOURCES_DIR/Steam"
+STEAM_BUILD_DIR="$ROOT/.build/steam-helper"
 RENDERER_NOTICE_DIR="$RESOURCES_DIR/Renderer Notices"
 RENDERER_NOTICE_PATH="$RENDERER_NOTICE_DIR/GPL Scene Renderer Notice.txt"
 SAVER_NAME="Workshop Wallpaper Bridge"
@@ -107,7 +109,12 @@ bundle_scene_renderer_if_available() {
       exit 1
     fi
   else
-    printf '%s\n' "warning: no external GPL scene renderer bundled; set SCENE_RENDERER_BINARY or place one at $SCENE_RENDERER_CONVENTIONAL_PATH." >&2
+    bash "$ROOT/Scripts/build-scene-renderer.sh"
+    source_path="$SCENE_RENDERER_CONVENTIONAL_PATH"
+    if [ ! -f "$source_path" ] || [ ! -x "$source_path" ]; then
+      printf '%s\n' "scene renderer build did not produce an executable: $source_path" >&2
+      exit 1
+    fi
   fi
 
   mkdir -p "$RENDERER_NOTICE_DIR"
@@ -177,6 +184,7 @@ verify_gatekeeper_accepts_quarantined_app_from_dmg() {
 
 require_notarization_inputs
 cd "$ROOT"
+bash "$ROOT/Scripts/build-steam-helper.sh"
 swift build -c release
 rm -rf "$ROOT/dist"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR" "$SAVER_MACOS_DIR"
@@ -190,6 +198,11 @@ fi
 RESOURCE_BUNDLE_DESTINATION="$RESOURCES_DIR/WorkshopWallpaperBridge_WorkshopWallpaperBridgeApp.bundle"
 cp -R "$RESOURCE_BUNDLE" "$RESOURCE_BUNDLE_DESTINATION"
 bundle_scene_renderer_if_available
+if [ ! -x "$STEAM_BUILD_DIR/wwb-steam-helper" ]; then
+  printf '%s\n' "missing Steam helper; refusing to package a nonfunctional Workshop tab." >&2
+  exit 1
+fi
+cp -R "$STEAM_BUILD_DIR" "$STEAM_DIR"
 cat > "$APP_DIR/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -273,6 +286,12 @@ if [ -n "$SIGN_IDENTITY" ]; then
     done
     codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$SCENE_RENDERER_BUNDLED_PATH"
   fi
+  for dylib in "$STEAM_DIR"/*.dylib; do
+    if [ -f "$dylib" ]; then
+      codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$dylib"
+    fi
+  done
+  codesign --force --options runtime --entitlements "$ROOT/Scripts/steam-helper.entitlements" --timestamp --sign "$SIGN_IDENTITY" "$STEAM_DIR/wwb-steam-helper"
   codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$SAVER_DIR"
   codesign --force --options runtime --entitlements "$ROOT/Scripts/app.entitlements" --timestamp --sign "$SIGN_IDENTITY" "$APP_DIR"
   codesign --verify --strict --verbose=2 "$SAVER_DIR"
@@ -291,6 +310,12 @@ else
     done
     codesign --force --sign - "$SCENE_RENDERER_BUNDLED_PATH"
   fi
+  for dylib in "$STEAM_DIR"/*.dylib; do
+    if [ -f "$dylib" ]; then
+      codesign --force --sign - "$dylib"
+    fi
+  done
+  codesign --force --entitlements "$ROOT/Scripts/steam-helper.entitlements" --sign - "$STEAM_DIR/wwb-steam-helper"
   codesign --force --sign - "$SAVER_DIR"
   codesign --force --sign - "$APP_DIR"
   codesign --verify --strict --verbose=2 "$SAVER_DIR"

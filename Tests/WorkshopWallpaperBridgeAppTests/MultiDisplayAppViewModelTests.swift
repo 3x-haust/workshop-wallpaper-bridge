@@ -359,6 +359,95 @@ final class MultiDisplayAppViewModelTests: XCTestCase {
         XCTAssertEqual(saver.updatedAssetIDs.last, "second", "A late render must not change the global active wallpaper.")
     }
 
+    func testPendingFirstDisplaySurvivesSecondDisplaySelectionPlayFailureAndStop() throws {
+        for action in ["select", "play", "fail", "stop"] {
+            let fixture = try makeFixture()
+            play("first", on: "A", model: fixture.model)
+            fixture.player.defersReadiness = true
+            play("second", on: "A", model: fixture.model)
+            XCTAssertEqual(fixture.model.displayAssignments["A"]?.assetID, "first")
+            fixture.model.selectedDisplayID = "B"
+            switch action {
+            case "play", "fail":
+                play("third", on: "B", model: fixture.model)
+                fixture.player.finish(1, failing: action == "fail")
+            case "stop": fixture.model.stopSelectedPlayback()
+            default: break
+            }
+
+            fixture.player.finish(0)
+
+            XCTAssertEqual(fixture.model.displayAssignments["A"]?.assetID, "second", action)
+            XCTAssertEqual(fixture.model.displayAssignments["B"]?.assetID, action == "play" ? "third" : nil, action)
+            XCTAssertEqual(try savedAssignments(fixture.defaults), fixture.model.displayAssignments)
+        }
+    }
+
+    func testPartialBatchReadinessCannotOverwriteNewerSecondDisplayWallpaper() throws {
+        let fixture = try makeFixture()
+        fixture.player.defersReadiness = true
+        play("first", on: "", model: fixture.model)
+        play("second", on: "B", model: fixture.model)
+        fixture.player.finish(1)
+
+        fixture.player.finish(0)
+
+        XCTAssertEqual(fixture.model.displayAssignments["A"]?.assetID, "first")
+        XCTAssertEqual(fixture.model.displayAssignments["B"]?.assetID, "second")
+        XCTAssertEqual(fixture.defaults.string(forKey: "lastPlayedAssetId"), "second")
+        XCTAssertEqual(try savedAssignments(fixture.defaults), fixture.model.displayAssignments)
+    }
+
+    func testFailedAsynchronousReplacementPreservesAssignmentsPreferencesAndRotation() throws {
+        let fixture = try makeFixture()
+        startRotation(on: "", assetID: "first", model: fixture.model)
+        let assignments = fixture.model.displayAssignments
+        let saved = fixture.defaults.data(forKey: "displayWallpaperAssignments")
+        fixture.player.defersReadiness = true
+        play("third", on: "B", model: fixture.model)
+
+        fixture.player.finish(0, failing: true)
+
+        XCTAssertEqual(fixture.model.displayAssignments, assignments)
+        XCTAssertEqual(fixture.defaults.data(forKey: "displayWallpaperAssignments"), saved)
+        XCTAssertEqual(fixture.defaults.string(forKey: "lastPlayedAssetId"), "first")
+        XCTAssertTrue(fixture.model.rotationEnabled)
+        XCTAssertEqual(fixture.model.rotationDisplayIDs, ["A", "B"])
+    }
+
+    func testReadinessKeepsModeChosenWhilePreparingAndRejectsStaleCallbacks() throws {
+        let fixture = try makeFixture()
+        play("first", on: "A", model: fixture.model)
+        fixture.player.defersReadiness = true
+        play("second", on: "A", model: fixture.model)
+        let stale = fixture.player.pendingRequests[0].completion
+        play("third", on: "A", model: fixture.model)
+        fixture.model.applySelectedDisplayMode(.stretch)
+
+        stale(.success(["A"]))
+        stale(.failure(MultiDisplayPlaybackError.failure))
+        XCTAssertEqual(fixture.model.displayAssignments["A"], assignment("first", mode: .stretch))
+        fixture.player.finish(1)
+
+        XCTAssertEqual(fixture.model.displayAssignments["A"], assignment("third", mode: .stretch))
+        XCTAssertEqual(fixture.player.activeAssignments["A"], assignment("third", mode: .stretch))
+        XCTAssertEqual(try savedAssignments(fixture.defaults), fixture.model.displayAssignments)
+    }
+
+    func testChangingDisplayInvalidatesWorkshopIntentWithoutChangingSavedAssignments() throws {
+        let fixture = try makeFixture()
+        play("first", on: "A", model: fixture.model)
+        let intent = fixture.model.beginApplicationIntent()
+        let saved = fixture.defaults.data(forKey: "displayWallpaperAssignments")
+
+        fixture.model.selectedDisplayID = "B"
+
+        XCTAssertNotEqual(fixture.model.applicationIntentID, intent)
+        XCTAssertEqual(fixture.defaults.data(forKey: "displayWallpaperAssignments"), saved)
+        XCTAssertEqual(fixture.model.displayAssignments["A"], assignment("first"))
+        XCTAssertNil(fixture.model.displayAssignments["B"])
+    }
+
     private struct Fixture {
         let store: LibraryStore
         let defaults: UserDefaults
@@ -470,6 +559,14 @@ private final class MultiDisplayPlayerSpy: WallpaperPlaying {
         let displayIDs: Set<String>
     }
 
+    struct PendingRequest {
+        let asset: WallpaperAsset
+        var displayIDs: Set<String>
+        let mode: WallpaperDisplayMode
+        let completion: (Result<Set<String>, Error>) -> Void
+    }
+    var defersReadiness = false
+    var pendingRequests: [PendingRequest] = []
     var failingAssetIDs: Set<String> = []
     private(set) var playCalls: [PlayCall] = []
     private(set) var stopTargets: [Set<String>] = []
@@ -487,6 +584,38 @@ private final class MultiDisplayPlayerSpy: WallpaperPlaying {
             activeAssignments[id] = DisplayWallpaperAssignment(
                 assetID: asset.id, displayMode: displayMode, isPlaying: true
             )
+        }
+    }
+
+    func play(
+        asset: WallpaperAsset, on displayIDs: Set<String>, autoPauseWhenCovered: Bool,
+        displayMode: WallpaperDisplayMode, audioEnabled: Bool?, audioVolume: Double?,
+        completion: @escaping (Result<Set<String>, Error>) -> Void
+    ) throws {
+        if defersReadiness {
+            pendingRequests.append(PendingRequest(asset: asset, displayIDs: displayIDs, mode: displayMode, completion: completion))
+        } else {
+            try play(asset: asset, on: displayIDs, autoPauseWhenCovered: autoPauseWhenCovered,
+                     displayMode: displayMode, audioEnabled: audioEnabled, audioVolume: audioVolume)
+            completion(.success(displayIDs))
+        }
+    }
+
+    func cancelPendingPlayback(on displayIDs: Set<String>) {
+        for index in pendingRequests.indices { pendingRequests[index].displayIDs.subtract(displayIDs) }
+    }
+
+    func finish(_ index: Int, failing: Bool = false) {
+        let request = pendingRequests[index]
+        guard !request.displayIDs.isEmpty else { return }
+        pendingRequests[index].displayIDs = []
+        if failing {
+            request.completion(.failure(MultiDisplayPlaybackError.failure))
+        } else {
+            for id in request.displayIDs {
+                activeAssignments[id] = DisplayWallpaperAssignment(assetID: request.asset.id, displayMode: request.mode, isPlaying: true)
+            }
+            request.completion(.success(request.displayIDs))
         }
     }
 

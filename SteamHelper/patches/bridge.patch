@@ -1,0 +1,1004 @@
+--- a/DepotDownloader/AccountSettingsStore.cs
++++ b/DepotDownloader/AccountSettingsStore.cs
+@@ -1,2 +1,5 @@
+-// This file is subject to the terms and conditions defined
+-// in file 'LICENSE', which is part of this source code package.
++// This file is subject to the terms and conditions defined in ../LICENSE.
++// Modified for Workshop Wallpaper Bridge: explicit private JSON credential storage.
++using System.Collections.Concurrent;
++using System.Text.Json;
++using WorkshopBridge;
+@@ -4,7 +7 @@
+-using System;
+-using System.Collections.Concurrent;
+-using System.Collections.Generic;
+-using System.IO;
+-using System.IO.Compression;
+-using System.IO.IsolatedStorage;
+-using ProtoBuf;
++namespace DepotDownloader;
+@@ -12 +9 @@
+-namespace DepotDownloader
++internal sealed class AccountSettingsStore
+@@ -14,2 +11,9 @@
+-    [ProtoContract]
+-    class AccountSettingsStore
++    public ConcurrentDictionary<string, int> ContentServerPenalty { get; } = new();
++    public Dictionary<string, string> LoginTokens { get; } = new(StringComparer.OrdinalIgnoreCase);
++    public Dictionary<string, string> GuardData { get; } = new(StringComparer.OrdinalIgnoreCase);
++    public static AccountSettingsStore Instance;
++    private SafeDirectory directory;
++    public string SavedUsername => LoginTokens.Keys.SingleOrDefault();
++    private sealed record Credentials(string username, string refreshToken, string guardData);
++
++    public static void LoadFromFile(string dataDirectory)
+@@ -17 +21,21 @@
+-        // Member 1 was a Dictionary<string, byte[]> for SentryData.
++        try
++        {
++            if (!Path.IsPathFullyQualified(dataDirectory)) throw new IOException();
++            var store = new AccountSettingsStore { directory = new SafeDirectory(dataDirectory, create: true) };
++            store.directory.MakePrivate();
++            var path = store.directory.Check(Path.Combine(store.directory.Root, "credentials.json"));
++            if (File.Exists(path))
++            {
++                using var stream = store.directory.Open(path, FileMode.Open, FileAccess.Read);
++                File.SetUnixFileMode(stream.SafeFileHandle, UnixFileMode.UserRead | UnixFileMode.UserWrite);
++                if (stream.Length > 65536) throw new IOException();
++                var saved = JsonSerializer.Deserialize<Credentials>(stream);
++                if (saved is null || string.IsNullOrWhiteSpace(saved.username) || string.IsNullOrWhiteSpace(saved.refreshToken)) throw new IOException();
++                store.LoginTokens[saved.username] = saved.refreshToken;
++                if (saved.guardData != null) store.GuardData[saved.username] = saved.guardData;
++            }
++            Instance?.directory.Dispose();
++            Instance = store;
++        }
++        catch { throw new HelperFailure("credentialStorageFailed"); }
++    }
+@@ -19,14 +43,3 @@
+-        [ProtoMember(2, IsRequired = false)]
+-        public ConcurrentDictionary<string, int> ContentServerPenalty { get; private set; }
+-
+-        // Member 3 was a Dictionary<string, string> for LoginKeys.
+-
+-        [ProtoMember(4, IsRequired = false)]
+-        public Dictionary<string, string> LoginTokens { get; private set; }
+-
+-        [ProtoMember(5, IsRequired = false)]
+-        public Dictionary<string, string> GuardData { get; private set; }
+-
+-        string FileName;
+-
+-        AccountSettingsStore()
++    public static void Save()
++    {
++        try
+@@ -34,3 +47,18 @@
+-            ContentServerPenalty = new ConcurrentDictionary<string, int>();
+-            LoginTokens = new(StringComparer.OrdinalIgnoreCase);
+-            GuardData = new(StringComparer.OrdinalIgnoreCase);
++            var store = Instance;
++            var path = Path.Combine(store.directory.Root, "credentials.json");
++            store.directory.Check(path);
++            if (store.LoginTokens.Count == 0)
++            {
++                if (File.Exists(path)) store.directory.Delete(path);
++                return;
++            }
++            var account = store.LoginTokens.Single();
++            store.GuardData.TryGetValue(account.Key, out var guard);
++            var temporary = Path.Combine(store.directory.Root, "credentials.json.tmp");
++            if (File.Exists(store.directory.Check(temporary))) store.directory.Delete(temporary);
++            using (var stream = store.directory.Open(temporary, FileMode.CreateNew, FileAccess.Write))
++            {
++                JsonSerializer.Serialize(stream, new Credentials(account.Key, account.Value, guard));
++                stream.Flush(flushToDisk: true);
++            }
++            store.directory.Move(temporary, path);
+@@ -38,52 +66 @@
+-
+-        static bool Loaded
+-        {
+-            get { return Instance != null; }
+-        }
+-
+-        public static AccountSettingsStore Instance;
+-        static readonly IsolatedStorageFile IsolatedStorage = IsolatedStorageFile.GetUserStoreForAssembly();
+-
+-        public static void LoadFromFile(string filename)
+-        {
+-            if (Loaded)
+-                throw new Exception("Config already loaded");
+-
+-            if (IsolatedStorage.FileExists(filename))
+-            {
+-                try
+-                {
+-                    using var fs = IsolatedStorage.OpenFile(filename, FileMode.Open, FileAccess.Read);
+-                    using var ds = new DeflateStream(fs, CompressionMode.Decompress);
+-                    Instance = Serializer.Deserialize<AccountSettingsStore>(ds);
+-                }
+-                catch (IOException ex)
+-                {
+-                    Console.WriteLine("Failed to load account settings: {0}", ex.Message);
+-                    Instance = new AccountSettingsStore();
+-                }
+-            }
+-            else
+-            {
+-                Instance = new AccountSettingsStore();
+-            }
+-
+-            Instance.FileName = filename;
+-        }
+-
+-        public static void Save()
+-        {
+-            if (!Loaded)
+-                throw new Exception("Saved config before loading");
+-
+-            try
+-            {
+-                using var fs = IsolatedStorage.OpenFile(Instance.FileName, FileMode.Create, FileAccess.Write);
+-                using var ds = new DeflateStream(fs, CompressionMode.Compress);
+-                Serializer.Serialize(ds, Instance);
+-            }
+-            catch (IOException ex)
+-            {
+-                Console.WriteLine("Failed to save account settings: {0}", ex.Message);
+-            }
+-        }
++        catch { throw new HelperFailure("credentialStorageFailed"); }
+--- a/DepotDownloader/Ansi.cs
++++ b/DepotDownloader/Ansi.cs
+@@ -1,6 +1,3 @@
+-// This file is subject to the terms and conditions defined
+-// in file 'LICENSE', which is part of this source code package.
+-
+-using System;
+-using Spectre.Console;
+-
++// This file is subject to the terms and conditions defined in ../LICENSE.
++// Modified for Workshop Wallpaper Bridge: structured progress, no terminal escapes.
++using WorkshopBridge;
+@@ -8,2 +5 @@
+-
+-static class Ansi
++internal static class Ansi
+@@ -11,48 +7,3 @@
+-    // https://conemu.github.io/en/AnsiEscapeCodes.html#ConEmu_specific_OSC
+-    // https://learn.microsoft.com/en-us/windows/terminal/tutorials/progress-bar-sequences
+-    public enum ProgressState
+-    {
+-        Hidden = 0,
+-        Default = 1,
+-        Error = 2,
+-        Indeterminate = 3,
+-        Warning = 4,
+-    }
+-
+-    const char ESC = (char)0x1B;
+-    const char BEL = (char)0x07;
+-
+-    private static bool useProgress;
+-
+-    public static void Init()
+-    {
+-        if (Console.IsInputRedirected || Console.IsOutputRedirected)
+-        {
+-            return;
+-        }
+-
+-        if (OperatingSystem.IsLinux())
+-        {
+-            return;
+-        }
+-
+-        var (supportsAnsi, legacyConsole) = AnsiDetector.Detect(stdError: false, upgrade: true);
+-
+-        useProgress = supportsAnsi && !legacyConsole;
+-    }
+-
+-    public static void Progress(ulong downloaded, ulong total)
+-    {
+-        var progress = (byte)MathF.Round(downloaded / (float)total * 100.0f);
+-        Progress(ProgressState.Default, progress);
+-    }
+-
+-    public static void Progress(ProgressState state, byte progress = 0)
+-    {
+-        if (!useProgress)
+-        {
+-            return;
+-        }
+-
+-        Console.Write($"{ESC}]9;4;{(byte)state};{progress}{BEL}");
+-    }
++    public enum ProgressState { Hidden, Default, Error, Indeterminate, Warning }
++    public static void Progress(ulong downloaded, ulong total) => BridgeContext.Emit("progress", new { completed = downloaded, total });
++    public static void Progress(ProgressState state, byte progress = 0) { }
+--- a/DepotDownloader/ConsoleAuthenticator.cs
++++ b/DepotDownloader/ConsoleAuthenticator.cs
+@@ -1,2 +1,4 @@
+-// This file is subject to the terms and conditions defined
+-// in file 'LICENSE', which is part of this source code package.
++// This file is subject to the terms and conditions defined in ../LICENSE.
++// Modified for Workshop Wallpaper Bridge: codes only arrive over the JSON pipe.
++using SteamKit2.Authentication;
++using WorkshopBridge;
+@@ -4,3 +6 @@
+-using System;
+-using System.Threading.Tasks;
+-using SteamKit2.Authentication;
++namespace DepotDownloader;
+@@ -8 +8 @@
+-namespace DepotDownloader
++internal sealed class ConsoleAuthenticator(CancellationToken cancellation = default) : IAuthenticator
+@@ -10,2 +10 @@
+-    // This is practically copied from https://github.com/SteamRE/SteamKit/blob/master/SteamKit2/SteamKit2/Steam/Authentication/UserConsoleAuthenticator.cs
+-    internal class ConsoleAuthenticator : IAuthenticator
++    private Task<string> Request(string prompt)
+@@ -13,62 +12,10 @@
+-        /// <inheritdoc />
+-        public Task<string> GetDeviceCodeAsync(bool previousCodeWasIncorrect)
+-        {
+-            if (previousCodeWasIncorrect)
+-            {
+-                Console.Error.WriteLine("The previous 2-factor auth code you have provided is incorrect.");
+-            }
+-
+-            string code;
+-
+-            do
+-            {
+-                Console.Error.Write("STEAM GUARD! Please enter your 2-factor auth code from your authenticator app: ");
+-                code = Console.ReadLine()?.Trim();
+-
+-                if (code == null)
+-                {
+-                    break;
+-                }
+-            }
+-            while (string.IsNullOrEmpty(code));
+-
+-            return Task.FromResult(code!);
+-        }
+-
+-        /// <inheritdoc />
+-        public Task<string> GetEmailCodeAsync(string email, bool previousCodeWasIncorrect)
+-        {
+-            if (previousCodeWasIncorrect)
+-            {
+-                Console.Error.WriteLine("The previous 2-factor auth code you have provided is incorrect.");
+-            }
+-
+-            string code;
+-
+-            do
+-            {
+-                Console.Error.Write($"STEAM GUARD! Please enter the auth code sent to the email at {email}: ");
+-                code = Console.ReadLine()?.Trim();
+-
+-                if (code == null)
+-                {
+-                    break;
+-                }
+-            }
+-            while (string.IsNullOrEmpty(code));
+-
+-            return Task.FromResult(code!);
+-        }
+-
+-        /// <inheritdoc />
+-        public Task<bool> AcceptDeviceConfirmationAsync()
+-        {
+-            if (ContentDownloader.Config.SkipAppConfirmation)
+-            {
+-                return Task.FromResult(false);
+-            }
+-
+-            Console.Error.WriteLine("STEAM GUARD! Use the Steam Mobile App to confirm your sign in...");
+-
+-            return Task.FromResult(true);
+-        }
++        cancellation.ThrowIfCancellationRequested();
++        return BridgeContext.RequestGuard(prompt).WaitAsync(cancellation);
++    }
++    public Task<string> GetDeviceCodeAsync(bool previousCodeWasIncorrect) => Request("twoFactor");
++    public Task<string> GetEmailCodeAsync(string email, bool previousCodeWasIncorrect) => Request("emailCode");
++    public Task<bool> AcceptDeviceConfirmationAsync()
++    {
++        cancellation.ThrowIfCancellationRequested();
++        BridgeContext.Emit("authPrompt", new { prompt = "mobileApproval", message = "Approve sign-in in the Steam mobile app." });
++        return Task.FromResult(true);
+--- a/DepotDownloader/ContentDownloader.cs
++++ b/DepotDownloader/ContentDownloader.cs
+@@ -14,0 +15,4 @@
++using WorkshopBridge;
++using File = WorkshopBridge.DownloadIO;
++using Directory = WorkshopBridge.DownloadIO;
++using Path = WorkshopBridge.DownloadPath;
+@@ -31,0 +36 @@
++        internal static Steam3Session Session => steam3;
+@@ -339,0 +345 @@
++            if (appId != 431960) throw new HelperFailure("wrongApp");
+@@ -341,4 +347,11 @@
+-
+-            if (!string.IsNullOrEmpty(details?.file_url))
+-            {
+-                await DownloadWebFile(appId, details.filename, details.file_url);
++            await DownloadPublishedDetailsAsync(appId, details);
++        }
++
++        internal static async Task DownloadPublishedDetailsAsync(uint appId, SteamKit2.Internal.PublishedFileDetails details)
++        {
++            if (appId != 431960) throw new HelperFailure("wrongApp");
++            WorkshopItem.Validate(details);
++
++            if (!string.IsNullOrEmpty(details.file_url))
++            {
++                await DownloadWebFile(appId, details.filename, details.file_url, details.file_size);
+@@ -352 +365 @@
+-                Console.WriteLine("Unable to locate manifest ID for published file {0}", publishedFileId);
++                throw new HelperFailure("missingManifest");
+@@ -379,2 +392,3 @@
+-        private static async Task DownloadWebFile(uint appId, string fileName, string url)
+-        {
++        private static async Task DownloadWebFile(uint appId, string fileName, string url, ulong? expectedSize = null)
++        {
++            DownloadVerification.ValidateName(fileName);
+@@ -382,4 +396 @@
+-            {
+-                Console.WriteLine("Error: Unable to create install directories!");
+-                return;
+-            }
++                throw new HelperFailure("unsafePath");
+@@ -398 +409,6 @@
+-                var responseStream = await client.GetStreamAsync(url);
++                if (!Uri.TryCreate(url, UriKind.Absolute, out var address) || address.Scheme != "https")
++                    throw new HelperFailure("unavailable");
++                using var response = await client.GetAsync(address, System.Net.Http.HttpCompletionOption.ResponseHeadersRead);
++                if (response.StatusCode is HttpStatusCode.Forbidden or HttpStatusCode.Unauthorized) throw new HelperFailure("accessDenied");
++                response.EnsureSuccessStatusCode();
++                using var responseStream = await response.Content.ReadAsStreamAsync();
+@@ -399,0 +416,4 @@
++                DownloadIO.Boundary.CheckRoot();
++                if (expectedSize is null || (ulong)file.Length != expectedSize.Value)
++                    throw new HelperFailure("integrityFailed");
++                Ansi.Progress((ulong)file.Length, expectedSize.Value);
+@@ -437,2 +457 @@
+-                    var contentName = GetAppName(appId);
+-                    throw new ContentDownloaderException(string.Format("App {0} ({1}) is not available from this account.", appId, contentName));
++                    throw new HelperFailure("accessDenied");
+@@ -448,0 +468 @@
++                if (depots == null) throw new HelperFailure("missingManifest");
+@@ -539,4 +559,2 @@
+-                if (info != null)
+-                {
+-                    infos.Add(info);
+-                }
++                if (info == null) throw new HelperFailure("missingManifest");
++                infos.Add(info);
+@@ -567,3 +585 @@
+-                Console.WriteLine("Depot {0} is not available from this account.", depotId);
+-
+-                return null;
++                throw new HelperFailure("accessDenied");
+@@ -584,2 +600 @@
+-                    Console.WriteLine("Depot {0} missing public subsection or manifest section.", depotId);
+-                    return null;
++                    throw new HelperFailure("missingManifest");
+@@ -592,2 +607 @@
+-                Console.WriteLine("No valid depot key for {0}, unable to download.", depotId);
+-                return null;
++                throw new HelperFailure("accessDenied");
+@@ -600,2 +614 @@
+-                Console.WriteLine("Error: Unable to create install directories!");
+-                return null;
++                throw new HelperFailure("unsafePath");
+@@ -659,0 +673 @@
++            if (depots.Count == 0) throw new HelperFailure("missingManifest");
+@@ -827,2 +841 @@
+-                                Console.WriteLine("Encountered {2} for depot manifest {0} {1}. Aborting.", depot.DepotId, depot.ManifestId, (int)e.StatusCode);
+-                                break;
++                                throw new HelperFailure("accessDenied");
+@@ -833,2 +846 @@
+-                                Console.WriteLine("Encountered 404 for depot manifest {0} {1}. Aborting.", depot.DepotId, depot.ManifestId);
+-                                break;
++                                throw new HelperFailure("missingManifest");
+@@ -859 +871 @@
+-                    Util.SaveManifestToFile(configDir, newManifest);
++                    if (!Util.SaveManifestToFile(configDir, newManifest)) throw new HelperFailure("integrityFailed");
+@@ -874,0 +887,2 @@
++
++            DownloadVerification.ValidateManifest(filesAfterExclusions);
+@@ -942,0 +957,2 @@
++            DownloadVerification.Verify(depot.InstallDir, files);
++
+@@ -961,0 +978 @@
++                    DownloadVerification.ValidateName(existingFileName);
+@@ -1257,2 +1274 @@
+-                            Console.WriteLine("Encountered {1} for chunk {0}. Aborting.", chunkID, (int)e.StatusCode);
+-                            break;
++                            throw new HelperFailure("accessDenied");
+@@ -1292,0 +1309 @@
++                    DownloadIO.Boundary.CheckRoot();
+@@ -1358 +1375 @@
+-            using var sw = new StreamWriter(txtManifest);
++            using var sw = new StreamWriter(File.OpenWrite(txtManifest));
+--- a/DepotDownloader/DepotConfigStore.cs
++++ b/DepotDownloader/DepotConfigStore.cs
+@@ -8,0 +9 @@
++using File = WorkshopBridge.DownloadIO;
+--- a/DepotDownloader/PlatformUtilities.cs
++++ b/DepotDownloader/PlatformUtilities.cs
+@@ -1,8 +1,5 @@
+-// This file is subject to the terms and conditions defined
+-// in file 'LICENSE', which is part of this source code package.
+-
+-using System.IO;
+-using System.Runtime.InteropServices;
+-using System.Runtime.Versioning;
+-
+-namespace DepotDownloader
++// This file is subject to the terms and conditions defined in ../LICENSE.
++// Modified for Workshop Wallpaper Bridge: all permission changes are descriptor-relative.
++using WorkshopBridge;
++namespace DepotDownloader;
++internal static class PlatformUtilities
+@@ -10,41 +7 @@
+-    static class PlatformUtilities
+-    {
+-        public static void SetExecutable(string path, bool value)
+-        {
+-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+-            {
+-                return;
+-            }
+-
+-            const UnixFileMode ModeExecute = UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute;
+-
+-            var mode = File.GetUnixFileMode(path);
+-            var hasExecuteMask = (mode & ModeExecute) == ModeExecute;
+-            if (hasExecuteMask != value)
+-            {
+-                File.SetUnixFileMode(path, value
+-                    ? mode | ModeExecute
+-                    : mode & ~ModeExecute);
+-            }
+-        }
+-
+-        [SupportedOSPlatform("windows5.0")]
+-        public static void VerifyConsoleLaunch()
+-        {
+-            // Reference: https://devblogs.microsoft.com/oldnewthing/20160125-00/?p=92922
+-            var processList = new uint[2];
+-            var processCount = Windows.Win32.PInvoke.GetConsoleProcessList(processList);
+-
+-            if (processCount != 1)
+-            {
+-                return;
+-            }
+-
+-            _ = Windows.Win32.PInvoke.MessageBox(
+-                Windows.Win32.Foundation.HWND.Null,
+-                "Depot Downloader is a console application; there is no GUI.\n\nIf you do not pass any command line parameters, it prints usage info and exits.\n\nYou must use this from a terminal/console.",
+-                "Depot Downloader",
+-                Windows.Win32.UI.WindowsAndMessaging.MESSAGEBOX_STYLE.MB_OK | Windows.Win32.UI.WindowsAndMessaging.MESSAGEBOX_STYLE.MB_ICONWARNING
+-            );
+-        }
+-    }
++    public static void SetExecutable(string path, bool value) => DownloadIO.Boundary.SetExecutable(path, value);
+--- a/DepotDownloader/ProtoManifest.cs
++++ b/DepotDownloader/ProtoManifest.cs
+@@ -11,0 +12,2 @@
++
++using File = WorkshopBridge.DownloadIO;
+--- a/DepotDownloader/Steam3Session.cs
++++ b/DepotDownloader/Steam3Session.cs
+@@ -11 +11 @@
+-using QRCoder;
++using WorkshopBridge;
+@@ -44,0 +45,6 @@
++        readonly Func<uint, uint, string, Task<SteamContent.CDNAuthToken>> getCDNAuthToken;
++
++        internal Steam3Session(Func<uint, uint, string, Task<SteamContent.CDNAuthToken>> getCDNAuthToken)
++        {
++            this.getCDNAuthToken = getCDNAuthToken;
++        }
+@@ -47,6 +53 @@
+-        bool bConnecting;
+-        bool bAborted;
+-        bool bExpectingDisconnectRemote;
+-        bool bDidDisconnect;
+-        bool bIsConnectionRecovery;
+-        int connectionBackoff;
++        volatile bool bAborted;
+@@ -55,0 +57,2 @@
++        readonly AuthenticationAttempt authentication = new();
++        public string AccountName => IsLoggedOn ? logonDetails.Username : null;
+@@ -77,0 +81 @@
++            this.getCDNAuthToken = async (appId, depotId, host) => await steamContent.GetCDNAuthToken(appId, depotId, host);
+@@ -118,6 +122,3 @@
+-            if (IsLoggedOn || bAborted)
+-                return IsLoggedOn;
+-
+-            WaitUntilCallback(() => { }, () => IsLoggedOn);
+-
+-            return IsLoggedOn;
++            if (bAborted) return false;
++            WaitUntilCallback(() => { }, () => IsLoggedOn && Licenses != null);
++            return IsLoggedOn && !bAborted && Licenses != null;
+@@ -283,0 +285,2 @@
++            if (bAborted) throw new HelperFailure("disconnected");
++
+@@ -285,19 +288,29 @@
+-            var completion = new TaskCompletionSource<SteamContent.CDNAuthToken>();
+-
+-            if (bAborted || !CDNAuthTokens.TryAdd(cdnKey, completion))
+-            {
+-                return;
+-            }
+-
+-            DebugLog.WriteLine(nameof(Steam3Session), $"Requesting CDN auth token for {server.Host}");
+-
+-            var cdnAuth = await steamContent.GetCDNAuthToken(appid, depotid, server.Host);
+-
+-            Console.WriteLine($"Got CDN auth token for {server.Host} result: {cdnAuth.Result} (expires {cdnAuth.Expiration})");
+-
+-            if (cdnAuth.Result != EResult.OK)
+-            {
+-                return;
+-            }
+-
+-            completion.TrySetResult(cdnAuth);
++            var completion = new TaskCompletionSource<SteamContent.CDNAuthToken>(TaskCreationOptions.RunContinuationsAsynchronously);
++            var pending = CDNAuthTokens.GetOrAdd(cdnKey, completion);
++            if (pending != completion)
++            {
++                await pending.Task;
++                return;
++            }
++
++            try
++            {
++                abortedToken.Token.ThrowIfCancellationRequested();
++                DebugLog.WriteLine(nameof(Steam3Session), $"Requesting CDN auth token for {server.Host}");
++
++                var cdnAuth = await getCDNAuthToken(appid, depotid, server.Host).WaitAsync(abortedToken.Token);
++
++                Console.WriteLine($"Got CDN auth token for {server.Host} result: {cdnAuth.Result} (expires {cdnAuth.Expiration})");
++
++                if (cdnAuth.Result != EResult.OK)
++                    throw new HelperFailure(cdnAuth.Result == EResult.AccessDenied ? "accessDenied" : "unavailable");
++
++                completion.TrySetResult(cdnAuth);
++            }
++            catch (Exception error)
++            {
++                completion.TrySetException(error is HelperFailure ? error :
++                    new HelperFailure(error is OperationCanceledException ? "disconnected" : "unavailable"));
++            }
++
++            await completion.Task;
+@@ -336 +349 @@
+-            var pubFileRequest = new CPublishedFile_GetDetails_Request { appid = appId };
++            var pubFileRequest = new CPublishedFile_GetDetails_Request { appid = appId, includetags = true };
+@@ -346,3 +359,12 @@
+-            throw new Exception($"EResult {(int)details.Result} ({details.Result}) while retrieving file details for pubfile {pubFile}.");
+-        }
+-
++            throw new HelperFailure(details.Result == EResult.AccessDenied ? "accessDenied" : "unavailable");
++        }
++
++
++        internal const uint SearchPageSize = 30;
++
++        public async Task<CPublishedFile_QueryFiles_Response> Search(CPublishedFile_QueryFiles_Request request)
++        {
++            var response = await steamPublishedFile.QueryFiles(request);
++            if (response.Result != EResult.OK) throw new HelperFailure("unavailable");
++            return response.Body;
++        }
+@@ -366,7 +387,0 @@
+-        private void ResetConnectionFlags()
+-        {
+-            bExpectingDisconnectRemote = false;
+-            bDidDisconnect = false;
+-            bIsConnectionRecovery = false;
+-        }
+-
+@@ -376,2 +390,0 @@
+-            bConnecting = true;
+-            connectionBackoff = 0;
+@@ -379,2 +391,0 @@
+-
+-            ResetConnectionFlags();
+@@ -391,5 +402 @@
+-            if (sendLogOff)
+-            {
+-                steamUser.LogOff();
+-            }
+-
++            IsLoggedOn = false;
+@@ -397,2 +404,2 @@
+-            bConnecting = false;
+-            bIsConnectionRecovery = false;
++            authentication.Cancel();
++            BridgeContext.CancelGuard();
+@@ -399,0 +407 @@
++            if (sendLogOff) steamUser.LogOff();
+@@ -401,14 +408,0 @@
+-
+-            Ansi.Progress(Ansi.ProgressState.Hidden);
+-
+-            // flush callbacks until our disconnected event
+-            while (!bDidDisconnect)
+-            {
+-                callbacks.RunWaitAllCallbacks(TimeSpan.FromMilliseconds(100));
+-            }
+-        }
+-
+-        private void Reconnect()
+-        {
+-            bIsConnectionRecovery = true;
+-            steamClient.Disconnect();
+@@ -419,22 +413,21 @@
+-            Console.WriteLine(" Done!");
+-            bConnecting = false;
+-
+-            // Update our tracking so that we don't time out, even if we need to reconnect multiple times,
+-            // e.g. if the authentication phase takes a while and therefore multiple connections.
+-            connectionBackoff = 0;
+-
+-            if (!authenticatedUser)
+-            {
+-                Console.Write("Logging anonymously into Steam3...");
+-                steamUser.LogOnAnonymous();
+-            }
+-            else
+-            {
+-                if (logonDetails.Username != null)
+-                {
+-                    Console.WriteLine("Logging '{0}' into Steam3...", logonDetails.Username);
+-                }
+-
+-                if (authSession is null)
+-                {
+-                    if (logonDetails.Username != null && logonDetails.Password != null && logonDetails.AccessToken is null)
++            try { await AuthenticateAsync(); }
++            catch (Exception error)
++            {
++                if (!bAborted)
++                {
++                    BridgeContext.AuthenticationError = error is HelperFailure ? error : new HelperFailure("authenticationFailed");
++                    Abort(false);
++                }
++            }
++        }
++
++        private async Task AuthenticateAsync()
++        {
++            if (bAborted || !authentication.TryStart()) return;
++            if (!authenticatedUser) throw new HelperFailure("authenticationRequired");
++
++            if (logonDetails.AccessToken == null)
++            {
++                if (ContentDownloader.Config.UseQrCode)
++                {
++                    var qr = await steamClient.Authentication.BeginAuthSessionViaQRAsync(new AuthSessionDetails
+@@ -442,65 +435,11 @@
+-                        try
+-                        {
+-                            _ = AccountSettingsStore.Instance.GuardData.TryGetValue(logonDetails.Username, out var guarddata);
+-                            authSession = await steamClient.Authentication.BeginAuthSessionViaCredentialsAsync(new AuthSessionDetails
+-                            {
+-                                DeviceFriendlyName = nameof(DepotDownloader),
+-                                Username = logonDetails.Username,
+-                                Password = logonDetails.Password,
+-                                IsPersistentSession = ContentDownloader.Config.RememberPassword,
+-                                GuardData = guarddata,
+-                                Authenticator = new ConsoleAuthenticator(),
+-                            });
+-                        }
+-                        catch (TaskCanceledException)
+-                        {
+-                            return;
+-                        }
+-                        catch (Exception ex)
+-                        {
+-                            Console.Error.WriteLine("Failed to authenticate with Steam: " + ex.Message);
+-                            Abort(false);
+-                            return;
+-                        }
+-                    }
+-                    else if (logonDetails.AccessToken is null && ContentDownloader.Config.UseQrCode)
+-                    {
+-                        Console.WriteLine("Logging in with QR code...");
+-
+-                        try
+-                        {
+-                            var session = await steamClient.Authentication.BeginAuthSessionViaQRAsync(new AuthSessionDetails
+-                            {
+-                                DeviceFriendlyName = nameof(DepotDownloader),
+-                                IsPersistentSession = ContentDownloader.Config.RememberPassword,
+-                            });
+-
+-                            authSession = session;
+-
+-                            // Steam will periodically refresh the challenge url, so we need a new QR code.
+-                            session.ChallengeURLChanged = () =>
+-                            {
+-                                Console.WriteLine();
+-                                Console.WriteLine("The QR code has changed:");
+-
+-                                DisplayQrCode(session.ChallengeURL);
+-                            };
+-
+-                            // Draw initial QR code immediately
+-                            DisplayQrCode(session.ChallengeURL);
+-                        }
+-                        catch (TaskCanceledException)
+-                        {
+-                            return;
+-                        }
+-                        catch (Exception ex)
+-                        {
+-                            Console.Error.WriteLine("Failed to authenticate with Steam: " + ex.Message);
+-                            Abort(false);
+-                            return;
+-                        }
+-                    }
+-                }
+-
+-                if (authSession != null)
+-                {
++                        DeviceFriendlyName = "Workshop Wallpaper Bridge",
++                        IsPersistentSession = true,
++                    });
++                    authentication.Token.ThrowIfCancellationRequested();
++                    authSession = qr;
++                    qr.ChallengeURLChanged = () => DisplayQrCode(qr.ChallengeURL);
++                    DisplayQrCode(qr.ChallengeURL);
++                }
++                else
++                {
++                    AccountSettingsStore.Instance.GuardData.TryGetValue(logonDetails.Username, out var guardData);
+@@ -509,7 +448 @@
+-                        var result = await authSession.PollingWaitForResultAsync();
+-
+-                        logonDetails.Username = result.AccountName;
+-                        logonDetails.Password = null;
+-                        logonDetails.AccessToken = result.RefreshToken;
+-
+-                        if (result.NewGuardData != null)
++                        authSession = await steamClient.Authentication.BeginAuthSessionViaCredentialsAsync(new AuthSessionDetails
+@@ -517,14 +450,7 @@
+-                            AccountSettingsStore.Instance.GuardData[result.AccountName] = result.NewGuardData;
+-
+-                            if (ContentDownloader.Config.UseQrCode)
+-                            {
+-                                Console.WriteLine($"Success! Next time you can login with -username {result.AccountName} -remember-password instead of -qr.");
+-                            }
+-                        }
+-                        else
+-                        {
+-                            AccountSettingsStore.Instance.GuardData.Remove(result.AccountName);
+-                        }
+-
+-                        AccountSettingsStore.Instance.LoginTokens[result.AccountName] = result.RefreshToken;
+-                        AccountSettingsStore.Save();
++                            DeviceFriendlyName = "Workshop Wallpaper Bridge",
++                            Username = logonDetails.Username,
++                            Password = logonDetails.Password,
++                            IsPersistentSession = true,
++                            GuardData = guardData,
++                            Authenticator = new ConsoleAuthenticator(authentication.Token),
++                        });
+@@ -532,16 +458,21 @@
+-                    catch (TaskCanceledException)
+-                    {
+-                        return;
+-                    }
+-                    catch (Exception ex)
+-                    {
+-                        Console.Error.WriteLine("Failed to authenticate with Steam: " + ex.Message);
+-                        Abort(false);
+-                        return;
+-                    }
+-
+-                    authSession = null;
+-                }
+-
+-                steamUser.LogOn(logonDetails);
+-            }
++                    finally { logonDetails.Password = null; }
++                    authentication.Token.ThrowIfCancellationRequested();
++                }
++
++                var result = await authSession.PollingWaitForResultAsync(authentication.Token);
++                authentication.Token.ThrowIfCancellationRequested();
++                if (authSession is QrAuthSession qrSession) qrSession.ChallengeURLChanged = null;
++                authSession = null;
++                logonDetails.Username = result.AccountName;
++                logonDetails.AccessToken = result.RefreshToken;
++                var store = AccountSettingsStore.Instance;
++                store.LoginTokens.Clear();
++                store.GuardData.Clear();
++                store.LoginTokens[result.AccountName] = result.RefreshToken;
++                if (result.NewGuardData != null) store.GuardData[result.AccountName] = result.NewGuardData;
++                try { AccountSettingsStore.Save(); }
++                catch { store.LoginTokens.Clear(); store.GuardData.Clear(); throw; }
++            }
++
++            authentication.Token.ThrowIfCancellationRequested();
++            if (!bAborted) steamUser.LogOn(logonDetails);
+@@ -552,15 +483,16 @@
+-            bDidDisconnect = true;
+-
+-            DebugLog.WriteLine(nameof(Steam3Session), $"Disconnected: bIsConnectionRecovery = {bIsConnectionRecovery}, UserInitiated = {disconnected.UserInitiated}, bExpectingDisconnectRemote = {bExpectingDisconnectRemote}");
+-
+-            // When recovering the connection, we want to reconnect even if the remote disconnects us
+-            if (!bIsConnectionRecovery && (disconnected.UserInitiated || bExpectingDisconnectRemote))
+-            {
+-                Console.WriteLine("Disconnected from Steam");
+-
+-                // Any operations outstanding need to be aborted
+-                bAborted = true;
+-            }
+-            else if (connectionBackoff >= 10)
+-            {
+-                Console.WriteLine("Could not connect to Steam after 10 tries");
++            IsLoggedOn = false;
++            if (bAborted) return;
++            bAborted = true;
++            authentication.Cancel();
++            BridgeContext.CancelGuard();
++            abortedToken.Cancel();
++            BridgeContext.AuthenticationError ??= new HelperFailure("disconnected");
++            BridgeContext.Emit("disconnected", new { });
++        }
++
++        private void LogOnCallback(SteamUser.LoggedOnCallback loggedOn)
++        {
++            if (bAborted || authentication.Token.IsCancellationRequested) return;
++            if (loggedOn.Result != EResult.OK)
++            {
++                BridgeContext.AuthenticationError = new HelperFailure("authenticationFailed");
+@@ -568,102 +500,2 @@
+-            }
+-            else if (!bAborted)
+-            {
+-                connectionBackoff += 1;
+-
+-                if (bConnecting)
+-                {
+-                    Console.WriteLine($"Connection to Steam failed. Trying again (#{connectionBackoff})...");
+-                }
+-                else
+-                {
+-                    Console.WriteLine("Lost connection to Steam. Reconnecting");
+-                }
+-
+-                Thread.Sleep(1000 * connectionBackoff);
+-
+-                // Any connection related flags need to be reset here to match the state after Connect
+-                ResetConnectionFlags();
+-                steamClient.Connect();
+-            }
+-        }
+-
+-        private void LogOnCallback(SteamUser.LoggedOnCallback loggedOn)
+-        {
+-            var isSteamGuard = loggedOn.Result == EResult.AccountLogonDenied;
+-            var is2FA = loggedOn.Result == EResult.AccountLoginDeniedNeedTwoFactor;
+-            var isAccessToken = ContentDownloader.Config.RememberPassword && logonDetails.AccessToken != null &&
+-                loggedOn.Result is EResult.InvalidPassword
+-                or EResult.InvalidSignature
+-                or EResult.AccessDenied
+-                or EResult.Expired
+-                or EResult.Revoked;
+-
+-            if (isSteamGuard || is2FA || isAccessToken)
+-            {
+-                bExpectingDisconnectRemote = true;
+-                Abort(false);
+-
+-                if (!isAccessToken)
+-                {
+-                    Console.WriteLine("This account is protected by Steam Guard.");
+-                }
+-
+-                if (is2FA)
+-                {
+-                    do
+-                    {
+-                        Console.Write("Please enter your 2 factor auth code from your authenticator app: ");
+-                        logonDetails.TwoFactorCode = Console.ReadLine();
+-                    } while (string.Empty == logonDetails.TwoFactorCode);
+-                }
+-                else if (isAccessToken)
+-                {
+-                    AccountSettingsStore.Instance.LoginTokens.Remove(logonDetails.Username);
+-                    AccountSettingsStore.Save();
+-
+-                    // TODO: Handle gracefully by falling back to password prompt?
+-                    Console.WriteLine($"Access token was rejected ({loggedOn.Result}).");
+-                    Abort(false);
+-                    return;
+-                }
+-                else
+-                {
+-                    do
+-                    {
+-                        Console.Write("Please enter the authentication code sent to your email address: ");
+-                        logonDetails.AuthCode = Console.ReadLine();
+-                    } while (string.Empty == logonDetails.AuthCode);
+-                }
+-
+-                Console.Write("Retrying Steam3 connection...");
+-                Connect();
+-
+-                return;
+-            }
+-
+-            if (loggedOn.Result == EResult.TryAnotherCM)
+-            {
+-                Console.Write("Retrying Steam3 connection (TryAnotherCM)...");
+-
+-                Reconnect();
+-
+-                return;
+-            }
+-
+-            if (loggedOn.Result == EResult.ServiceUnavailable)
+-            {
+-                Console.WriteLine("Unable to login to Steam3: {0}", loggedOn.Result);
+-                Abort(false);
+-
+-                return;
+-            }
+-
+-            if (loggedOn.Result != EResult.OK)
+-            {
+-                Console.WriteLine("Unable to login to Steam3: {0}", loggedOn.Result);
+-                Abort();
+-
+-                return;
+-            }
+-
+-            Console.WriteLine(" Done!");
++                return;
++            }
+@@ -703,14 +535,4 @@
+-        private static void DisplayQrCode(string challengeUrl)
+-        {
+-            // Encode the link as a QR code
+-            using var qrGenerator = new QRCodeGenerator();
+-            var qrCodeData = qrGenerator.CreateQrCode(challengeUrl, QRCodeGenerator.ECCLevel.L);
+-            using var qrCode = new AsciiQRCode(qrCodeData);
+-            var qrCodeAsAsciiArt = qrCode.GetLineByLineGraphic(1, drawQuietZones: true);
+-
+-            Console.WriteLine("Use the Steam Mobile App to sign in with this QR code:");
+-
+-            foreach (var line in qrCodeAsAsciiArt)
+-            {
+-                Console.WriteLine(line);
+-            }
++        private void DisplayQrCode(string challengeUrl)
++        {
++            if (!authentication.Token.IsCancellationRequested)
++                BridgeContext.Emit("qr", new { url = challengeUrl });
+--- a/DepotDownloader/Util.cs
++++ b/DepotDownloader/Util.cs
+@@ -13,0 +14,3 @@
++using File = WorkshopBridge.DownloadIO;
++using Path = WorkshopBridge.DownloadPath;
++
+@@ -147 +150,2 @@
+-                    return DepotManifest.LoadFromFile(filename);
++                    using var stream = File.Open(filename, FileMode.Open);
++                    return DepotManifest.Deserialize(stream);
+@@ -198 +202 @@
+-                manifest.SaveToFile(filename);
++                using (var stream = File.OpenWrite(filename)) manifest.Serialize(stream);

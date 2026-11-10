@@ -4,7 +4,7 @@ import CoreText
 import WorkshopWallpaperCore
 
 @MainActor
-final class MediaSceneWallpaperView: NSView, WallpaperContentLifecycle, PausableWallpaperContent,
+final class MediaSceneWallpaperView: NSView, WallpaperContentLifecycle, WallpaperContentPreparing, PausableWallpaperContent,
     DisplayModeUpdatableContent, AudioControllableWallpaperContent {
     let background: VideoWallpaperView
     let plan: SceneMediaOverlayPlan
@@ -340,6 +340,7 @@ final class MediaSceneWallpaperView: NSView, WallpaperContentLifecycle, Pausable
     }
     func setDisplayMode(_ mode: WallpaperDisplayMode) { layoutOverlay() }
     func setAudioEnabled(_ enabled: Bool, volume: Double) { background.setAudioEnabled(enabled, volume: volume) }
+    func whenReady(_ completion: @escaping (Result<Void, Error>) -> Void) { background.whenReady(completion) }
     func prepareForClose() { closed = true; stopInputs(); session.close(); background.prepareForClose() }
     private func vector(_ value: Any?, _ fallback: [Double]) -> [Double] {
         guard let v = value as? [Double], v.count == 3, v.allSatisfy({ $0.isFinite && abs($0)<1e7 }) else { return fallback }; return v

@@ -29,7 +29,7 @@ final class MultiDisplayPlaybackTests: XCTestCase {
 
     func testFailedBatchPreservesEveryPreviousWindowAndAssignment() throws {
         var created: [WindowSpy] = []
-        let sessions = DisplayPlaybackSessions { asset, display, _ in
+        let sessions = DisplayPlaybackSessions { asset, display, _, _, _ in
             if asset.id == "bad", display.id == "right" { throw PlaybackError.invalidImage }
             let window = WindowSpy()
             created.append(window)
@@ -127,7 +127,7 @@ final class MultiDisplayPlaybackTests: XCTestCase {
 
     func testReconnectErrorRetainsAssignmentAndHealthyDisplay() throws {
         var failRight = false
-        let sessions = DisplayPlaybackSessions { _, display, _ in
+        let sessions = DisplayPlaybackSessions { _, display, _, _, _ in
             if failRight, display.id == "right" { throw PlaybackError.invalidImage }
             return WindowSpy()
         }
@@ -144,6 +144,61 @@ final class MultiDisplayPlaybackTests: XCTestCase {
         XCTAssertNotNil(sessions.windows[right.id])
     }
 
+    func testPendingWindowRelayoutModeAndSleepStateApplyWhenItBecomesReady() throws {
+        let candidate = WindowSpy(automaticallyReady: false)
+        let sessions = DisplayPlaybackSessions { _, _, _, _, _ in candidate }
+        _ = sessions.reconcile([left])
+        try sessions.play(asset: asset("pending"), on: [left.id], mode: .fit)
+        let changed = WallpaperDisplay(id: left.id, name: left.name,
+            frame: CGRect(x: -900, y: 300, width: 900, height: 1200), scale: 1, isPrimary: true)
+
+        _ = sessions.reconcile([changed])
+        sessions.setMode(.stretch, on: [left.id])
+        sessions.setSleeping(true)
+        XCTAssertNil(sessions.windows[left.id])
+        candidate.complete(.success(()))
+
+        XCTAssertEqual(candidate.display, changed)
+        XCTAssertEqual(candidate.mode, .stretch)
+        XCTAssertEqual(sessions.assignments[left.id]?.mode, .stretch)
+        XCTAssertTrue(candidate.suspended)
+        XCTAssertTrue(sessions.windows[left.id] === candidate)
+        sessions.setSleeping(false)
+        XCTAssertFalse(candidate.suspended)
+    }
+
+    func testDisconnectDropsOnlyItsPendingCandidateAndReconnectsLastReadyAssignment() throws {
+        var automaticallyReady = true
+        var created: [WindowSpy] = []
+        let sessions = DisplayPlaybackSessions { _, _, _, _, _ in
+            let window = WindowSpy(automaticallyReady: automaticallyReady)
+            created.append(window)
+            return window
+        }
+        _ = sessions.reconcile([left, right])
+        try sessions.play(asset: asset("current"), on: [left.id, right.id], mode: .fit)
+        automaticallyReady = false
+        var completed: [Set<String>] = []
+        try sessions.play(asset: asset("pending"), on: [left.id, right.id], mode: .fill) {
+            if let ids = try? $0.get() { completed.append(ids) }
+        }
+
+        _ = sessions.reconcile([left])
+        created[3].complete(.success(()))
+        created[2].complete(.success(()))
+
+        XCTAssertEqual(completed, [[left.id]])
+        XCTAssertTrue(created[1].closed)
+        XCTAssertTrue(created[3].closed)
+        XCTAssertEqual(sessions.assignments[left.id]?.asset.id, "pending")
+        XCTAssertEqual(sessions.assignments[right.id]?.asset.id, "current")
+        automaticallyReady = true
+        _ = sessions.reconcile([right, left])
+        XCTAssertTrue(sessions.windows[left.id] === created[2])
+        XCTAssertTrue(sessions.windows[right.id] === created[4])
+        XCTAssertEqual(sessions.assignments[right.id]?.mode, .fit)
+    }
+
     func testWindowServerCoordinatesSupportAboveBelowAndNegativeOrigins() {
         for (frame, expected) in [
             (CGRect(x: -1000, y: 0, width: 1000, height: 800), CGRect(x: -1000, y: 182, width: 1000, height: 800)),
@@ -155,7 +210,7 @@ final class MultiDisplayPlaybackTests: XCTestCase {
     }
 
     private func makeSessions() -> DisplayPlaybackSessions {
-        DisplayPlaybackSessions { _, _, _ in WindowSpy() }
+        DisplayPlaybackSessions { _, _, _, _, _ in WindowSpy() }
     }
 
     private func asset(_ id: String, kind: WallpaperKind = .video) -> WallpaperAsset {
@@ -171,11 +226,21 @@ private final class WindowSpy: DisplayWallpaperWindow {
     var suspended = false
     var display: WallpaperDisplay?
     var layoutChanges = 0
+    var mode: WallpaperDisplayMode?
+    let automaticallyReady: Bool
+    private var readinessHandler: ((Result<Void, Error>) -> Void)?
+
+    init(automaticallyReady: Bool = true) { self.automaticallyReady = automaticallyReady }
+    func whenReady(_ completion: @escaping (Result<Void, Error>) -> Void) {
+        readinessHandler = completion
+        if automaticallyReady { completion(.success(())) }
+    }
+    func complete(_ result: Result<Void, Error>) { readinessHandler?(result) }
     func show() {}
     func close() { closed = true }
     func updateDisplay(_ display: WallpaperDisplay) { self.display = display; layoutChanges += 1 }
     func setSuspended(_ suspended: Bool) { self.suspended = suspended }
-    func setDisplayMode(_ mode: WallpaperDisplayMode) {}
+    func setDisplayMode(_ mode: WallpaperDisplayMode) { self.mode = mode }
     func setInteractionEnabled(_ enabled: Bool) {}
     func setAudio(enabled: Bool, volume: Double) {}
     func reassertDesktopOrder() {}
