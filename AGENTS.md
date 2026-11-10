@@ -24,7 +24,7 @@ Steam integration contracts:
 - Logout ends the helper session but retains saved authentication. Deleting saved authentication removes only `credentials.json` and its interrupted atomic-save temporary file `credentials.json.tmp` in the app-specific Steam directory. It does not affect authentication or sessions in the Steam app or other Steam clients, or revoke tokens on Steam's servers.
 - Download to `~/Library/Application Support/WorkshopWallpaperBridge/WorkshopDownloads`. Only items with a completion marker enter the completed-download list.
 - If an item ID already exists in the Mac library, link/select the existing copy; never silently overwrite it.
-- Cancelling a download terminates the helper and disconnects its current login. Offer reconnection using saved authentication.
+- Cancelling a download terminates the helper and disconnects its current login. A previously authenticated session may reconnect once using saved authentication after the helper stops; unexpected disconnects use the same bounded recovery. Explicit logout, credential deletion, and cancelled or failed sign-in must not restart automatic login. Ordinary request or local project-inspection failures must not discard a valid Steam session.
 - Do not describe the new end-to-end app flow as verified without actual app evidence.
 
 Why this exists: the project is a bridge for content the user is entitled to access, not a replacement for Wallpaper Engine or Steam.

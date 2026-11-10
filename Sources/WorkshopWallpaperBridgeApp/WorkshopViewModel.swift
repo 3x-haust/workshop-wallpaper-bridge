@@ -41,6 +41,7 @@ final class WorkshopViewModel: ObservableObject {
     private var downloading: WorkshopItem?
     private var staging: URL?
     private var stopping = false
+    private var reconnectAfterApplication = false
     private var applicationIntent: UUID?
     private var downloadIntent: UUID?
     private var pendingSelectionID: String?
@@ -71,7 +72,7 @@ final class WorkshopViewModel: ObservableObject {
             default: break
             }
         }
-        if hasSavedSession, userDefaults.object(forKey: Self.automaticLoginKey) == nil || userDefaults.bool(forKey: Self.automaticLoginKey) {
+        if hasSavedSession, automaticLoginEnabled {
             begin(SteamCommand(id: UUID().uuidString, command: "resume"), operation: "login")
         }
     }
@@ -81,6 +82,10 @@ final class WorkshopViewModel: ObservableObject {
         let count = min(6, pageCount)
         let start = min(max(1, page - 2), pageCount - count + 1)
         return Array(start...(start + (count - 1)))
+    }
+
+    private var automaticLoginEnabled: Bool {
+        userDefaults.object(forKey: Self.automaticLoginKey) == nil || userDefaults.bool(forKey: Self.automaticLoginKey)
     }
 
     var isBusy: Bool { operation != nil }
@@ -192,7 +197,7 @@ final class WorkshopViewModel: ObservableObject {
             // Let the current file operation finish before releasing its write/delete gate.
             statusKey = "workshop.cancelled"
         } else {
-            stop(status: "workshop.cancelled", deleteCredentials: false)
+            stop(status: "workshop.cancelled", deleteCredentials: false, reconnect: isAuthenticated && operation != "login")
         }
     }
 
@@ -211,12 +216,13 @@ final class WorkshopViewModel: ObservableObject {
     private func begin(_ command: SteamCommand, operation: String) {
         guard !isBusy else { return }
         self.operation = operation
+        if operation == "login" { account = nil }
         requestID = command.id
         statusKey = "workshop.working.\(operation)"
         qrURL = nil
         authPrompt = nil
         do { try client.send(command) }
-        catch { fail("workshop.error.helper") }
+        catch { stop(status: "workshop.error.helper", deleteCredentials: false, reconnect: isAuthenticated) }
     }
 
     private func receive(_ event: SteamEvent) {
@@ -311,7 +317,11 @@ final class WorkshopViewModel: ObservableObject {
                 } catch { fail("workshop.error.project") }
             }
         case "error":
-            fail(Self.errorKey(event.code))
+            switch event.code?.lowercased() {
+            case "disconnected": helperExited()
+            case "credentialstoragefailed": stop(status: "workshop.error.storage", deleteCredentials: false)
+            default: fail(Self.errorKey(event.code))
+            }
         default:
             fail("workshop.error.protocol")
         }
@@ -326,23 +336,52 @@ final class WorkshopViewModel: ObservableObject {
     }
 
     private func fail(_ key: String) {
-        stop(status: key, deleteCredentials: false)
+        let invalidSession = operation == "login" || ["workshop.error.authentication", "workshop.error.protocol", "workshop.error.connection"].contains(key)
+        guard isAuthenticated, !invalidSession else {
+            stop(status: key, deleteCredentials: false, reconnect: reconnectAfterApplication && !invalidSession)
+            return
+        }
+        // A completed request error does not invalidate an otherwise live Steam session.
+        applicationIntent = nil
+        downloadIntent = nil
+        pendingSelectionID = nil
+        pendingSearch = nil
+        retryItem = downloading ?? retryItem
+        finishRequest(status: discardStaging(status: key))
     }
 
     private func helperExited() {
+        let wasAuthenticated = isAuthenticated
         account = nil
         qrURL = nil
         authPrompt = nil
         hasSavedSession = authentication.hasSavedSession
-        if !stopping {
-            if requestID != nil { fail("workshop.error.connection") }
-            else if operation == nil { statusKey = "workshop.disconnected" }
+        guard !stopping else { return }
+        if ["finalizing", "inspecting", "importing", "preparing"].contains(operation) {
+            // Recovery must not release the local file-write gate while work is suspended.
+            reconnectAfterApplication = reconnectAfterApplication || (wasAuthenticated && hasSavedSession && automaticLoginEnabled)
+            return
         }
+        stop(status: requestID == nil ? "workshop.disconnected" : "workshop.error.connection",
+             deleteCredentials: false, reconnect: wasAuthenticated)
     }
 
-    private func stop(status: String, deleteCredentials: Bool) {
+    private func discardStaging(status: String) -> String {
+        var finalStatus = status
+        if let staging {
+            do { try storage.discard(staging: staging) }
+            catch { finalStatus = "workshop.error.cleanup" }
+        }
+        staging = nil
+        downloading = nil
+        return finalStatus
+    }
+
+    private func stop(status: String, deleteCredentials: Bool, reconnect: Bool = false) {
         guard !stopping else { return }
         stopping = true
+        account = nil
+        reconnectAfterApplication = false
         applicationIntent = nil
         downloadIntent = nil
         pendingSelectionID = nil
@@ -354,14 +393,7 @@ final class WorkshopViewModel: ObservableObject {
         retryItem = downloading ?? retryItem
         Task {
             await client.stop()
-            account = nil
-            var finalStatus = status
-            if let staging {
-                do { try storage.discard(staging: staging) }
-                catch { finalStatus = "workshop.error.cleanup" }
-            }
-            staging = nil
-            downloading = nil
+            var finalStatus = discardStaging(status: status)
             if deleteCredentials {
                 do { try authentication.deleteSavedSession() }
                 catch { finalStatus = "workshop.error.credentials" }
@@ -369,6 +401,10 @@ final class WorkshopViewModel: ObservableObject {
             hasSavedSession = authentication.hasSavedSession
             stopping = false
             finishRequest(status: finalStatus)
+            // A failed resume has no authenticated account, so it cannot schedule another retry.
+            if reconnect, hasSavedSession, automaticLoginEnabled {
+                begin(SteamCommand(id: UUID().uuidString, command: "resume"), operation: "login")
+            }
         }
     }
 
@@ -450,6 +486,9 @@ final class WorkshopViewModel: ObservableObject {
         preparationProgress = nil
         applicationIntent = nil
         if let id { selectDownload(id) }
+        if !isBusy, reconnectAfterApplication {
+            stop(status: "workshop.disconnected", deleteCredentials: false, reconnect: true)
+        }
     }
 
     func importSelected() {
@@ -517,6 +556,7 @@ final class WorkshopViewModel: ObservableObject {
         case "wrong_app", "wrongapp", "unsupported", "collection": "workshop.error.unsupported"
         case "unsafe_path", "unsafepath", "path", "credentialstoragefailed": "workshop.error.storage"
         case "missingmanifest", "integrityfailed", "downloadfailed": "workshop.error.project"
+        case "unavailable", "requestfailed", "invalidrequest", "busy": "workshop.error.request"
         default: "workshop.error.connection"
         }
     }

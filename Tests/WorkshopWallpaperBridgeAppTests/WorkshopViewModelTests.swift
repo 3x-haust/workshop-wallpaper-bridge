@@ -61,6 +61,180 @@ final class WorkshopViewModelTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: credential.path))
     }
 
+    func testRequestFailuresKeepAuthenticatedConnectionAndAllowNextSearch() async throws {
+        for operation in ["search", "details", "download"] {
+            for code in ["accessDenied", "unavailable", "requestFailed", "invalidRequest", "busy", "downloadFailed", "unsafePath", "wrongApp"] {
+                let fixture = try makeFixture()
+                try saveAuthentication(fixture)
+                authenticate(fixture)
+                switch operation {
+                case "search": fixture.model.search()
+                case "details": fixture.model.showDetails(item())
+                default: fixture.model.download(item())
+                }
+                let command = try XCTUnwrap(fixture.client.commands.last)
+                fixture.client.emit(SteamEvent(id: command.id, type: "error", code: code))
+                await waitUntil { !fixture.model.isBusy }
+
+                XCTAssertEqual(fixture.model.account, "test-account", "\(operation): \(code)")
+                XCTAssertEqual(fixture.client.stopCount, 0, "\(operation): \(code)")
+                XCTAssertEqual(fixture.client.commands.count, 2)
+                if let directory = command.directory {
+                    XCTAssertFalse(FileManager.default.fileExists(atPath: directory))
+                    XCTAssertEqual(fixture.model.retryItem, item())
+                }
+                fixture.model.search()
+                XCTAssertEqual(fixture.client.commands.last?.command, "search")
+                XCTAssertEqual(fixture.client.commands.count, 3)
+            }
+        }
+    }
+
+    func testLostConnectionAndDownloadCancellationResumeOnceAfterStopAndCleanup() async throws {
+        for trigger in ["exit", "disconnected", "error", "send", "cancel"] {
+            let fixture = try makeFixture()
+            try saveAuthentication(fixture)
+            authenticate(fixture)
+            fixture.client.holdStop = true
+            fixture.client.failSend = trigger == "send"
+            fixture.model.download(item())
+            let command = try XCTUnwrap(fixture.client.commands.last)
+            switch trigger {
+            case "exit": fixture.client.onExit?()
+            case "disconnected": fixture.client.emit(SteamEvent(id: "", type: "disconnected"))
+            case "error": fixture.client.emit(SteamEvent(id: command.id, type: "error", code: "disconnected"))
+            case "cancel": fixture.model.cancel()
+            default: break
+            }
+            await waitUntil { fixture.client.stopWaiter != nil }
+            XCTAssertNil(fixture.model.account, trigger)
+            XCTAssertEqual(fixture.model.operation, "stopping", trigger)
+            fixture.model.resume()
+            fixture.model.search()
+            XCTAssertEqual(fixture.client.commands.map(\.command), ["loginQR", "download"], trigger)
+            fixture.client.emit(SteamEvent(id: command.id, type: "completed", itemID: item().id))
+            fixture.client.onExit?()
+            fixture.client.failSend = false
+            fixture.client.finishStop()
+            await waitUntil { fixture.model.operation != "stopping" }
+
+            XCTAssertEqual(fixture.client.commands.map(\.command), ["loginQR", "download", "resume"], trigger)
+            XCTAssertEqual(fixture.model.operation, "login", trigger)
+            XCTAssertNil(fixture.model.account, trigger)
+            XCTAssertTrue(fixture.model.downloads.isEmpty)
+            XCTAssertTrue(fixture.library.libraryAssets.isEmpty)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: try XCTUnwrap(command.directory)))
+            XCTAssertEqual(fixture.model.retryItem, item())
+
+            fixture.client.onExit?()
+            await waitUntil { !fixture.model.isBusy }
+            XCTAssertEqual(fixture.client.commands.count, 3, "Failed automatic login must not recurse: \(trigger)")
+            XCTAssertNil(fixture.model.account)
+        }
+    }
+
+    func testIdleConnectionRecoveryRequiresAuthenticationBeforeNextRequest() async throws {
+        let fixture = try makeFixture()
+        try saveAuthentication(fixture)
+        authenticate(fixture)
+        fixture.client.onExit?()
+        await waitUntil { fixture.model.operation != "stopping" }
+        XCTAssertEqual(fixture.client.commands.map(\.command), ["loginQR", "resume"])
+        XCTAssertNil(fixture.model.account)
+        fixture.model.search()
+        XCTAssertEqual(fixture.client.commands.count, 2)
+
+        fixture.client.emit(SteamEvent(id: fixture.client.commands.last!.id, type: "authenticated", account: "test-account"))
+        fixture.model.search()
+        XCTAssertEqual(fixture.client.commands.map(\.command), ["loginQR", "resume", "search"])
+    }
+
+    func testConnectionRecoveryRequiresSavedCredentialsAndEnabledPreference() async throws {
+        for saved in [false, true] {
+            let fixture = try makeFixture()
+            if saved { try saveAuthentication(fixture) }
+            authenticate(fixture)
+            if saved { fixture.defaults.set(false, forKey: "steamWorkshopAutomaticLogin") }
+            fixture.client.onExit?()
+            await waitUntil { !fixture.model.isBusy }
+            XCTAssertNil(fixture.model.account)
+            XCTAssertEqual(fixture.client.commands.map(\.command), ["loginQR"])
+        }
+    }
+
+    func testAuthenticationAndProtocolFailuresStopWithoutAutomaticRecovery() async throws {
+        for code in ["expired", "authenticationRequired", "credentialStorageFailed", "unrecognized"] {
+            let fixture = try makeFixture()
+            try saveAuthentication(fixture)
+            authenticate(fixture)
+            fixture.model.search()
+            fixture.client.emit(SteamEvent(id: fixture.client.commands.last!.id, type: "error", code: code))
+            await waitUntil { !fixture.model.isBusy }
+            XCTAssertNil(fixture.model.account, code)
+            XCTAssertEqual(fixture.client.stopCount, 1, code)
+            XCTAssertEqual(fixture.client.commands.count, 2, code)
+        }
+        let fixture = try makeFixture()
+        try saveAuthentication(fixture)
+        authenticate(fixture)
+        fixture.model.search()
+        fixture.client.emit(SteamEvent(id: fixture.client.commands.last!.id, type: "items", items: [item()], page: 0))
+        await waitUntil { !fixture.model.isBusy }
+        XCTAssertNil(fixture.model.account)
+        XCTAssertEqual(fixture.model.statusKey, "workshop.error.protocol")
+        XCTAssertEqual(fixture.client.commands.count, 2)
+    }
+
+    func testExplicitSessionActionsNeverAutomaticallyReconnect() async throws {
+        for action in ["logout", "delete", "cancelLogin"] {
+            let fixture = try makeFixture()
+            try saveAuthentication(fixture)
+            authenticate(fixture)
+            switch action {
+            case "logout": fixture.model.logout()
+            case "delete": fixture.model.deleteSavedAuthentication()
+            default:
+                fixture.model.resume()
+                fixture.model.cancel()
+            }
+            await waitUntil { !fixture.model.isBusy }
+            fixture.client.onExit?()
+            await waitUntil { !fixture.model.isBusy }
+            XCTAssertNil(fixture.model.account, action)
+            XCTAssertFalse(fixture.defaults.bool(forKey: "steamWorkshopAutomaticLogin"), action)
+            XCTAssertEqual(fixture.client.commands.map(\.command), action == "cancelLogin" ? ["loginQR", "resume"] : ["loginQR"], action)
+        }
+    }
+
+    func testDisconnectDuringPreparationDefersRecoveryUntilWriteGateFinishes() async throws {
+        var preparation: CheckedContinuation<Void, Error>?
+        let fixture = try makeFixture(scenePreparer: { _, _ in
+            try await withCheckedThrowingContinuation { preparation = $0 }
+        })
+        try saveAuthentication(fixture)
+        try startCompletedDownload(fixture)
+        await waitUntil { preparation != nil }
+        fixture.client.onExit?()
+        fixture.client.emit(SteamEvent(id: "", type: "disconnected"))
+        XCTAssertNil(fixture.model.account)
+        XCTAssertEqual(fixture.model.operation, "preparing")
+        XCTAssertTrue(fixture.model.isChangingLibraryFiles)
+        XCTAssertEqual(fixture.client.stopCount, 0)
+        fixture.model.resume()
+        fixture.model.cancel()
+        fixture.library.removeSelectedLibraryAssets()
+        XCTAssertEqual(fixture.library.libraryAssets.count, 1)
+        XCTAssertEqual(fixture.client.commands.count, 2)
+
+        preparation?.resume()
+        await waitUntil { fixture.model.operation != "preparing" && fixture.model.operation != "stopping" }
+        XCTAssertEqual(fixture.client.commands.map(\.command), ["loginQR", "download", "resume"])
+        XCTAssertEqual(fixture.model.operation, "login")
+        XCTAssertNil(fixture.model.account)
+        XCTAssertNil(fixture.player.playedID)
+        XCTAssertEqual(fixture.library.libraryAssets.count, 1)
+    }
+
     func testEveryoneFilterIsDefaultAndSettingsPersistAcrossLaunchesAndPages() throws {
         let fixture = try makeFixture()
         authenticate(fixture)
@@ -392,11 +566,12 @@ final class WorkshopViewModelTests: XCTestCase {
         }
     }
 
-    func testIdleDisconnectClearsLoginStateAndReconnectCanStart() throws {
+    func testIdleDisconnectClearsLoginStateAndReconnectCanStart() async throws {
         let fixture = try makeFixture()
         authenticate(fixture)
         fixture.client.emit(SteamEvent(id: "", type: "disconnected"))
         XCTAssertNil(fixture.model.account)
+        await waitUntil { !fixture.model.isBusy }
         XCTAssertEqual(fixture.model.statusKey, "workshop.disconnected")
         fixture.model.resume()
         fixture.client.emit(SteamEvent(id: "", type: "disconnected"))
@@ -556,6 +731,27 @@ final class WorkshopViewModelTests: XCTestCase {
         XCTAssertTrue(fixture.library.libraryAssets.isEmpty)
         XCTAssertNil(fixture.player.playedID)
         XCTAssertEqual(fixture.model.statusKey, "workshop.error.project")
+    }
+
+    func testInvalidCompletedProjectKeepsConnectionAndDiscardsStagingForRetry() async throws {
+        let fixture = try makeFixture()
+        try saveAuthentication(fixture)
+        authenticate(fixture)
+        fixture.model.download(item())
+        let command = try XCTUnwrap(fixture.client.commands.last)
+        fixture.client.emit(SteamEvent(id: command.id, type: "completed", itemID: item().id))
+        await waitUntil { !fixture.model.isBusy }
+
+        XCTAssertEqual(fixture.model.statusKey, "workshop.error.project")
+        XCTAssertEqual(fixture.model.account, "test-account")
+        XCTAssertEqual(fixture.client.stopCount, 0)
+        XCTAssertEqual(fixture.client.commands.count, 2)
+        XCTAssertEqual(fixture.model.retryItem, item())
+        XCTAssertFalse(FileManager.default.fileExists(atPath: try XCTUnwrap(command.directory)))
+        XCTAssertTrue(fixture.model.downloads.isEmpty)
+        XCTAssertTrue(fixture.library.libraryAssets.isEmpty)
+        fixture.model.retryDownload()
+        XCTAssertEqual(fixture.client.commands.map(\.command), ["loginQR", "download", "download"])
     }
 
     func testScanErrorDoesNotApplyEvenWhenLibraryCopyExists() async throws {
@@ -813,6 +1009,12 @@ final class WorkshopViewModelTests: XCTestCase {
         WorkshopItem(id: "893418273", title: "Fixture", description: "Local test fixture", previewURL: nil, kind: "web", size: nil)
     }
 
+    private func saveAuthentication(_ fixture: Fixture) throws {
+        let credential = fixture.root.appending(path: "Steam/credentials.json")
+        try FileManager.default.createDirectory(at: credential.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("synthetic-credentials".utf8).write(to: credential)
+    }
+
     private func authenticate(_ fixture: Fixture) {
         fixture.model.loginQR()
         fixture.client.emit(SteamEvent(id: fixture.client.commands.last!.id, type: "authenticated", account: "test-account"))
@@ -852,10 +1054,16 @@ private final class FakeSteamClient: SteamHelperTransport {
     var onExit: (() -> Void)?
     var commands: [SteamCommand] = []
     var holdStop = false
+    var failSend = false
+    var stopCount = 0
     var stopWaiter: CheckedContinuation<Void, Never>?
-    func send(_ command: SteamCommand) throws { commands.append(command) }
+    func send(_ command: SteamCommand) throws {
+        commands.append(command)
+        if failSend { throw SteamBridgeError.unavailable }
+    }
     func emit(_ event: SteamEvent) { onEvent?(event) }
     func stop() async {
+        stopCount += 1
         if holdStop { await withCheckedContinuation { stopWaiter = $0 } }
         onExit?()
     }
