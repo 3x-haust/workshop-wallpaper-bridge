@@ -1,6 +1,15 @@
 import Darwin
 import Foundation
 
+/// Expand only macOS's fixed /var alias, not links inside caller-controlled paths.
+/// Foundation standardization may rewrite /private/var back to /var.
+func resolvingSystemVarAlias(_ url: URL) -> URL {
+    guard url.isFileURL, url.path == "/var" || url.path.hasPrefix("/var/"),
+          let destination = try? FileManager.default.destinationOfSymbolicLink(atPath: "/var"),
+          destination == "private/var" || destination == "/private/var" else { return url }
+    return URL(filePath: "/private" + url.path)
+}
+
 public struct WorkshopDownload: Codable, Identifiable, Equatable, Sendable {
     public let id: String
     public let title: String
@@ -85,6 +94,17 @@ public struct WorkshopDownloads: Sendable {
         return download
     }
 
+    /// Returns only a validated completed item. Absence is safe for deletion retries;
+    /// an existing incomplete or unsafe item must not be mistaken for absence.
+    func completedItemIfPresent(itemID: String) throws -> WorkshopDownload? {
+        try validateID(itemID)
+        try validateRoot()
+        let directory = itemsRoot.appending(path: itemID)
+        try validateAncestors(directory)
+        guard try nodeType(directory) != nil else { return nil }
+        return try completedItem(itemID: itemID)
+    }
+
     public func remove(_ download: WorkshopDownload) throws {
         try validateDownloadPath(download)
         _ = try completedItem(itemID: download.id)
@@ -139,7 +159,7 @@ public struct WorkshopDownloads: Sendable {
     private func validateAncestors(_ directory: URL) throws {
         guard directory.isFileURL else { throw WorkshopDownloadsError.unsafePath(directory.absoluteString) }
         var current = URL(filePath: "/", directoryHint: .isDirectory)
-        for component in directory.pathComponents.dropFirst() {
+        for component in resolvingSystemVarAlias(directory).pathComponents.dropFirst() {
             guard component != "..", component != "." else {
                 throw WorkshopDownloadsError.unsafePath(directory.path)
             }
@@ -169,7 +189,8 @@ public struct WorkshopDownloads: Sendable {
         try validateID(download.id)
         try validateRoot()
         let expected = itemsRoot.appending(path: download.id)
-        guard download.directory == expected.path else {
+        guard resolvingSystemVarAlias(URL(filePath: download.directory)).path
+                == resolvingSystemVarAlias(expected).path else {
             throw WorkshopDownloadsError.unsafePath(download.directory)
         }
         try validateAncestors(expected)

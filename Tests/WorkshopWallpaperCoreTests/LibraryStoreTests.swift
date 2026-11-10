@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import XCTest
 @testable import WorkshopWallpaperCore
@@ -314,12 +315,477 @@ final class LibraryStoreTests: XCTestCase {
         XCTAssertNil(SceneRenderCache.existingVideoURL(in: project))
     }
 
+    func testRemoveAssetAlsoTrashesCompletedDownloadAndExactSceneCaches() throws {
+        let root = try makeRemovalRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let trasher = SpyAssetTrasher()
+        let store = LibraryStore(root: root, trasher: trasher)
+        let downloads = WorkshopDownloads(root: root.appending(path: "WorkshopDownloads"))
+        let download = try makeCompletedDownload(in: downloads, id: "123")
+        let retained = try makeCompletedDownload(in: downloads, id: "1234")
+        let imported = try store.importAsset(downloads.scan(download))
+        let caches = ["v1/123.mp4", "v6/123-media-v3.mp4", "v7/123-media-v4.mp4"]
+        let retainedPaths = ["SceneVideoCache/v7/1234.mp4", "SceneVideoCache/v7/123-extra.mp4",
+                             "SceneVideoCache/v7/123-media-v4.mp4.tmp", "SceneVideoCache/current/123.mp4",
+                             "Steam/credentials.json", "Engine/assets/keep"]
+        for path in caches.map({ "SceneVideoCache/\($0)" }) + retainedPaths {
+            let file = root.appending(path: path)
+            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data("keep".utf8).write(to: file)
+        }
+
+        try store.removeAsset(id: imported.id)
+
+        XCTAssertTrue(try store.load().assets.isEmpty)
+        XCTAssertEqual(try downloads.load(), [retained])
+        XCTAssertEqual(Set(trasher.trashedURLs.map(\.path)), Set(
+            [download.directory, imported.projectDirectory] + caches.map { root.appending(path: "SceneVideoCache/\($0)").path }
+        ))
+        XCTAssertTrue(trasher.removedURLs.isEmpty)
+        for path in caches {
+            XCTAssertFalse(FileManager.default.fileExists(atPath: root.appending(path: "SceneVideoCache/\(path)").path), path)
+        }
+        for path in retainedPaths {
+            XCTAssertEqual(try Data(contentsOf: root.appending(path: path)), Data("keep".utf8), path)
+        }
+    }
+
+    func testRemoveLocalAssetIgnoresInvalidWorkshopMetadataAndPreservesDownloads() throws {
+        for workshopID in ["last", "../escape", "0", "18446744073709551616"] {
+            let root = try makeRemovalRoot()
+            defer { try? FileManager.default.removeItem(at: root) }
+            let trasher = SpyAssetTrasher()
+            let store = LibraryStore(root: root, trasher: trasher)
+            let asset = try makeRemovalAsset(in: store, id: "local", workshopID: workshopID)
+            let preservedPaths = ["WorkshopDownloads/items/last/clip.mp4", "WorkshopDownloads/items/0/clip.mp4",
+                                  "WorkshopDownloads/escape/clip.mp4", "WorkshopDownloads/items/18446744073709551616/clip.mp4"]
+            for path in preservedPaths {
+                let file = root.appending(path: path)
+                try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try Data("preserved".utf8).write(to: file)
+            }
+
+            try store.removeAsset(id: asset.id)
+
+            XCTAssertTrue(try store.load().assets.isEmpty, workshopID)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: asset.projectDirectory), workshopID)
+            XCTAssertEqual(trasher.trashedURLs.map(\.path), [asset.projectDirectory])
+            for path in preservedPaths {
+                XCTAssertEqual(try Data(contentsOf: root.appending(path: path)), Data("preserved".utf8))
+            }
+        }
+    }
+
+    func testRemoveAssetTrashesOnlyItsExactGeneratedStillImageWithFallback() throws {
+        for fallback in [false, true] {
+            let root = try makeRemovalRoot()
+            defer { try? FileManager.default.removeItem(at: root) }
+            let trasher = SpyAssetTrasher()
+            if fallback { trasher.trashItemError = CocoaError(.fileWriteVolumeReadOnly) }
+            let store = LibraryStore(root: root, trasher: trasher)
+            let asset = try makeRemovalAsset(in: store, id: "local_sample")
+            let cache = root.appending(path: "GeneratedStillWallpapers/local-sample-still.png")
+            let preservedPaths = ["GeneratedStillWallpapers/local-sample2-still.png",
+                                  "GeneratedStillWallpapers/local-sample-still.png.tmp",
+                                  "original.png", "SystemAppliedWallpapers/local-sample-still.png"]
+            for file in [cache] + preservedPaths.map({ root.appending(path: $0) }) {
+                try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try Data("image".utf8).write(to: file)
+            }
+
+            try store.removeAsset(id: asset.id)
+
+            XCTAssertFalse(FileManager.default.fileExists(atPath: cache.path))
+            XCTAssertFalse(FileManager.default.fileExists(atPath: asset.projectDirectory))
+            XCTAssertTrue(try store.load().assets.isEmpty)
+            let expected = Set([cache.path, asset.projectDirectory])
+            XCTAssertEqual(Set(trasher.trashedURLs.map(\.path)), expected)
+            XCTAssertEqual(Set(trasher.removedURLs.map(\.path)), fallback ? expected : [])
+            for path in preservedPaths {
+                XCTAssertEqual(try Data(contentsOf: root.appending(path: path)), Data("image".utf8))
+            }
+        }
+    }
+
+    func testRemoveAssetRejectsUnsafeOrSharedGeneratedStillImageBeforeDeletingAnything() throws {
+        for invalid in ["collision", "symlink", "parent-link", "directory", "hard-link"] {
+            let root = try makeRemovalRoot()
+            defer { try? FileManager.default.removeItem(at: root) }
+            let trasher = SpyAssetTrasher()
+            let store = LibraryStore(root: root, trasher: trasher)
+            let asset = try makeRemovalAsset(in: store, id: "local_sample")
+            let cache = root.appending(path: "GeneratedStillWallpapers/local-sample-still.png")
+            try FileManager.default.createDirectory(at: cache.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data("image".utf8).write(to: cache)
+            let outside = root.appending(path: "preserved")
+            if invalid == "collision" {
+                _ = try makeRemovalAsset(in: store, id: "local-sample")
+            } else if invalid == "hard-link" {
+                try FileManager.default.linkItem(at: cache, to: outside)
+            } else if invalid == "directory" {
+                try FileManager.default.removeItem(at: cache)
+                try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: false)
+            } else {
+                let target = invalid == "parent-link" ? cache.deletingLastPathComponent() : cache
+                try FileManager.default.moveItem(at: target, to: outside)
+                try FileManager.default.createSymbolicLink(at: target, withDestinationURL: outside)
+            }
+            let before = try store.load()
+
+            XCTAssertThrowsError(try store.removeAsset(id: asset.id), invalid)
+
+            XCTAssertEqual(try store.load(), before, invalid)
+            XCTAssertTrue(trasher.trashedURLs.isEmpty, invalid)
+            XCTAssertTrue(trasher.removedURLs.isEmpty, invalid)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: asset.projectDirectory), invalid)
+        }
+    }
+
+    func testRemoveAssetRetainsManifestForRetryAfterGeneratedStillImageDeletionFails() throws {
+        let root = try makeRemovalRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let trasher = SpyAssetTrasher()
+        let store = LibraryStore(root: root, trasher: trasher)
+        let asset = try makeRemovalAsset(in: store, id: "local_sample")
+        let cache = root.appending(path: "GeneratedStillWallpapers/local-sample-still.png")
+        try FileManager.default.createDirectory(at: cache.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("image".utf8).write(to: cache)
+        trasher.failingPath = cache.path
+
+        XCTAssertThrowsError(try store.removeAsset(id: asset.id))
+
+        XCTAssertEqual(try store.load().assets.map(\.id), [asset.id])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: asset.projectDirectory))
+        trasher.failingPath = nil
+        try store.removeAsset(id: asset.id)
+        XCTAssertTrue(try store.load().assets.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: cache.path))
+    }
+
+    func testRemoveAssetValidatesAllTargetsBeforeDeletingAnything() throws {
+        for invalid in ["unmarked-download", "corrupt-marker", "download-link", "download-child-link",
+                        "download-parent-link", "cache-link", "cache-directory", "cache-parent-link",
+                        "cache-version-link", "library-link", "library-child-link", "library-parent-link"] {
+            let root = try makeRemovalRoot()
+            defer { try? FileManager.default.removeItem(at: root) }
+            let trasher = SpyAssetTrasher()
+            let store = LibraryStore(root: root, trasher: trasher)
+            let downloads = WorkshopDownloads(root: root.appending(path: "WorkshopDownloads"))
+            let download = try makeCompletedDownload(in: downloads, id: "123")
+            let imported = try store.importAsset(downloads.scan(download))
+            let directory = URL(filePath: download.directory)
+            let cache = root.appending(path: "SceneVideoCache/v7/123.mp4")
+            try FileManager.default.createDirectory(at: cache.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data("cache".utf8).write(to: cache)
+            let marker = directory.appending(path: ".wwb-completion.json")
+            if invalid == "unmarked-download" {
+                try FileManager.default.removeItem(at: marker)
+            } else if invalid == "corrupt-marker" {
+                try Data("invalid".utf8).write(to: marker)
+            } else if invalid == "cache-directory" {
+                try FileManager.default.removeItem(at: cache)
+                try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: false)
+            } else {
+                let target: URL
+                switch invalid {
+                case "download-link": target = directory
+                case "download-child-link": target = directory.appending(path: "clip.mp4")
+                case "download-parent-link": target = directory.deletingLastPathComponent()
+                case "cache-link": target = cache
+                case "cache-parent-link": target = root.appending(path: "SceneVideoCache")
+                case "cache-version-link": target = cache.deletingLastPathComponent()
+                case "library-link": target = URL(filePath: imported.projectDirectory)
+                case "library-child-link": target = URL(filePath: imported.projectDirectory).appending(path: "clip.mp4")
+                default: target = root.appending(path: "Assets")
+                }
+                let outside = root.appending(path: "preserved")
+                try FileManager.default.moveItem(at: target, to: outside)
+                try FileManager.default.createSymbolicLink(at: target, withDestinationURL: outside)
+            }
+
+            XCTAssertThrowsError(try store.removeAsset(id: imported.id), invalid)
+
+            XCTAssertEqual(try store.load().assets.map(\.id), [imported.id], invalid)
+            XCTAssertTrue(trasher.trashedURLs.isEmpty, invalid)
+            XCTAssertTrue(trasher.removedURLs.isEmpty, invalid)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: imported.projectDirectory), invalid)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: directory.path), invalid)
+        }
+    }
+
+    func testRemoveAssetDeletesOnlyExactVideoPlaybackCaches() throws {
+        for fallback in [false, true] {
+            let root = try makeRemovalRoot()
+            defer { try? FileManager.default.removeItem(at: root) }
+            let trasher = SpyAssetTrasher()
+            if fallback { trasher.trashItemError = CocoaError(.fileWriteVolumeReadOnly) }
+            let store = LibraryStore(root: root, trasher: trasher)
+            let downloads = WorkshopDownloads(root: root.appending(path: "WorkshopDownloads"))
+            let download = try makeCompletedDownload(in: downloads, id: "123")
+            let imported = try store.importAsset(downloads.scan(download))
+            let cacheRoot = root.appending(path: "VideoPlaybackCache/v1")
+            try FileManager.default.createDirectory(at: cacheRoot, withIntermediateDirectories: true)
+            let removedNames = ["123.mp4", "123.json"]
+            let retainedNames = ["1234.mp4", "1234.json", "123-media-v4.mp4", ".123.temporary.mp4", ".123.temporary.json", "123.mp4.backup"]
+            for name in removedNames + retainedNames {
+                try Data("cache".utf8).write(to: cacheRoot.appending(path: name))
+            }
+
+            try store.removeAsset(id: imported.id)
+
+            let expected = Set(removedNames.map { cacheRoot.appending(path: $0).path } + [download.directory, imported.projectDirectory])
+            XCTAssertEqual(Set(trasher.trashedURLs.map(\.path)), expected)
+            XCTAssertEqual(Set(trasher.removedURLs.map(\.path)), fallback ? expected : [])
+            for name in removedNames { XCTAssertFalse(FileManager.default.fileExists(atPath: cacheRoot.appending(path: name).path)) }
+            for name in retainedNames { XCTAssertTrue(FileManager.default.fileExists(atPath: cacheRoot.appending(path: name).path)) }
+            XCTAssertTrue(try store.load().assets.isEmpty)
+        }
+    }
+
+    func testRemoveAssetValidatesVideoPlaybackCachesBeforeDeletingAnyCopy() throws {
+        for invalid in ["video-link", "metadata-link", "directory", "root-link", "version-link", "hard-link"] {
+            let root = try makeRemovalRoot()
+            defer { try? FileManager.default.removeItem(at: root) }
+            let trasher = SpyAssetTrasher()
+            let store = LibraryStore(root: root, trasher: trasher)
+            let downloads = WorkshopDownloads(root: root.appending(path: "WorkshopDownloads"))
+            let download = try makeCompletedDownload(in: downloads, id: "123")
+            let imported = try store.importAsset(downloads.scan(download))
+            let cacheRoot = root.appending(path: "VideoPlaybackCache/v1")
+            try FileManager.default.createDirectory(at: cacheRoot, withIntermediateDirectories: true)
+            let video = cacheRoot.appending(path: "123.mp4")
+            let metadata = cacheRoot.appending(path: "123.json")
+            try Data("video".utf8).write(to: video)
+            try Data("metadata".utf8).write(to: metadata)
+            let outside = root.appending(path: "preserved")
+            if invalid == "directory" {
+                try FileManager.default.removeItem(at: metadata)
+                try FileManager.default.createDirectory(at: metadata, withIntermediateDirectories: false)
+            } else if invalid == "hard-link" {
+                try FileManager.default.linkItem(at: metadata, to: outside)
+            } else {
+                let target: URL
+                switch invalid {
+                case "video-link": target = video
+                case "metadata-link": target = metadata
+                case "root-link": target = cacheRoot.deletingLastPathComponent()
+                default: target = cacheRoot
+                }
+                try FileManager.default.moveItem(at: target, to: outside)
+                try FileManager.default.createSymbolicLink(at: target, withDestinationURL: outside)
+            }
+
+            XCTAssertThrowsError(try store.removeAsset(id: imported.id), invalid)
+
+            XCTAssertTrue(trasher.trashedURLs.isEmpty, invalid)
+            XCTAssertTrue(trasher.removedURLs.isEmpty, invalid)
+            XCTAssertEqual(try store.load().assets.map(\.id), [imported.id], invalid)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: imported.projectDirectory), invalid)
+            XCTAssertEqual(try downloads.load(), [download], invalid)
+        }
+    }
+
+    func testRemoveAssetRetainsManifestForRetryAfterVideoPlaybackCacheDeletionFails() throws {
+        let root = try makeRemovalRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let trasher = SpyAssetTrasher()
+        let store = LibraryStore(root: root, trasher: trasher)
+        let downloads = WorkshopDownloads(root: root.appending(path: "WorkshopDownloads"))
+        let download = try makeCompletedDownload(in: downloads, id: "123")
+        let imported = try store.importAsset(downloads.scan(download))
+        let cacheRoot = root.appending(path: "VideoPlaybackCache/v1")
+        try FileManager.default.createDirectory(at: cacheRoot, withIntermediateDirectories: true)
+        for name in ["123.mp4", "123.json"] {
+            try Data("cache".utf8).write(to: cacheRoot.appending(path: name))
+        }
+        trasher.failingPath = cacheRoot.appending(path: "123.json").path
+
+        XCTAssertThrowsError(try store.removeAsset(id: imported.id))
+
+        XCTAssertEqual(try store.load().assets.map(\.id), [imported.id])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: imported.projectDirectory))
+        XCTAssertEqual(try downloads.load(), [download])
+        trasher.failingPath = nil
+        try store.removeAsset(id: imported.id)
+        XCTAssertTrue(try store.load().assets.isEmpty)
+        XCTAssertTrue(try downloads.load().isEmpty)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: cacheRoot.path), [])
+    }
+
+    func testRemoveAssetRetainsManifestAndLibraryForRetryWhenDownloadDeletionFails() throws {
+        let root = try makeRemovalRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let trasher = SpyAssetTrasher()
+        let store = LibraryStore(root: root, trasher: trasher)
+        let downloads = WorkshopDownloads(root: root.appending(path: "WorkshopDownloads"))
+        let download = try makeCompletedDownload(in: downloads, id: "123")
+        let imported = try store.importAsset(downloads.scan(download))
+        trasher.failingPath = download.directory
+
+        XCTAssertThrowsError(try store.removeAsset(id: imported.id))
+
+        XCTAssertEqual(try store.load().assets.map(\.id), [imported.id])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: imported.projectDirectory))
+        XCTAssertEqual(try downloads.load(), [download])
+        trasher.failingPath = nil
+        try store.removeAsset(id: imported.id)
+        XCTAssertTrue(try store.load().assets.isEmpty)
+        XCTAssertTrue(try downloads.load().isEmpty)
+    }
+
+    func testRemoveAssetRetryFinishesAfterDownloadWasDeletedButLibraryDeletionFailed() throws {
+        let root = try makeRemovalRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let trasher = SpyAssetTrasher()
+        let store = LibraryStore(root: root, trasher: trasher)
+        let downloads = WorkshopDownloads(root: root.appending(path: "WorkshopDownloads"))
+        let download = try makeCompletedDownload(in: downloads, id: "123")
+        let imported = try store.importAsset(downloads.scan(download))
+        trasher.failingPath = imported.projectDirectory
+
+        XCTAssertThrowsError(try store.removeAsset(id: imported.id))
+
+        XCTAssertEqual(try store.load().assets.map(\.id), [imported.id])
+        XCTAssertTrue(try downloads.load().isEmpty)
+        trasher.failingPath = nil
+        try store.removeAsset(id: imported.id)
+        XCTAssertTrue(try store.load().assets.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: imported.projectDirectory))
+    }
+
+    func testRemoveCopiedWorkshopAssetPreservesOriginalAndUsesTrashFallbackForAllCopies() throws {
+        let root = try makeRemovalRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let original = root.appending(path: "original")
+        try Fixture.project(root: original, id: "123", metadata: #"{"file":"clip.mp4"}"#, file: "clip.mp4")
+        let trasher = SpyAssetTrasher()
+        trasher.trashItemError = CocoaError(.fileWriteVolumeReadOnly)
+        let store = LibraryStore(root: root.appending(path: "library"), trasher: trasher)
+        let asset = try XCTUnwrap(WallpaperScanner().scan(root: original).assets.first)
+        let imported = try store.importAsset(asset)
+        let downloads = WorkshopDownloads(root: store.root.appending(path: "WorkshopDownloads"))
+        let download = try makeCompletedDownload(in: downloads, id: "123")
+        let cache = store.root.appending(path: "SceneVideoCache/v7/123.mp4")
+        try FileManager.default.createDirectory(at: cache.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("cache".utf8).write(to: cache)
+
+        try store.removeAsset(id: imported.id)
+
+        XCTAssertEqual(Set(trasher.removedURLs.map(\.path)), Set([download.directory, imported.projectDirectory, cache.path]))
+        XCTAssertEqual(trasher.trashedURLs, trasher.removedURLs)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: original.appending(path: "123/clip.mp4").path))
+    }
+
+    func testRemoveAssetRejectsCacheNameSharedWithAnotherAssetID() throws {
+        let root = try makeRemovalRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let trasher = SpyAssetTrasher()
+        let store = LibraryStore(root: root, trasher: trasher)
+        let source = root.appending(path: "original")
+        for id in ["123", "123-media-v4"] {
+            try Fixture.project(root: source, id: id, metadata: #"{"file":"clip.mp4"}"#, file: "clip.mp4")
+        }
+        for asset in try WallpaperScanner().scan(root: source).assets { _ = try store.importAsset(asset) }
+        let cache = root.appending(path: "SceneVideoCache/v7/123-media-v4.mp4")
+        try FileManager.default.createDirectory(at: cache.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("shared".utf8).write(to: cache)
+
+        XCTAssertThrowsError(try store.removeAsset(id: "123"))
+
+        XCTAssertEqual(try store.load().assets.count, 2)
+        XCTAssertTrue(trasher.trashedURLs.isEmpty)
+        XCTAssertEqual(try Data(contentsOf: cache), Data("shared".utf8))
+    }
+
+    func testRemoveAssetAcceptsSystemVarAliasWithoutLeavingManagedCopiesBehind() throws {
+        for useAliasForStore in [false, true] {
+            let root = try makeRemovalRoot()
+            defer { try? FileManager.default.removeItem(at: root) }
+            XCTAssertTrue(root.path.hasPrefix("/private/var/"))
+            let alias = URL(filePath: String(root.path.dropFirst("/private".count)))
+            let trasher = SpyAssetTrasher()
+            let store = LibraryStore(root: useAliasForStore ? alias : root, trasher: trasher)
+            let downloads = WorkshopDownloads(root: root.appending(path: "WorkshopDownloads"))
+            let download = try makeCompletedDownload(in: downloads, id: "123")
+            let imported = try store.importAsset(downloads.scan(download))
+            let alternateProject = (useAliasForStore ? root : alias)
+                .appending(path: "Assets").appending(path: URL(filePath: imported.projectDirectory).lastPathComponent)
+            let stored = WallpaperAsset(
+                id: imported.id, title: imported.title, kind: imported.kind,
+                supportStatus: imported.supportStatus, source: imported.source,
+                projectDirectory: alternateProject.path, entrypoint: imported.entrypoint,
+                thumbnail: nil, workshopId: imported.workshopId,
+                redistributionAllowed: false, issues: []
+            )
+            try store.replaceAsset(stored)
+            let caches = ["SceneVideoCache/v7/123.mp4", "VideoPlaybackCache/v1/123.mp4", "VideoPlaybackCache/v1/123.json"]
+            for path in caches {
+                let cache = root.appending(path: path)
+                try FileManager.default.createDirectory(at: cache.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try Data("cache".utf8).write(to: cache)
+            }
+
+            try store.removeAsset(id: imported.id)
+
+            XCTAssertTrue(try store.load().assets.isEmpty)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: imported.projectDirectory))
+            XCTAssertFalse(FileManager.default.fileExists(atPath: download.directory))
+            for path in caches {
+                XCTAssertFalse(FileManager.default.fileExists(atPath: root.appending(path: path).path))
+            }
+            XCTAssertEqual(trasher.trashedURLs.count, 5)
+        }
+    }
+
+    func testRemoveAssetRejectsSymlinkedStoreRootWithoutChangingManifest() throws {
+        let root = try makeRemovalRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appending(path: "clip.mp4")
+        try Data("video".utf8).write(to: source)
+        let trasher = SpyAssetTrasher()
+        let store = LibraryStore(root: root.appending(path: "library"), trasher: trasher)
+        let imported = try store.importVideoFile(source)
+        let alias = root.appending(path: "alias")
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: store.root)
+        let linked = LibraryStore(root: alias, trasher: trasher)
+        let manifest = try Data(contentsOf: store.root.appending(path: "library.json"))
+
+        XCTAssertThrowsError(try linked.removeAsset(id: imported.id))
+
+        XCTAssertTrue(trasher.trashedURLs.isEmpty)
+        XCTAssertEqual(try Data(contentsOf: store.root.appending(path: "library.json")), manifest)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: imported.projectDirectory))
+    }
+
+    func testRemoveAssetRejectsDirectoryOwnedByAnotherLibraryAsset() throws {
+        let root = try makeRemovalRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appending(path: "clip.mp4")
+        try Data("video".utf8).write(to: source)
+        let trasher = SpyAssetTrasher()
+        let store = LibraryStore(root: root, trasher: trasher)
+        let imported = try store.importVideoFile(source)
+        let forged = WallpaperAsset(
+            id: "another", title: "Another", kind: .video, supportStatus: .playable,
+            source: .manualFolder, projectDirectory: imported.projectDirectory,
+            entrypoint: imported.entrypoint, thumbnail: nil, workshopId: nil,
+            redistributionAllowed: false, issues: []
+        )
+        try store.replaceAsset(forged)
+
+        XCTAssertThrowsError(try store.removeAsset(id: forged.id))
+
+        XCTAssertEqual(try store.load().assets.count, 2)
+        XCTAssertTrue(trasher.trashedURLs.isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: imported.projectDirectory))
+    }
+
     func testRemoveAssetDeletesLibraryDirectoryAndManifestEntry() throws {
         // Given
         let sourceRoot = try Fixture.makeTempDirectory()
         let video = sourceRoot.appending(path: "remove-me.mp4")
         FileManager.default.createFile(atPath: video.path, contents: Data([1]))
-        let store = LibraryStore(root: try Fixture.makeTempDirectory())
+        let store = LibraryStore(root: try makeRemovalRoot())
         let imported = try store.importVideoFile(video)
 
         // When
@@ -338,7 +804,7 @@ final class LibraryStoreTests: XCTestCase {
         let video = sourceRoot.appending(path: "trash-me.mp4")
         FileManager.default.createFile(atPath: video.path, contents: Data([1]))
         let trasher = SpyAssetTrasher()
-        let store = LibraryStore(root: try Fixture.makeTempDirectory(), trasher: trasher)
+        let store = LibraryStore(root: try makeRemovalRoot(), trasher: trasher)
         let imported = try store.importVideoFile(video)
 
         // When
@@ -357,7 +823,7 @@ final class LibraryStoreTests: XCTestCase {
         FileManager.default.createFile(atPath: video.path, contents: Data([1]))
         let trasher = SpyAssetTrasher()
         trasher.trashItemError = CocoaError(.fileWriteVolumeReadOnly)
-        let store = LibraryStore(root: try Fixture.makeTempDirectory(), trasher: trasher)
+        let store = LibraryStore(root: try makeRemovalRoot(), trasher: trasher)
         let imported = try store.importVideoFile(video)
 
         // When
@@ -374,7 +840,7 @@ final class LibraryStoreTests: XCTestCase {
         let sourceRoot = try Fixture.makeTempDirectory()
         let video = sourceRoot.appending(path: "keep-me.mp4")
         FileManager.default.createFile(atPath: video.path, contents: Data([1]))
-        let store = LibraryStore(root: try Fixture.makeTempDirectory())
+        let store = LibraryStore(root: try makeRemovalRoot())
         let imported = try store.importVideoFile(video)
 
         // When
@@ -388,7 +854,7 @@ final class LibraryStoreTests: XCTestCase {
 
     func testRemoveAssetDoesNotDeleteOutsideAssetsRoot() throws {
         // Given
-        let store = LibraryStore(root: try Fixture.makeTempDirectory())
+        let store = LibraryStore(root: try makeRemovalRoot())
         let outside = try Fixture.makeTempDirectory()
         let outsideFile = outside.appending(path: "original.mp4")
         FileManager.default.createFile(atPath: outsideFile.path, contents: Data([1]))
@@ -619,6 +1085,33 @@ final class LibraryStoreTests: XCTestCase {
         XCTAssertEqual(repaired.thumbnail, preview.path)
     }
 
+    private func makeRemovalAsset(in store: LibraryStore, id: String, workshopID: String? = nil) throws -> WallpaperAsset {
+        let directory = try makeImportedProjectDirectory(in: store.root, id: id)
+        let video = directory.appending(path: "clip.mp4")
+        try Data("video".utf8).write(to: video)
+        let asset = WallpaperAsset(
+            id: id, title: id, kind: .video, supportStatus: .playable, source: .manualFolder,
+            projectDirectory: directory.path, entrypoint: video.path, thumbnail: nil,
+            workshopId: workshopID, redistributionAllowed: false, issues: []
+        )
+        try store.replaceAsset(asset)
+        return asset
+    }
+
+    private func makeRemovalRoot() throws -> URL {
+        let temporary = try Fixture.makeTempDirectory()
+        let resolved = try XCTUnwrap(realpath(temporary.path, nil))
+        defer { free(resolved) }
+        return URL(filePath: String(cString: resolved))
+    }
+
+    private func makeCompletedDownload(in downloads: WorkshopDownloads, id: String) throws -> WorkshopDownload {
+        let staging = try downloads.begin(itemID: id)
+        try Data(#"{"title":"Fixture","file":"clip.mp4"}"#.utf8).write(to: staging.appending(path: "project.json"))
+        try Data("video".utf8).write(to: staging.appending(path: "clip.mp4"))
+        return try downloads.finish(itemID: id, title: "Fixture", staging: staging)
+    }
+
     private func makeImportedProjectDirectory(in root: URL, id: String) throws -> URL {
         let project = root.appending(path: "Assets").appending(path: id)
         try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
@@ -637,9 +1130,11 @@ private final class SpyAssetTrasher: AssetTrashing, @unchecked Sendable {
     private(set) var trashedURLs: [URL] = []
     private(set) var removedURLs: [URL] = []
     var trashItemError: Error?
+    var failingPath: String?
 
     func trashItem(at url: URL) throws {
         trashedURLs.append(url)
+        if url.path == failingPath { throw CocoaError(.fileWriteNoPermission) }
         if let trashItemError {
             throw trashItemError
         }
@@ -648,6 +1143,7 @@ private final class SpyAssetTrasher: AssetTrashing, @unchecked Sendable {
 
     func removeItem(at url: URL) throws {
         removedURLs.append(url)
+        if url.path == failingPath { throw CocoaError(.fileWriteNoPermission) }
         try FileManager.default.removeItem(at: url)
     }
 }

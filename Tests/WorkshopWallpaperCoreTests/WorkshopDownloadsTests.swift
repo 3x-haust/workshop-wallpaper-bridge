@@ -39,6 +39,65 @@ final class WorkshopDownloadsTests: XCTestCase {
         XCTAssertEqual(asset.entrypoint, URL(filePath: download.directory).standardizedFileURL.appending(path: "clip.mp4").path)
     }
 
+    func testSystemVarAliasCanPublishAndReadCompletedItemsAcrossRootSpellings() throws {
+        XCTAssertTrue(store.root.path.hasPrefix("/private/var/"))
+        let aliased = WorkshopDownloads(root: URL(filePath: String(store.root.path.dropFirst("/private".count))))
+        let staging = try aliased.begin(itemID: "123")
+        try writeProject(at: staging)
+
+        let download = try aliased.finish(itemID: "123", title: "Fixture", staging: staging)
+
+        XCTAssertEqual(try store.load(), [download])
+        XCTAssertEqual(try store.completedItemIfPresent(itemID: "123"), download)
+        XCTAssertEqual(try store.scan(download).id, "123")
+        try store.remove(download)
+        XCTAssertTrue(try aliased.load().isEmpty)
+    }
+
+    func testSystemVarAliasDoesNotPermitCallerControlledParentLinks() throws {
+        let parent = temporaryRoot.appending(path: "linked")
+        let destination = temporaryRoot.appending(path: "preserved")
+        try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: false)
+        try FileManager.default.createSymbolicLink(at: parent, withDestinationURL: destination)
+        let aliased = WorkshopDownloads(root: URL(filePath: String(parent.path.dropFirst("/private".count))))
+
+        XCTAssertThrowsError(try aliased.begin(itemID: "123"))
+        XCTAssertThrowsError(try aliased.completedItemIfPresent(itemID: "123"))
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: destination.path), [])
+    }
+
+    func testCompletedItemLookupDistinguishesMissingFromIncompleteWithoutDeletingFiles() throws {
+        XCTAssertNil(try store.completedItemIfPresent(itemID: "123"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: store.root.path))
+        let directory = store.root.appending(path: "items/123")
+        try writeProject(at: directory)
+
+        XCTAssertThrowsError(try store.completedItemIfPresent(itemID: "123")) {
+            XCTAssertEqual($0 as? WorkshopDownloadsError, .invalidCompletion("123"))
+        }
+        XCTAssertEqual(try Data(contentsOf: directory.appending(path: "clip.mp4")), Data("fixture".utf8))
+    }
+
+    func testCompletedItemLookupReusesCompletionValidationAndAllowsRemovalRetry() throws {
+        let download = try finishProject()
+        XCTAssertEqual(try store.completedItemIfPresent(itemID: download.id), download)
+
+        try store.remove(download)
+
+        XCTAssertNil(try store.completedItemIfPresent(itemID: download.id))
+        XCTAssertThrowsError(try store.completedItemIfPresent(itemID: "../123"))
+    }
+
+    func testCompletedItemLookupRejectsDanglingItemAndParentLinks() throws {
+        let directory = store.root.appending(path: "items/123")
+        try FileManager.default.createDirectory(at: directory.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: directory, withDestinationURL: temporaryRoot.appending(path: "missing"))
+        XCTAssertThrowsError(try store.completedItemIfPresent(itemID: "123"))
+        try FileManager.default.removeItem(at: directory.deletingLastPathComponent())
+        try FileManager.default.createSymbolicLink(at: directory.deletingLastPathComponent(), withDestinationURL: temporaryRoot)
+        XCTAssertThrowsError(try store.completedItemIfPresent(itemID: "123"))
+    }
+
     func testEmptyStoreLoadsWithoutCreatingDirectories() throws {
         XCTAssertEqual(try store.load(), [])
         XCTAssertFalse(FileManager.default.fileExists(atPath: store.root.path))
