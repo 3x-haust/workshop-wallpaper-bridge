@@ -4,6 +4,7 @@ import WorkshopWallpaperCore
 
 private enum SettingsTab: Hashable {
     case library
+    case workshop
     case settings
 }
 
@@ -19,6 +20,9 @@ struct ContentView: View {
                 LibraryTabView(model: model)
                     .tabItem { Text(model.L("tab.library")) }
                     .tag(SettingsTab.library)
+                WorkshopTabView(model: model, workshop: model.workshop)
+                    .tabItem { Text(model.L("tab.workshop")) }
+                    .tag(SettingsTab.workshop)
                 SettingsTabView(model: model)
                     .tabItem { Text(model.L("tab.settings")) }
                     .tag(SettingsTab.settings)

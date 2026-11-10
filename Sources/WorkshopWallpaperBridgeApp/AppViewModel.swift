@@ -219,6 +219,8 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    lazy var workshop = WorkshopViewModel(library: self, root: store.root)
+
     private let scanner = WallpaperScanner()
     private let converter = VideoConverter()
     private let systemWallpaperSetter = SystemWallpaperSetter()
@@ -478,42 +480,50 @@ extension AppViewModel {
             status = "Select a scanned project first."
             return Task {}
         }
-        // Copy files off the main thread so the UI stays responsive, and report
-        // per-item progress so a large multi-import never looks frozen.
+        return Task {
+            do {
+                _ = try await importAssets(assets)
+            } catch {
+                status = error.localizedDescription
+            }
+        }
+    }
+
+    /// A single manifest-write gate shared by local and Workshop imports.
+    /// Workshop duplicates select the existing copy, preserving its conversions and caches.
+    func importAssets(_ assets: [WallpaperAsset], preservingExisting: Bool = false) async throws -> [WallpaperAsset] {
+        guard !isWorking else { throw SteamBridgeError.busy }
         isWorking = true
         importProgress = ImportProgress(completed: 0, total: assets.count)
         status = "Importing 0/\(assets.count)..."
-        let store = self.store
-        return Task {
-            defer {
-                importProgress = nil
-                isWorking = false
-            }
-            var importedAssets: [WallpaperAsset] = []
-            do {
-                for asset in assets {
-                    let imported = try await Task.detached { try store.importAsset(asset) }.value
-                    importedAssets.append(imported)
-                    importProgress = ImportProgress(completed: importedAssets.count, total: assets.count)
-                    status = "Importing \(importedAssets.count)/\(assets.count)..."
-                }
-                userDefaults.set(Date(), forKey: PreferenceKey.lastImportAt)
-                loadLibrary()
-                selectLibraryAssets(Set(importedAssets.map(\.id)))
-                if importedAssets.count == 1, let imported = importedAssets.first {
-                    status = "Imported \(imported.title)."
-                } else {
-                    status = "Imported \(importedAssets.count) projects."
-                }
-            } catch {
-                loadLibrary()
-                if importedAssets.isEmpty {
-                    status = error.localizedDescription
-                } else {
-                    status = "Imported \(importedAssets.count) project(s), then failed: \(error.localizedDescription)"
-                }
-            }
+        defer {
+            loadLibrary()
+            importProgress = nil
+            isWorking = false
         }
+        let store = self.store
+        let existing = preservingExisting ? try store.load().assets : []
+        var importedAssets: [WallpaperAsset] = []
+        for asset in assets {
+            let imported: WallpaperAsset
+            if let retained = existing.first(where: { $0.id == asset.id }) {
+                imported = retained
+            } else {
+                imported = try await Task.detached { try store.importAsset(asset) }.value
+            }
+            importedAssets.append(imported)
+            importProgress = ImportProgress(completed: importedAssets.count, total: assets.count)
+            status = "Importing \(importedAssets.count)/\(assets.count)..."
+        }
+        userDefaults.set(Date(), forKey: PreferenceKey.lastImportAt)
+        loadLibrary()
+        selectLibraryAssets(Set(importedAssets.map(\.id)))
+        if importedAssets.count == 1, let imported = importedAssets.first {
+            status = "Imported \(imported.title)."
+        } else {
+            status = "Imported \(importedAssets.count) projects."
+        }
+        return importedAssets
     }
 
     func chooseVideoFile() {
