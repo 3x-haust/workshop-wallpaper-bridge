@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <RuntimeFrameworkVersion>9.0.22</RuntimeFrameworkVersion>
+    <RuntimeIdentifiers>osx-arm64</RuntimeIdentifiers>
+    <AssemblyName>wwb-steam-helper</AssemblyName>
+    <StartupObject>WorkshopBridge.HelperProgram</StartupObject>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <Deterministic>true</Deterministic>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <Version>3.4.0</Version>
+    <NativeShim>$(MSBuildProjectDirectory)/obj/native/libwwb_posix.dylib</NativeShim>
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
+  </PropertyGroup>
+  <Target Name="BuildNativeShim" BeforeTargets="BeforeBuild">
+    <MakeDir Directories="$(MSBuildProjectDirectory)/obj/native" />
+    <Exec Command="clang -dynamiclib -arch arm64 -O2 -Wall -Wextra -Werror -Wl,-install_name,@rpath/libwwb_posix.dylib &quot;$(MSBuildProjectDirectory)/native/posix.c&quot; -o &quot;$(NativeShim)&quot;" />
+  </Target>
+  <ItemGroup>
+    <Content Include="$(NativeShim)" Link="libwwb_posix.dylib" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Compile Remove="DepotDownloader/Program.cs;DepotDownloader/AnsiDetector.cs;tests/**/*.cs" />
+    <PackageReference Include="protobuf-net" Version="3.2.52" />
+    <PackageReference Include="SteamKit2" Version="3.2.0" />
+  </ItemGroup>
+</Project>

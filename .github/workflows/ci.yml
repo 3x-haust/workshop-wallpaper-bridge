@@ -22,6 +22,17 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v5
 
+      - name: Set up Steam helper SDK
+        uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: SteamHelper/global.json
+
+      - name: Build Steam helper
+        run: bash Scripts/build-steam-helper.sh
+
+      - name: Test Steam helper boundaries and protocol
+        run: dotnet run --project SteamHelper/tests/SteamHelper.Tests.csproj --configuration Release
+
       - name: Show Swift version
         run: swift --version
 
