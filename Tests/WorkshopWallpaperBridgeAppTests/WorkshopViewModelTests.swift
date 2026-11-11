@@ -594,6 +594,96 @@ final class WorkshopViewModelTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: unrelated), Data("preserve".utf8))
     }
 
+    func testRevisitingPageItemsReusesCompleteDetailsWithoutBlockingBrowsing() throws {
+        let fixture = try makeFixture()
+        authenticate(fixture)
+        let summaries = [item(), WorkshopItem(id: "42", title: "Second", description: "Short", previewURL: nil, kind: "scene", size: nil)]
+        fixture.model.search()
+        fixture.client.emit(SteamEvent(id: fixture.client.commands.last!.id, type: "items", items: summaries, total: 2, page: 1, pageSize: 20))
+        let details = summaries.map {
+            WorkshopItem(id: $0.id, title: $0.title, description: "Full description for \($0.id)",
+                         previewURL: "https://example.com/\($0.id).jpg", kind: $0.kind, size: 1234)
+        }
+        var blockingSelections = 0
+
+        for index in 0..<12 {
+            let selected = index % summaries.count
+            fixture.model.showDetails(summaries[selected])
+            if fixture.model.isBusy {
+                blockingSelections += 1
+                fixture.client.emit(SteamEvent(id: fixture.client.commands.last!.id, type: "detail", item: details[selected]))
+            }
+            XCTAssertEqual(fixture.model.detail, details[selected], "Revisits must keep complete details, not the search summary")
+            XCTAssertEqual(fixture.model.statusKey, "workshop.detail.ready")
+        }
+
+        print("DETAIL_BROWSING selections=12 helperRequests=\(fixture.client.commands.filter { $0.command == "details" }.count) blockingSelections=\(blockingSelections)")
+        XCTAssertEqual(blockingSelections, 2)
+        XCTAssertEqual(fixture.client.commands.filter { $0.command == "details" }.map(\.itemID), summaries.map(\.id))
+        XCTAssertEqual(fixture.model.items, summaries)
+        XCTAssertNil(fixture.player.playedID)
+        XCTAssertEqual(fixture.player.stopCount, 0)
+        XCTAssertTrue(fixture.library.libraryAssets.isEmpty)
+    }
+
+    func testDetailReuseEndsWhenSearchRefreshesOrSessionChanges() async throws {
+        for trigger in ["search", "failedSearch", "session"] {
+            let fixture = try makeFixture()
+            authenticate(fixture)
+            fixture.model.search()
+            fixture.client.emit(SteamEvent(id: fixture.client.commands.last!.id, type: "items", items: [item()], page: 1))
+            fixture.model.showDetails(item())
+            fixture.client.emit(SteamEvent(id: fixture.client.commands.last!.id, type: "detail", item: item()))
+
+            if trigger == "session" {
+                fixture.model.logout()
+                await waitUntil { !fixture.model.isBusy }
+                authenticate(fixture)
+            } else {
+                fixture.model.search()
+                if trigger == "failedSearch" {
+                    fixture.client.emit(SteamEvent(id: fixture.client.commands.last!.id, type: "error", code: "unavailable"))
+                } else {
+                    fixture.client.emit(SteamEvent(id: fixture.client.commands.last!.id, type: "items", items: [item()], page: 1))
+                }
+            }
+            fixture.model.showDetails(item())
+
+            XCTAssertEqual(fixture.model.operation, "details", trigger)
+            XCTAssertEqual(fixture.client.commands.filter { $0.command == "details" }.count, 2, trigger)
+            let updated = WorkshopItem(id: item().id, title: "Updated", description: "New details", previewURL: nil, kind: "web", size: 321)
+            fixture.client.emit(SteamEvent(id: fixture.client.commands.last!.id, type: "detail", item: updated))
+            XCTAssertEqual(fixture.model.detail, updated, trigger)
+        }
+    }
+
+    func testFailedDetailsAreRetriedAndOutOfPageDetailsAreNotRetained() throws {
+        let fixture = try makeFixture()
+        authenticate(fixture)
+        fixture.model.search()
+        fixture.client.emit(SteamEvent(id: fixture.client.commands.last!.id, type: "items", items: [item()], page: 1))
+        fixture.model.showDetails(item())
+        let failedRequest = fixture.client.commands.last!.id
+        fixture.client.emit(SteamEvent(id: failedRequest, type: "error", code: "unavailable"))
+        fixture.model.showDetails(item())
+        XCTAssertEqual(fixture.model.operation, "details")
+        let retry = fixture.client.commands.last!.id
+        XCTAssertNotEqual(retry, failedRequest)
+        fixture.client.emit(SteamEvent(id: failedRequest, type: "detail", item: item()))
+        XCTAssertEqual(fixture.model.operation, "details", "Late responses must not finish a newer request")
+        fixture.client.emit(SteamEvent(id: retry, type: "detail", item: item()))
+
+        let outside = WorkshopItem(id: "42", title: "Outside page", description: "", previewURL: nil, kind: nil, size: nil)
+        fixture.model.showDetails(outside)
+        fixture.client.emit(SteamEvent(id: fixture.client.commands.last!.id, type: "detail", item: outside))
+        fixture.model.showDetails(outside)
+        XCTAssertEqual(fixture.model.operation, "details")
+        let request = fixture.client.commands.last!.id
+        fixture.model.showDetails(item())
+        XCTAssertEqual(fixture.model.detail, outside, "A cache hit must not replace the selection of an in-flight operation")
+        XCTAssertEqual(fixture.client.commands.last!.id, request)
+    }
+
     func testSearchPaginationUsesServerPageSizeRatherThanFilteredItemCount() throws {
         let fixture = try makeFixture()
         authenticate(fixture)
