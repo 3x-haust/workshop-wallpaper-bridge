@@ -46,6 +46,7 @@ final class WorkshopViewModel: ObservableObject {
     private var downloadIntent: UUID?
     private var pendingSelectionID: String?
     private var pendingSearch: SteamCommand?
+    private var pageDetails: [String: WorkshopItem] = [:]
     private var requestedPlaybackID: String?
     private var playbackObservation: AnyCancellable?
 
@@ -156,8 +157,13 @@ final class WorkshopViewModel: ObservableObject {
     }
 
     func showDetails(_ item: WorkshopItem) {
-        guard isAuthenticated, Self.validID(item.id) else { return }
-        if !isBusy { detail = item }
+        guard !isBusy, isAuthenticated, Self.validID(item.id) else { return }
+        if let cached = pageDetails[item.id] {
+            detail = cached
+            statusKey = "workshop.detail.ready"
+            return
+        }
+        detail = item
         begin(SteamCommand(id: UUID().uuidString, command: "details", itemID: item.id), operation: "details")
     }
 
@@ -215,6 +221,8 @@ final class WorkshopViewModel: ObservableObject {
 
     private func begin(_ command: SteamCommand, operation: String) {
         guard !isBusy else { return }
+        // Details belong only to the current result page and authenticated session.
+        if operation == "search" || operation == "login" { pageDetails.removeAll() }
         self.operation = operation
         if operation == "login" { account = nil }
         requestID = command.id
@@ -284,6 +292,7 @@ final class WorkshopViewModel: ObservableObject {
                 return
             }
             detail = item
+            if items.contains(where: { $0.id == item.id }) { pageDetails[item.id] = item }
             finishRequest(status: "workshop.detail.ready")
         case "progress" where operation == "download":
             completedBytes = event.completed ?? 0
