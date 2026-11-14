@@ -92,6 +92,7 @@ Workshop Wallpaper Bridge가 도움이 되었다면 [Patreon](https://www.patreo
 
 - Dock과 Space 전환 깜빡임을 줄이기 위해 기본값은 연속 재생입니다.
 - **Auto-pause behind apps**는 선택 옵션입니다.
+- **시스템 배경화면으로 재생**(macOS 26 이상)을 켜면 영상 월페이퍼와 영상이 준비된 scene을 macOS가 직접 재생합니다. 앱에 포함된 배경화면 확장이 WallpaperAgent에 영상을 그려 주기 때문에 데스크톱 위젯을 옮기거나 위젯을 편집하거나 데스크톱을 볼 때도 계속 움직입니다(이때 macOS가 앱 창을 숨겨서 원래 배경화면이 보이던 문제). 해당 화면에서는 앱 창을 끄고, 웹·실시간 scene은 기존처럼 앱 창으로 재생합니다. 끄면 각 데스크톱을 모드를 켜기 전 배경화면으로 돌려놓습니다(그 사이 시스템 설정에서 직접 바꾼 화면은 그대로 둡니다). macOS 비공개 인터페이스를 쓰기 때문에 macOS 업데이트로 동작하지 않을 수 있으며, 그 경우 앱이 계속 직접 그립니다.
 - **Play wallpaper audio**는 기본적으로 꺼져 있습니다(이전 버전과 동일한 무음 재생). 켜고 볼륨 슬라이더를 조절하면 동영상 월페이퍼의 오디오와, scene 월페이퍼의 경우 캐시된 scene 비디오에 함께 구워진 배경음악/환경음을 들을 수 있습니다.
 - 자동 일시정지와 오디오 설정은 즉시 적용됩니다. 월페이퍼가 다른 앱에 가려져 자동 일시정지되면 소리도 함께 멈춥니다.
 - **실시간 씬 우선 재생**은 전체 구성을 네이티브 renderer로 처리할 수 있을 때 지원되는 스크립트를 실행합니다. 지원되는 미디어 씬은 렌더링 배경 위에 음악 정보를 실시간으로 표시하며, 그 외 복잡한 씬은 영상 경로를 유지합니다. [실시간 재생·직접 조작·오디오 설정 안내](docs/scenescript-compatibility.md#running-it).
@@ -379,4 +380,4 @@ Workshop Wallpaper Bridge는 Valve, Steam, Wallpaper Engine과 관련이 없는 
 
 ## 라이선스
 
-본 앱은 MIT 라이선스입니다. 별도 Steam 보조 프로그램은 [SteamRE/DepotDownloader 3.4.0](https://github.com/SteamRE/DepotDownloader/tree/DepotDownloader_3.4.0) 기반으로, 앱의 MIT가 아닌 해당 [GPL 라이선스](https://github.com/SteamRE/DepotDownloader/blob/DepotDownloader_3.4.0/LICENSE)를 따릅니다. 선택적인 외부 씬 렌더러에도 별도의 GPL 라이선스·소스 고지가 적용됩니다. 배포 시 각 라이선스를 유지하고 수정 사항을 포함한 GPL 구성 요소의 대응 소스를 제공해야 합니다.
+본 앱은 MIT 라이선스입니다. 별도 Steam 보조 프로그램은 [SteamRE/DepotDownloader 3.4.0](https://github.com/SteamRE/DepotDownloader/tree/DepotDownloader_3.4.0) 기반으로, 앱의 MIT가 아닌 해당 [GPL 라이선스](https://github.com/SteamRE/DepotDownloader/blob/DepotDownloader_3.4.0/LICENSE)를 따릅니다. macOS 26 시스템 배경화면 확장은 [Driftwood](https://github.com/iamEvanYT/driftwood)(MIT, Copyright (c) 2026 iamEvan)를 바탕으로 했으며, 라이선스는 `NativeWallpaperExtension/LICENSE.driftwood`와 앱의 Resources/Third Party Notices에 함께 둡니다. 선택적인 외부 씬 렌더러에도 별도의 GPL 라이선스·소스 고지가 적용됩니다. 배포 시 각 라이선스를 유지하고 수정 사항을 포함한 GPL 구성 요소의 대응 소스를 제공해야 합니다.
