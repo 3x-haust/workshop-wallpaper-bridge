@@ -39,5 +39,12 @@ jobs:
       - name: Run tests
         run: swift test
 
+      - name: Pick an Xcode for the system wallpaper extension
+        shell: bash
+        run: |
+          xcode="$(ls -d /Applications/Xcode_2[6-9]*.app 2>/dev/null | sort -V | tail -1)"
+          ls -d /Applications/Xcode*.app
+          if [ -n "$xcode" ]; then echo "WALLPAPER_EXTENSION_DEVELOPER_DIR=$xcode/Contents/Developer" >> "$GITHUB_ENV"; fi
+
       - name: Build system wallpaper extension
         run: bash Scripts/build-wallpaper-extension.sh "$RUNNER_TEMP/wallpaper-extension/WorkshopWallpaperBridgeWallpaper"

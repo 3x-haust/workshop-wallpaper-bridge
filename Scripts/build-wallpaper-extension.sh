@@ -8,6 +8,13 @@ SOURCE="$ROOT/NativeWallpaperExtension"
 OUTPUT="${1:?usage: build-wallpaper-extension.sh <output executable path>}"
 mkdir -p "$(dirname "$OUTPUT")"
 
+# The extension's code needs Swift 6.2+ (Xcode 26). A runner whose default Xcode is
+# older sets WALLPAPER_EXTENSION_DEVELOPER_DIR to a newer one, for this build only.
+if [ -n "${WALLPAPER_EXTENSION_DEVELOPER_DIR:-}" ]; then
+  export DEVELOPER_DIR="$WALLPAPER_EXTENSION_DEVELOPER_DIR"
+fi
+xcrun swiftc --version 2>&1 | head -1
+
 # The entry point must be ExtensionKit's: with Swift's own main the extension traps
 # before ExtensionMain is set up.
 xcrun swiftc -swift-version 6 -target arm64-apple-macos26.0 -O -application-extension \
