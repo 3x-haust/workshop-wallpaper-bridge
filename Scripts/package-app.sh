@@ -310,16 +310,7 @@ cat > "$WALLPAPER_EXTENSION_DIR/Contents/Info.plist" <<PLIST
 </dict>
 </plist>
 PLIST
-# The entry point must be ExtensionKit's: with Swift's own main the extension traps
-# before ExtensionMain is set up.
-xcrun swiftc -swift-version 6 -target arm64-apple-macos26.0 -O -application-extension \
-  -Xlinker -e -Xlinker _NSExtensionMain -Xlinker -u -Xlinker _main \
-  -Xlinker -rpath -Xlinker @executable_path/../../../../Frameworks \
-  -import-objc-header "$WALLPAPER_EXTENSION_SOURCE/Extension/WallpaperExtension-Bridging-Header.h" \
-  -module-name WorkshopWallpaperBridgeWallpaper \
-  "$WALLPAPER_EXTENSION_SOURCE"/Extension/*.swift \
-  $(find "$WALLPAPER_EXTENSION_SOURCE/Shared" -name '*.swift' | sort) \
-  -o "$WALLPAPER_EXTENSION_DIR/Contents/MacOS/$WALLPAPER_EXTENSION_EXECUTABLE"
+bash "$ROOT/Scripts/build-wallpaper-extension.sh" "$WALLPAPER_EXTENSION_DIR/Contents/MacOS/$WALLPAPER_EXTENSION_EXECUTABLE"
 mkdir -p "$RESOURCES_DIR/Third Party Notices"
 cp "$WALLPAPER_EXTENSION_SOURCE/LICENSE.driftwood" "$RESOURCES_DIR/Third Party Notices/Driftwood LICENSE.txt"
 chmod +x "$MACOS_DIR/Workshop Wallpaper Bridge" "$MACOS_DIR/wwbctl"
