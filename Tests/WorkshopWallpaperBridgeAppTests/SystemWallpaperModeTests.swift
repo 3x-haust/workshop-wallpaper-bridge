@@ -6,10 +6,9 @@ import WorkshopWallpaperCore
 @MainActor
 final class SystemWallpaperModeTests: XCTestCase {
     private let display = "11111111-2222-3333-4444-555555555555"
-    private var root: URL!
+    private let root = FileManager.default.temporaryDirectory.appending(path: "wwb-system-wallpaper-\(UUID().uuidString)")
 
     override func setUpWithError() throws {
-        root = FileManager.default.temporaryDirectory.appending(path: "wwb-system-wallpaper-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     }
 
