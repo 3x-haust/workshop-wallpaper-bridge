@@ -16,6 +16,9 @@ SAVER_NAME="Workshop Wallpaper Bridge"
 SAVER_DIR="$RESOURCES_DIR/$SAVER_NAME.saver"
 SAVER_MACOS_DIR="$SAVER_DIR/Contents/MacOS"
 SAVER_EXECUTABLE="Workshop Wallpaper Bridge Lock Screen"
+WALLPAPER_EXTENSION_DIR="$APP_DIR/Contents/Extensions/$APP_NAME Wallpaper.appex"
+WALLPAPER_EXTENSION_EXECUTABLE="WorkshopWallpaperBridgeWallpaper"
+WALLPAPER_EXTENSION_SOURCE="$ROOT/NativeWallpaperExtension"
 DMG_PATH="$ROOT/dist/WorkshopWallpaperBridge-macOS-arm64.dmg"
 APP_VERSION="${APP_VERSION:-1.5.0}"
 BUNDLE_VERSION="${BUNDLE_VERSION:-15}"
@@ -271,6 +274,54 @@ clang \
   -framework ScreenSaver \
   "$ROOT/Sources/WorkshopWallpaperLockScreenSaver/WorkshopWallpaperLockScreenSaverView.m" \
   -o "$SAVER_MACOS_DIR/$SAVER_EXECUTABLE"
+# macOS 26+ system wallpaper: an ExtensionKit extension WallpaperAgent hosts. Older
+# macOS has no such extension point and ignores the bundle.
+mkdir -p "$WALLPAPER_EXTENSION_DIR/Contents/MacOS"
+cat > "$WALLPAPER_EXTENSION_DIR/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>en</string>
+  <key>CFBundleDisplayName</key>
+  <string>Workshop Wallpaper Bridge</string>
+  <key>CFBundleExecutable</key>
+  <string>${WALLPAPER_EXTENSION_EXECUTABLE}</string>
+  <key>CFBundleIdentifier</key>
+  <string>dev.3xhaust.WorkshopWallpaperBridge.wallpaper</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleName</key>
+  <string>Workshop Wallpaper Bridge</string>
+  <key>CFBundlePackageType</key>
+  <string>XPC!</string>
+  <key>CFBundleShortVersionString</key>
+  <string>${APP_VERSION}</string>
+  <key>CFBundleVersion</key>
+  <string>${BUNDLE_VERSION}</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>26.0</string>
+  <key>EXAppExtensionAttributes</key>
+  <dict>
+    <key>EXExtensionPointIdentifier</key>
+    <string>com.apple.wallpaper</string>
+  </dict>
+</dict>
+</plist>
+PLIST
+# The entry point must be ExtensionKit's: with Swift's own main the extension traps
+# before ExtensionMain is set up.
+xcrun swiftc -swift-version 6 -target arm64-apple-macos26.0 -O -application-extension \
+  -Xlinker -e -Xlinker _NSExtensionMain -Xlinker -u -Xlinker _main \
+  -Xlinker -rpath -Xlinker @executable_path/../../../../Frameworks \
+  -import-objc-header "$WALLPAPER_EXTENSION_SOURCE/Extension/WallpaperExtension-Bridging-Header.h" \
+  -module-name WorkshopWallpaperBridgeWallpaper \
+  "$WALLPAPER_EXTENSION_SOURCE"/Extension/*.swift \
+  $(find "$WALLPAPER_EXTENSION_SOURCE/Shared" -name '*.swift' | sort) \
+  -o "$WALLPAPER_EXTENSION_DIR/Contents/MacOS/$WALLPAPER_EXTENSION_EXECUTABLE"
+mkdir -p "$RESOURCES_DIR/Third Party Notices"
+cp "$WALLPAPER_EXTENSION_SOURCE/LICENSE.driftwood" "$RESOURCES_DIR/Third Party Notices/Driftwood LICENSE.txt"
 chmod +x "$MACOS_DIR/Workshop Wallpaper Bridge" "$MACOS_DIR/wwbctl"
 chmod +x "$SAVER_MACOS_DIR/$SAVER_EXECUTABLE"
 strip_quarantine_metadata "$APP_DIR"
@@ -293,6 +344,7 @@ if [ -n "$SIGN_IDENTITY" ]; then
   done
   codesign --force --options runtime --entitlements "$ROOT/Scripts/steam-helper.entitlements" --timestamp --sign "$SIGN_IDENTITY" "$STEAM_DIR/wwb-steam-helper"
   codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$SAVER_DIR"
+  codesign --force --options runtime --entitlements "$WALLPAPER_EXTENSION_SOURCE/Extension/WallpaperExtension.entitlements" --timestamp --sign "$SIGN_IDENTITY" "$WALLPAPER_EXTENSION_DIR"
   codesign --force --options runtime --entitlements "$ROOT/Scripts/app.entitlements" --timestamp --sign "$SIGN_IDENTITY" "$APP_DIR"
   codesign --verify --strict --verbose=2 "$SAVER_DIR"
   codesign --verify --strict --verbose=2 "$APP_DIR"
@@ -317,6 +369,7 @@ else
   done
   codesign --force --entitlements "$ROOT/Scripts/steam-helper.entitlements" --sign - "$STEAM_DIR/wwb-steam-helper"
   codesign --force --sign - "$SAVER_DIR"
+  codesign --force --entitlements "$WALLPAPER_EXTENSION_SOURCE/Extension/WallpaperExtension.entitlements" --sign - "$WALLPAPER_EXTENSION_DIR"
   codesign --force --sign - "$APP_DIR"
   codesign --verify --strict --verbose=2 "$SAVER_DIR"
   codesign --verify --deep --strict --verbose=2 "$APP_DIR"
