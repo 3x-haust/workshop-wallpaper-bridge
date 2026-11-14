@@ -38,3 +38,6 @@ jobs:
 
       - name: Run tests
         run: swift test
+
+      - name: Build system wallpaper extension
+        run: bash Scripts/build-wallpaper-extension.sh "$RUNNER_TEMP/wallpaper-extension/WorkshopWallpaperBridgeWallpaper"

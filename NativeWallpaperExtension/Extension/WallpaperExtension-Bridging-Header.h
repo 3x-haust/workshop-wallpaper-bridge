@@ -11,6 +11,10 @@
 #import <QuartzCore/QuartzCore.h>
 #import <bsm/libbsm.h>
 
+// WallpaperAgent calls these replies from its XPC queue. Saying so here keeps
+// older compilers (macOS 15 runners) agreeing with the Swift conformances.
+#define WWB_SENDABLE __attribute__((swift_attr("@Sendable")))
+
 // MARK: - Private NSXPCConnection caller identity
 //
 // NSXPCConnection exposes the connecting peer's audit token as private API.
@@ -51,38 +55,38 @@ extern unsigned int CGSMainConnectionID(void);
 @protocol WallpaperExtensionXPCProtocol <NSObject>
 
 // Lifecycle
-- (void)acquireWithId:(id _Nullable)anId request:(id _Nullable)request reply:(void (^ _Nonnull)(id _Nullable, NSError * _Nullable))reply;
-- (void)updateWithId:(id _Nullable)anId request:(id _Nullable)request reply:(void (^ _Nonnull)(NSError * _Nullable))reply;
-- (void)invalidateWithId:(id _Nullable)anId reply:(void (^ _Nonnull)(NSError * _Nullable))reply;
-- (void)snapshotWithId:(id _Nullable)anId reply:(void (^ _Nonnull)(id _Nullable, NSError * _Nullable))reply;
+- (void)acquireWithId:(id _Nullable)anId request:(id _Nullable)request reply:(void (WWB_SENDABLE ^ _Nonnull)(id _Nullable, NSError * _Nullable))reply;
+- (void)updateWithId:(id _Nullable)anId request:(id _Nullable)request reply:(void (WWB_SENDABLE ^ _Nonnull)(NSError * _Nullable))reply;
+- (void)invalidateWithId:(id _Nullable)anId reply:(void (WWB_SENDABLE ^ _Nonnull)(NSError * _Nullable))reply;
+- (void)snapshotWithId:(id _Nullable)anId reply:(void (WWB_SENDABLE ^ _Nonnull)(id _Nullable, NSError * _Nullable))reply;
 
 // Settings
-- (void)provideSettingsViewModelsWithContentTypes:(id _Nullable)types reply:(void (^ _Nonnull)(id _Nullable, NSError * _Nullable))reply;
+- (void)provideSettingsViewModelsWithContentTypes:(id _Nullable)types reply:(void (WWB_SENDABLE ^ _Nonnull)(id _Nullable, NSError * _Nullable))reply;
 
 // Choices
-- (void)addChoiceRequestWithChoiceRequest:(id _Nullable)request onBehalfOfProcess:(id _Nullable)process reply:(void (^ _Nonnull)(id _Nullable, NSError * _Nullable))reply;
-- (void)removeChoiceRequestWithChoiceRequest:(id _Nullable)request reply:(void (^ _Nonnull)(NSError * _Nullable))reply;
-- (void)selectedChoicesDidChangeFor:(id _Nullable)anId reply:(void (^ _Nonnull)(NSError * _Nullable))reply;
-- (void)invokeContextMenuActionWithMenuItemID:(id _Nullable)menuItemID groupItemID:(id _Nullable)groupItemID reply:(void (^ _Nonnull)(NSError * _Nullable))reply;
+- (void)addChoiceRequestWithChoiceRequest:(id _Nullable)request onBehalfOfProcess:(id _Nullable)process reply:(void (WWB_SENDABLE ^ _Nonnull)(id _Nullable, NSError * _Nullable))reply;
+- (void)removeChoiceRequestWithChoiceRequest:(id _Nullable)request reply:(void (WWB_SENDABLE ^ _Nonnull)(NSError * _Nullable))reply;
+- (void)selectedChoicesDidChangeFor:(id _Nullable)anId reply:(void (WWB_SENDABLE ^ _Nonnull)(NSError * _Nullable))reply;
+- (void)invokeContextMenuActionWithMenuItemID:(id _Nullable)menuItemID groupItemID:(id _Nullable)groupItemID reply:(void (WWB_SENDABLE ^ _Nonnull)(NSError * _Nullable))reply;
 
 // Downloads
-- (void)isChoiceDownloadedWith:(id _Nullable)choiceID reply:(void (^ _Nonnull)(BOOL, NSError * _Nullable))reply;
-- (id _Nullable)downloadWithChoiceID:(id _Nullable)choiceID reply:(void (^ _Nonnull)(NSError * _Nullable))reply;
-- (void)pauseDownloadFor:(id _Nullable)choiceID reply:(void (^ _Nonnull)(NSError * _Nullable))reply;
-- (void)cancelDownloadFor:(id _Nullable)choiceID reply:(void (^ _Nonnull)(NSError * _Nullable))reply;
-- (void)resumeDownloadFor:(id _Nullable)choiceID reply:(void (^ _Nonnull)(NSError * _Nullable))reply;
-- (void)removeDownloadFor:(id _Nullable)choiceID reply:(void (^ _Nonnull)(NSError * _Nullable))reply;
+- (void)isChoiceDownloadedWith:(id _Nullable)choiceID reply:(void (WWB_SENDABLE ^ _Nonnull)(BOOL, NSError * _Nullable))reply;
+- (id _Nullable)downloadWithChoiceID:(id _Nullable)choiceID reply:(void (WWB_SENDABLE ^ _Nonnull)(NSError * _Nullable))reply;
+- (void)pauseDownloadFor:(id _Nullable)choiceID reply:(void (WWB_SENDABLE ^ _Nonnull)(NSError * _Nullable))reply;
+- (void)cancelDownloadFor:(id _Nullable)choiceID reply:(void (WWB_SENDABLE ^ _Nonnull)(NSError * _Nullable))reply;
+- (void)resumeDownloadFor:(id _Nullable)choiceID reply:(void (WWB_SENDABLE ^ _Nonnull)(NSError * _Nullable))reply;
+- (void)removeDownloadFor:(id _Nullable)choiceID reply:(void (WWB_SENDABLE ^ _Nonnull)(NSError * _Nullable))reply;
 
 // Migration
-- (void)migrateSelectedChoiceFor:(id _Nullable)anId reply:(void (^ _Nonnull)(id _Nullable, NSError * _Nullable))reply;
-- (void)migrateFrom:(id _Nullable)from to:(id _Nullable)to reply:(void (^ _Nonnull)(NSError * _Nullable))reply;
+- (void)migrateSelectedChoiceFor:(id _Nullable)anId reply:(void (WWB_SENDABLE ^ _Nonnull)(id _Nullable, NSError * _Nullable))reply;
+- (void)migrateFrom:(id _Nullable)from to:(id _Nullable)to reply:(void (WWB_SENDABLE ^ _Nonnull)(NSError * _Nullable))reply;
 
 // Shuffle
-- (void)skipShuffledContentWithId:(id _Nullable)anId reply:(void (^ _Nonnull)(NSError * _Nullable))reply;
-- (void)canSkipShuffledContentWithId:(id _Nullable)anId reply:(void (^ _Nonnull)(BOOL, NSError * _Nullable))reply;
+- (void)skipShuffledContentWithId:(id _Nullable)anId reply:(void (WWB_SENDABLE ^ _Nonnull)(NSError * _Nullable))reply;
+- (void)canSkipShuffledContentWithId:(id _Nullable)anId reply:(void (WWB_SENDABLE ^ _Nonnull)(BOOL, NSError * _Nullable))reply;
 
 // Debug & notifications
-- (void)handleDebugRequestFor:(id _Nullable)request reply:(void (^ _Nonnull)(id _Nullable, NSError * _Nullable))reply;
-- (void)handleNotificationWithNamed:(id _Nullable)name reply:(void (^ _Nonnull)(NSError * _Nullable))reply;
+- (void)handleDebugRequestFor:(id _Nullable)request reply:(void (WWB_SENDABLE ^ _Nonnull)(id _Nullable, NSError * _Nullable))reply;
+- (void)handleNotificationWithNamed:(id _Nullable)name reply:(void (WWB_SENDABLE ^ _Nonnull)(NSError * _Nullable))reply;
 
 @end
