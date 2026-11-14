@@ -315,6 +315,9 @@
 "settings.playback.title" = "재생";
 "settings.openAtLogin" = "로그인 시 열기";
 "settings.autoPause" = "다른 앱에 가려지면 자동 일시정지";
+"settings.systemWallpaper.toggle" = "시스템 배경화면으로 재생";
+"settings.systemWallpaper.help" = "macOS가 배경화면을 직접 재생해서 데스크톱 위젯을 옮기거나 데스크톱을 볼 때도 계속 움직여요. 영상 배경화면과, 영상이 준비된 장면에서 동작하고 나머지는 앱 창으로 그대로 재생해요. 끄면 이전 배경화면으로 돌아가요.";
+"settings.systemWallpaper.partial" = "영상이 없는 배경화면을 재생하는 화면은 앱이 계속 직접 그려요.";
 "settings.animateScreenSaver" = "화면 보호기 애니메이션";
 "settings.autoCheckUpdates" = "업데이트 자동 확인";
 "settings.checkUpdates" = "업데이트 확인";

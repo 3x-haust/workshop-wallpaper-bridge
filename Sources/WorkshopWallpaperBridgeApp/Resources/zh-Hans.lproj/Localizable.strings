@@ -315,6 +315,9 @@
 "settings.playback.title" = "播放";
 "settings.openAtLogin" = "登录时打开";
 "settings.autoPause" = "被其他应用遮挡时自动暂停";
+"settings.systemWallpaper.toggle" = "作为系统壁纸播放";
+"settings.systemWallpaper.help" = "由 macOS 直接播放壁纸，拖动桌面小组件或显示桌面时也会继续播放。适用于视频壁纸和已生成视频的场景，其他壁纸仍由应用窗口播放。关闭后恢复之前的壁纸。";
+"settings.systemWallpaper.partial" = "部分显示器播放的壁纸没有视频，应用仍会自行绘制。";
 "settings.animateScreenSaver" = "屏幕保护程序动画";
 "settings.autoCheckUpdates" = "自动检查更新";
 "settings.checkUpdates" = "检查更新";

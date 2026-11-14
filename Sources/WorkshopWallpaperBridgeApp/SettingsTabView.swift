@@ -44,6 +44,11 @@ struct SettingsTabView: View {
         settingsSection(title: model.L("settings.playback.title")) {
             Toggle(model.L("settings.autoPause"), isOn: $model.autoPauseWhenCovered)
             Divider().overlay(BrowserPalette.border)
+            if SystemWallpaperMode.isAvailable {
+                Toggle(model.L("settings.systemWallpaper.toggle"), isOn: $model.systemWallpaperEnabled)
+                caption(model.L("settings.systemWallpaper.help"))
+                Divider().overlay(BrowserPalette.border)
+            }
             Toggle(model.L("settings.liveScenes.toggle"), isOn: $model.preferLiveScenes)
             caption(model.L("settings.liveScenes.help"))
             Divider().overlay(BrowserPalette.border)

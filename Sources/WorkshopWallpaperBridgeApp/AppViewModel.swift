@@ -216,6 +216,17 @@ final class AppViewModel: ObservableObject {
             setLockScreenAnimation(lockScreenAnimationEnabled)
         }
     }
+    /// macOS 26+: the bundled wallpaper extension plays the wallpaper as the system
+    /// wallpaper, so it keeps moving while macOS hides windows (dragging a widget).
+    @Published var systemWallpaperEnabled = false {
+        didSet {
+            guard systemWallpaperEnabled != oldValue, !isSyncingSystemWallpaperPreference else { return }
+            userDefaults.set(systemWallpaperEnabled, forKey: PreferenceKey.systemWallpaperEnabled)
+            scheduleSystemWallpaperSync()
+        }
+    }
+    /// Displays the extension draws now; the app draws no window there.
+    @Published private(set) var systemWallpaperDisplays: Set<String> = []
     @Published var automaticallyCheckForUpdates = true {
         didSet {
             guard automaticallyCheckForUpdates != oldValue else {
@@ -309,6 +320,10 @@ final class AppViewModel: ObservableObject {
     private let currentVersionProvider: () -> String
     private var isSyncingLaunchAtLogin = false
     private var isSyncingLockScreenAnimation = false
+    private var isSyncingSystemWallpaperPreference = false
+    private lazy var systemWallpaperMode = SystemWallpaperMode()
+    private var systemWallpaperSyncTask: Task<Void, Never>?
+    private var systemWallpaperSyncAgain = false
     private var isSyncingRotation = false
     private var rotationTimer: Timer?
     private var rotationQueue: [WallpaperAsset.ID] = []
@@ -818,6 +833,7 @@ extension AppViewModel {
             }
             loadLibrary()
             activeWorkshop?.refreshDownloads()
+            scheduleSystemWallpaperSync()
             if wasRotating, !rotationEnabled {
                 if assets.count == 1, let asset = assets.first {
                     status = "Moved \(asset.title) to the Trash. Rotation stopped — no playable wallpapers left."
@@ -877,6 +893,7 @@ extension AppViewModel {
             activeWallpaperAssetID = nil
             playbackEvent = nil
         }
+        scheduleSystemWallpaperSync()
         status = "Playback stopped on selected displays."
     }
 
@@ -892,6 +909,7 @@ extension AppViewModel {
         }
         wallpaperPlayer.stop()
         userDefaults.removeObject(forKey: PreferenceKey.lastPlayedAssetId)
+        scheduleSystemWallpaperSync()
         status = "Playback stopped."
     }
 
@@ -1100,6 +1118,10 @@ extension AppViewModel {
         if userDefaults.object(forKey: PreferenceKey.automaticallyCheckForUpdates) != nil {
             automaticallyCheckForUpdates = userDefaults.bool(forKey: PreferenceKey.automaticallyCheckForUpdates)
         }
+        isSyncingSystemWallpaperPreference = true
+        systemWallpaperEnabled = SystemWallpaperMode.isAvailable
+            && userDefaults.bool(forKey: PreferenceKey.systemWallpaperEnabled)
+        isSyncingSystemWallpaperPreference = false
         sceneAssetsDirectory = restoredSceneAssetsDirectory()
         SceneEngineRendererConfiguration.overrideAssetsPath = sceneAssetsDirectory.isEmpty ? nil : sceneAssetsDirectory
         if let rawLanguage = userDefaults.string(forKey: PreferenceKey.language),
@@ -1481,6 +1503,7 @@ extension AppViewModel {
                         self.requestedPlayback[id] = nil
                     }
                     self.saveDisplayAssignments()
+                    self.scheduleSystemWallpaperSync()
                     if excludingRotation { self.excludeRotationDisplays(completedIDs) }
                     if self.applicationIntentID == intent {
                         if remember { self.userDefaults.set(asset.id, forKey: PreferenceKey.lastPlayedAssetId) }
@@ -1543,6 +1566,7 @@ private enum PreferenceKey {
     static let rotationInterval = "rotationInterval"
     static let scannedSortOrder = "scannedSortOrder"
     static let lastImportAt = "lastImportAt"
+    static let systemWallpaperEnabled = "systemWallpaperEnabled"
 }
 
 private func dateAddedSort(_ lhs: WallpaperAsset, _ rhs: WallpaperAsset) -> Bool {
@@ -1555,5 +1579,70 @@ private func dateAddedSort(_ lhs: WallpaperAsset, _ rhs: WallpaperAsset) -> Bool
         return false
     default:
         return lhs.id.localizedStandardCompare(rhs.id) == .orderedAscending
+    }
+}
+
+// MARK: - System wallpaper mode
+
+extension AppViewModel {
+    /// Brings the extension in line with what each display plays: it takes the displays
+    /// with a playable video (the app then stops its own window there) and gives back the
+    /// rest. Calls made while one runs are folded into one more pass.
+    func scheduleSystemWallpaperSync() {
+        guard SystemWallpaperMode.isAvailable else { return }
+        if systemWallpaperSyncTask != nil {
+            systemWallpaperSyncAgain = true
+            return
+        }
+        systemWallpaperSyncTask = Task { [weak self] in
+            guard let self else { return }
+            repeat {
+                self.systemWallpaperSyncAgain = false
+                await self.syncSystemWallpaper()
+            } while self.systemWallpaperSyncAgain
+            self.systemWallpaperSyncTask = nil
+        }
+    }
+
+    private func syncSystemWallpaper() async {
+        guard systemWallpaperEnabled else {
+            let served = systemWallpaperDisplays
+            do {
+                try systemWallpaperMode.restore()
+            } catch {
+                status = error.localizedDescription
+            }
+            systemWallpaperDisplays = []
+            resumeOwnWallpaper(on: served)
+            return
+        }
+        let connected = Set(WallpaperDisplay.connected().map(\.id))
+        var playing: [String: WallpaperAsset] = [:]
+        for (id, assignment) in displayAssignments where assignment.isPlaying && connected.contains(id) {
+            if let asset = libraryAssets.first(where: { $0.id == assignment.assetID }) { playing[id] = asset }
+        }
+        do {
+            let served = try await systemWallpaperMode.apply(playing)
+            let released = systemWallpaperDisplays.subtracting(served)
+            systemWallpaperDisplays = served
+            wallpaperPlayer.stop(on: served)
+            resumeOwnWallpaper(on: released)
+            if !served.isEmpty, served.count < playing.count {
+                status = L("settings.systemWallpaper.partial")
+            }
+        } catch {
+            let served = systemWallpaperDisplays
+            systemWallpaperDisplays = []
+            resumeOwnWallpaper(on: served)
+            status = error.localizedDescription
+        }
+    }
+
+    private func resumeOwnWallpaper(on displayIDs: Set<String>) {
+        for id in displayIDs {
+            guard let assignment = displayAssignments[id], assignment.isPlaying,
+                  let asset = libraryAssets.first(where: { $0.id == assignment.assetID }) else { continue }
+            try? applyWallpaper(asset, on: [id], remember: false)
+        }
     }
 }

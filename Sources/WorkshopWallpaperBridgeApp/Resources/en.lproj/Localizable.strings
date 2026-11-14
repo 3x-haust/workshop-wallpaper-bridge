@@ -315,6 +315,9 @@
 "settings.playback.title" = "Playback";
 "settings.openAtLogin" = "Open at Login";
 "settings.autoPause" = "Auto-pause behind apps";
+"settings.systemWallpaper.toggle" = "Play as the system wallpaper";
+"settings.systemWallpaper.help" = "macOS plays the wallpaper itself, so it keeps moving while you drag a desktop widget or reveal the desktop. Works with video wallpapers and with scenes once their video is ready; others stay in the app's own window. Turning it off puts back the wallpaper you had before.";
+"settings.systemWallpaper.partial" = "Some displays play a wallpaper without a video, so the app still draws those itself.";
 "settings.animateScreenSaver" = "Animate Screen Saver";
 "settings.autoCheckUpdates" = "Auto-check Updates";
 "settings.checkUpdates" = "Check Updates";
